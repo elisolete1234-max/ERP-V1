@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "target": "ES2022",
+    "outDir": ".test-dist",
+    "rootDir": ".",
+    "noEmit": false,
+    "isolatedModules": false,
+    "jsx": "preserve",
+    "paths": {}
+  },
+  "include": [
+    "lib/db.ts",
+    "lib/erp-service.ts",
+    "types/**/*.d.ts",
+    "tests/**/*.ts"
+  ]
+}
