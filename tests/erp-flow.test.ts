@@ -19,6 +19,7 @@ import {
   updateMaterialRecord,
   updateOrderRecord,
   updatePrinterRecord,
+  updateInvoiceRecord,
 } from "../lib/erp-service";
 
 function row<T>(statement: string, ...params: unknown[]) {
@@ -227,6 +228,28 @@ test("no permite modificar stock actual del material sin movimiento", () => {
   );
 });
 
+test("crear material con stock inicial genera movimiento y deja el cache consistente", () => {
+  createMaterialRecord({
+    nombre: "PETG Azul",
+    marca: "Marca",
+    tipo: "PETG",
+    color: "Azul",
+    precioKg: 22,
+    stockActualG: 750,
+    stockMinimoG: 100,
+  });
+
+  const material = row<{ id: string; stock_actual_g: number }>(`SELECT id, stock_actual_g FROM materials LIMIT 1`)!;
+  const movement = row<{ tipo: string; cantidad_g: number }>(
+    `SELECT tipo, cantidad_g FROM stock_movements WHERE material_id = ?`,
+    material.id,
+  )!;
+
+  assert.equal(material.stock_actual_g, 750);
+  assert.equal(movement.tipo, "ENTRADA");
+  assert.equal(movement.cantidad_g, 750);
+});
+
 test("solo permite una orden activa por impresora y asigna impresora correcta", () => {
   createCustomerRecord({ nombre: "Cliente Test" });
   createMaterialRecord({ nombre: "PLA Test", marca: "Marca", tipo: "PLA", color: "Negro", precioKg: 20, stockActualG: 5000, stockMinimoG: 100 });
@@ -366,6 +389,67 @@ test("estados del pedido transicionan correctamente y la factura solo se genera 
   assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices WHERE pedido_id = ?`, orderId)!.total, 1);
   generateInvoiceForOrder(orderId);
   assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices WHERE pedido_id = ?`, orderId)!.total, 1);
+});
+
+test("la factura sincroniza el estado de pago del pedido", () => {
+  const { customerId, productId } = setupSingleProductFixture();
+  const orderId = createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  confirmOrder(orderId);
+  const manufacturingId = row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  )!.id;
+
+  startManufacturingOrder(manufacturingId);
+  completeManufacturingOrder(manufacturingId);
+  deliverOrder(orderId);
+  generateInvoiceForOrder(orderId);
+
+  const invoiceId = row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, orderId)!.id;
+  assert.equal(row<{ estado_pago: string }>(`SELECT estado_pago FROM orders WHERE id = ?`, orderId)!.estado_pago, "PENDIENTE");
+
+  updateInvoiceRecord({ id: invoiceId, estadoPago: "PAGADA" });
+
+  assert.equal(row<{ estado_pago: string }>(`SELECT estado_pago FROM invoices WHERE id = ?`, invoiceId)!.estado_pago, "PAGADA");
+  assert.equal(row<{ estado_pago: string }>(`SELECT estado_pago FROM orders WHERE id = ?`, orderId)!.estado_pago, "PAGADA");
+});
+
+test("el inventario terminado refleja stock reservado y disponible", () => {
+  const { customerId, productId } = setupSingleProductFixture();
+  restockFinishedProduct(productId, 5, "Carga inicial", "A1", 8);
+  const orderId = createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 3 }],
+  });
+
+  confirmOrder(orderId);
+
+  const inventory = row<{
+    cantidad_disponible: number;
+    unidades_stock: number;
+    unidades_reservadas: number;
+    unidades_disponibles: number;
+  }>(
+    `SELECT cantidad_disponible, unidades_stock, unidades_reservadas, unidades_disponibles
+     FROM finished_product_inventory
+     WHERE product_id = ?`,
+    productId,
+  )!;
+
+  assert.equal(inventory.cantidad_disponible, 2);
+  assert.equal(inventory.unidades_disponibles, 2);
+  assert.equal(inventory.unidades_reservadas, 3);
+  assert.equal(inventory.unidades_stock, 5);
+
+  deliverOrder(orderId);
+  const afterDelivery = row<{ unidades_reservadas: number; unidades_stock: number }>(
+    `SELECT unidades_reservadas, unidades_stock
+     FROM finished_product_inventory
+     WHERE product_id = ?`,
+    productId,
+  )!;
+  assert.equal(afterDelivery.unidades_reservadas, 0);
+  assert.equal(afterDelivery.unidades_stock, 2);
 });
 
 test("la demo completa genera escenarios y trazabilidad", () => {

@@ -72,6 +72,9 @@ function getProductOrThrow(productId: string) {
     gramos_estimados: number;
     tiempo_impresion_horas: number;
     coste_electricidad: number;
+    coste_maquina: number;
+    coste_mano_obra: number;
+    coste_postprocesado: number;
     pvp: number;
     precio_kg: number;
   }>(
@@ -81,6 +84,9 @@ function getProductOrThrow(productId: string) {
        p.gramos_estimados,
        p.tiempo_impresion_horas,
        p.coste_electricidad,
+       p.coste_maquina,
+       p.coste_mano_obra,
+       p.coste_postprocesado,
        p.pvp,
        m.precio_kg
      FROM products p
@@ -143,12 +149,120 @@ function draftLineCalculations(product: ReturnType<typeof getProductOrThrow>, qu
   return {
     gramosTotales: costs.gramosTotales,
     precioUnitario,
+    precioTotalLinea: roundMoney(precioUnitario * quantity),
     costeMaterial: costs.costeMaterial,
     costeElectricidadTotal: costs.costeElectricidadTotal,
     costeImpresoraTotal: costs.costeImpresoraTotal,
     costeTotal: costs.costeTotal,
     beneficio: costs.beneficio,
   };
+}
+
+function getMaterialComputedStock(materialId: string) {
+  const totals = row<{ total: number }>(
+    `SELECT
+       COALESCE(SUM(
+         CASE
+           WHEN tipo = 'ENTRADA' THEN cantidad_g
+           WHEN tipo = 'SALIDA' THEN -cantidad_g
+           ELSE 0
+         END
+       ), 0) AS total
+     FROM stock_movements
+     WHERE material_id = ?`,
+    materialId,
+  );
+
+  return Math.round(totals?.total ?? 0);
+}
+
+function syncMaterialStockCache(materialId: string) {
+  const nextStock = getMaterialComputedStock(materialId);
+  run(
+    `UPDATE materials
+     SET stock_actual_g = ?, fecha_actualizacion = ?
+     WHERE id = ?`,
+    nextStock,
+    nowIso(),
+    materialId,
+  );
+
+  return nextStock;
+}
+
+function syncFinishedInventoryMetrics(productId: string) {
+  ensureFinishedInventoryRow(productId);
+  const reserved = row<{ total: number }>(
+    `SELECT COALESCE(SUM(l.cantidad_desde_stock), 0) AS total
+     FROM order_lines l
+     JOIN orders o ON o.id = l.pedido_id
+     WHERE l.producto_id = ?
+       AND o.estado IN ('CONFIRMADO', 'EN_PRODUCCION', 'LISTO')`,
+    productId,
+  )?.total ?? 0;
+
+  const current = row<{ cantidad_disponible: number }>(
+    `SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`,
+    productId,
+  );
+  const available = Math.max(0, Math.round(current?.cantidad_disponible ?? 0));
+  run(
+    `UPDATE finished_product_inventory
+     SET unidades_reservadas = ?, unidades_disponibles = ?, unidades_stock = ?, fecha_actualizacion = ?
+     WHERE product_id = ?`,
+    Math.max(0, Math.round(reserved)),
+    available,
+    available + Math.max(0, Math.round(reserved)),
+    nowIso(),
+    productId,
+  );
+}
+
+function syncFinishedInventoryMetricsForOrder(orderId: string) {
+  const productIds = rows<{ producto_id: string }>(
+    `SELECT DISTINCT producto_id FROM order_lines WHERE pedido_id = ?`,
+    orderId,
+  );
+
+  for (const item of productIds) {
+    syncFinishedInventoryMetrics(item.producto_id);
+  }
+}
+
+function recalculateOrderTotals(orderId: string, vatRate = DEFAULT_VAT_RATE) {
+  const totals = row<{
+    subtotal: number;
+    coste_total: number;
+    beneficio: number;
+  }>(
+    `SELECT
+       COALESCE(SUM(precio_total_linea), 0) AS subtotal,
+       COALESCE(SUM(coste_total), 0) AS coste_total,
+       COALESCE(SUM(beneficio), 0) AS beneficio
+     FROM order_lines
+     WHERE pedido_id = ?`,
+    orderId,
+  );
+
+  const subtotal = roundMoney(totals?.subtotal ?? 0);
+  const iva = roundMoney((subtotal * vatRate) / 100);
+  const total = roundMoney(subtotal + iva);
+  const costeTotal = roundMoney(totals?.coste_total ?? 0);
+  const beneficio = roundMoney(totals?.beneficio ?? 0);
+
+  run(
+    `UPDATE orders
+     SET subtotal = ?, iva = ?, total = ?, coste_total_pedido = ?, beneficio_total = ?
+     WHERE id = ?`,
+    subtotal,
+    iva,
+    total,
+    costeTotal,
+    beneficio,
+    orderId,
+  );
+
+  return { subtotal, iva, total, costeTotal, beneficio };
 }
 
 function registerOrderHistory(pedidoId: string, estado: string, nota: string) {
@@ -203,7 +317,19 @@ function getMaterialInventoryOrThrow(materialId: string) {
     throw new Error("El material no existe.");
   }
 
-  return material;
+  const computedStock = getMaterialComputedStock(materialId);
+  if (computedStock !== material.stock_actual_g) {
+    run(
+      `UPDATE materials
+       SET stock_actual_g = ?, fecha_actualizacion = ?
+       WHERE id = ?`,
+      computedStock,
+      nowIso(),
+      materialId,
+    );
+  }
+
+  return { ...material, stock_actual_g: computedStock };
 }
 
 function applyMaterialInventoryMovement(input: {
@@ -220,15 +346,6 @@ function applyMaterialInventoryMovement(input: {
   if (nextStock < 0) {
     throw new Error("No se puede dejar el stock de materiales en negativo.");
   }
-
-  run(
-    `UPDATE materials
-     SET stock_actual_g = ?, fecha_actualizacion = ?
-     WHERE id = ?`,
-    nextStock,
-    nowIso(),
-    input.materialId,
-  );
   run(
     `INSERT INTO stock_movements
       (id, codigo, material_id, tipo, cantidad_g, motivo, referencia, fecha)
@@ -251,6 +368,8 @@ function applyMaterialInventoryMovement(input: {
     motivo: input.motivo,
     referencia: input.referencia,
   });
+
+  syncMaterialStockCache(input.materialId);
 
   return { previousStock: material.stock_actual_g, nextStock, itemCodigo: material.codigo };
 }
@@ -276,6 +395,7 @@ function getFinishedInventoryOrThrow(productId: string) {
     throw new Error("El inventario de producto terminado no existe.");
   }
 
+  syncFinishedInventoryMetrics(productId);
   return inventory;
 }
 
@@ -337,6 +457,7 @@ function applyFinishedInventoryMovement(input: {
     motivo: input.motivo,
     referencia: input.referencia,
   });
+  syncFinishedInventoryMetrics(input.productId);
 
   return { previousQuantity: inventory.cantidad_disponible, nextQuantity, itemCodigo: inventory.codigo };
 }
@@ -357,17 +478,21 @@ function ensureFinishedInventoryRow(productId: string) {
 
   run(
     `INSERT INTO finished_product_inventory
-      (id, codigo, product_id, cantidad_disponible, ubicacion, coste_unitario, precio_venta, fecha_actualizacion)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, codigo, product_id, cantidad_disponible, unidades_stock, unidades_reservadas, unidades_disponibles, ubicacion, coste_unitario, precio_venta, fecha_actualizacion)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     randomUUID(),
     nextCode("finished_product_inventory", "STK-"),
     productId,
+    0,
+    0,
+    0,
     0,
     "Estanteria principal",
     0,
     roundMoney(product.pvp),
     nowIso(),
   );
+  syncFinishedInventoryMetrics(productId);
 }
 
 function getFirstAvailablePrinter() {
@@ -454,6 +579,7 @@ function restoreOrderInventoryAllocations(orderId: string, orderCode: string) {
   }
 
   run(`DELETE FROM manufacturing_orders WHERE pedido_id = ?`, orderId);
+  syncFinishedInventoryMetricsForOrder(orderId);
 }
 
 function insertDemoScenarioResult(input: {
@@ -513,6 +639,16 @@ function insertDemoScenarioResult(input: {
 }
 
 export function getAppSnapshot() {
+  const materialIds = rows<{ id: string }>(`SELECT id FROM materials`);
+  for (const item of materialIds) {
+    syncMaterialStockCache(item.id);
+  }
+
+  const inventoryProducts = rows<{ product_id: string }>(`SELECT product_id FROM finished_product_inventory`);
+  for (const item of inventoryProducts) {
+    syncFinishedInventoryMetrics(item.product_id);
+  }
+
   const customers = rows<{
     id: string;
     codigo: string;
@@ -530,10 +666,19 @@ export function getAppSnapshot() {
     marca: string;
     tipo: string;
     color: string;
+    tipo_color: string | null;
+    efecto: string | null;
+    color_base: string | null;
+    nombre_comercial: string | null;
+    diametro_mm: number | null;
+    peso_spool_g: number | null;
+    temp_extrusor: number | null;
+    temp_cama: number | null;
     precio_kg: number;
     stock_actual_g: number;
     stock_minimo_g: number;
     proveedor: string | null;
+    notas: string | null;
     fecha_actualizacion: string;
   }>(`SELECT * FROM materials ORDER BY nombre ASC`);
 
@@ -546,6 +691,9 @@ export function getAppSnapshot() {
     gramos_estimados: number;
     tiempo_impresion_horas: number;
     coste_electricidad: number;
+    coste_maquina: number;
+    coste_mano_obra: number;
+    coste_postprocesado: number;
     margen: number;
     pvp: number;
     material_id: string;
@@ -557,7 +705,23 @@ export function getAppSnapshot() {
      FROM products p
      JOIN materials m ON m.id = p.material_id
      ORDER BY p.nombre ASC`,
-  ).map((product) => ({ ...product, activo: parseBoolean(product.activo) }));
+  ).map((product) => {
+    const costeMaterial = roundMoney((product.precio_kg / 1000) * product.gramos_estimados);
+    const costeTotalReceta = roundMoney(
+      costeMaterial +
+        product.coste_electricidad +
+        product.coste_maquina +
+        product.coste_mano_obra +
+        product.coste_postprocesado,
+    );
+
+    return {
+      ...product,
+      activo: parseBoolean(product.activo),
+      coste_material_estimado: costeMaterial,
+      coste_total_producto: costeTotalReceta,
+    };
+  });
 
   const orders = rows<{
     id: string;
@@ -565,9 +729,12 @@ export function getAppSnapshot() {
     cliente_id: string;
     fecha_pedido: string;
     estado: string;
+    estado_pago: string;
     subtotal: number;
     iva: number;
     total: number;
+    coste_total_pedido: number;
+    beneficio_total: number;
     observaciones: string | null;
     escenario_demo: string | null;
     cliente_nombre: string;
@@ -587,6 +754,7 @@ export function getAppSnapshot() {
       cantidad_desde_stock: number;
       cantidad_a_fabricar: number;
       precio_unitario: number;
+      precio_total_linea: number;
       gramos_totales: number;
       coste_material: number;
       coste_electricidad_total: number;
@@ -705,6 +873,9 @@ export function getAppSnapshot() {
     codigo: string;
     product_id: string;
     cantidad_disponible: number;
+    unidades_stock: number;
+    unidades_reservadas: number;
+    unidades_disponibles: number;
     ubicacion: string | null;
     coste_unitario: number;
     precio_venta: number;
@@ -730,7 +901,17 @@ export function getAppSnapshot() {
     coste_hora: number;
     ubicacion: string | null;
     fecha_actualizacion: string;
-  }>(`SELECT * FROM printers ORDER BY codigo ASC, nombre ASC`);
+    orden_activa_codigo: string | null;
+  }>(
+    `SELECT
+       pr.*,
+       mo.codigo AS orden_activa_codigo
+     FROM printers pr
+     LEFT JOIN manufacturing_orders mo
+       ON mo.impresora_id = pr.id
+      AND mo.estado = 'INICIADA'
+     ORDER BY pr.codigo ASC, pr.nombre ASC`,
+  );
 
   const inventoryMovements = rows<{
     id: string;
@@ -861,34 +1042,73 @@ export function createMaterialRecord(input: {
   marca: string;
   tipo: string;
   color: string;
+  tipoColor?: string;
+  efecto?: string;
+  colorBase?: string;
+  nombreComercial?: string;
+  diametroMm?: number;
+  pesoSpoolG?: number;
+  tempExtrusor?: number;
+  tempCama?: number;
   precioKg: number;
   stockActualG: number;
   stockMinimoG: number;
   proveedor?: string;
+  notas?: string;
 }) {
   if (!input.nombre.trim() || !input.marca.trim() || !input.tipo.trim() || !input.color.trim()) {
     throw new Error("Material incompleto. Nombre, marca, tipo y color son obligatorios.");
   }
-  if (input.precioKg < 0 || input.stockActualG < 0 || input.stockMinimoG < 0) {
+  if (
+    input.precioKg < 0 ||
+    input.stockActualG < 0 ||
+    input.stockMinimoG < 0 ||
+    (input.diametroMm ?? 0) < 0 ||
+    (input.pesoSpoolG ?? 0) < 0 ||
+    (input.tempExtrusor ?? 0) < 0 ||
+    (input.tempCama ?? 0) < 0
+  ) {
     throw new Error("No se permiten importes ni stock negativos.");
   }
 
-  run(
-    `INSERT INTO materials
-      (id, codigo, nombre, marca, tipo, color, precio_kg, stock_actual_g, stock_minimo_g, proveedor, fecha_actualizacion)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    randomUUID(),
-    nextCode("materials", "MAT-"),
-    input.nombre.trim(),
-    input.marca.trim(),
-    input.tipo.trim(),
-    input.color.trim(),
-    roundMoney(input.precioKg),
-    Math.round(input.stockActualG),
-    Math.round(input.stockMinimoG),
-    input.proveedor?.trim() || null,
-    nowIso(),
-  );
+  const materialId = randomUUID();
+  transaction(() => {
+    run(
+      `INSERT INTO materials
+        (id, codigo, nombre, marca, tipo, color, tipo_color, efecto, color_base, nombre_comercial, diametro_mm, peso_spool_g, temp_extrusor, temp_cama, precio_kg, stock_actual_g, stock_minimo_g, proveedor, notas, fecha_actualizacion)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      materialId,
+      nextCode("materials", "MAT-"),
+      input.nombre.trim(),
+      input.marca.trim(),
+      input.tipo.trim(),
+      input.color.trim(),
+      input.tipoColor?.trim() || null,
+      input.efecto?.trim() || null,
+      input.colorBase?.trim() || null,
+      input.nombreComercial?.trim() || null,
+      input.diametroMm != null ? roundMoney(input.diametroMm) : null,
+      input.pesoSpoolG != null ? Math.round(input.pesoSpoolG) : null,
+      input.tempExtrusor != null ? Math.round(input.tempExtrusor) : null,
+      input.tempCama != null ? Math.round(input.tempCama) : null,
+      roundMoney(input.precioKg),
+      0,
+      Math.round(input.stockMinimoG),
+      input.proveedor?.trim() || null,
+      input.notas?.trim() || null,
+      nowIso(),
+    );
+
+    if (Math.round(input.stockActualG) > 0) {
+      applyMaterialInventoryMovement({
+        materialId,
+        tipo: "ENTRADA",
+        cantidadG: Math.round(input.stockActualG),
+        motivo: "Stock inicial del material",
+        referencia: "ALTA_MATERIAL",
+      });
+    }
+  });
 }
 
 export function updateMaterialRecord(input: {
@@ -897,15 +1117,31 @@ export function updateMaterialRecord(input: {
   marca: string;
   tipo: string;
   color: string;
+  tipoColor?: string;
+  efecto?: string;
+  colorBase?: string;
+  nombreComercial?: string;
+  diametroMm?: number;
+  pesoSpoolG?: number;
+  tempExtrusor?: number;
+  tempCama?: number;
   precioKg: number;
   stockActualG: number;
   stockMinimoG: number;
   proveedor?: string;
+  notas?: string;
 }) {
   if (!input.id || !input.nombre.trim() || !input.marca.trim() || !input.tipo.trim() || !input.color.trim()) {
     throw new Error("Material incompleto.");
   }
-  if (input.precioKg < 0 || input.stockMinimoG < 0) {
+  if (
+    input.precioKg < 0 ||
+    input.stockMinimoG < 0 ||
+    (input.diametroMm ?? 0) < 0 ||
+    (input.pesoSpoolG ?? 0) < 0 ||
+    (input.tempExtrusor ?? 0) < 0 ||
+    (input.tempCama ?? 0) < 0
+  ) {
     throw new Error("No se permiten importes ni stock minimo negativos.");
   }
 
@@ -919,15 +1155,24 @@ export function updateMaterialRecord(input: {
 
   run(
     `UPDATE materials
-     SET nombre = ?, marca = ?, tipo = ?, color = ?, precio_kg = ?, stock_minimo_g = ?, proveedor = ?, fecha_actualizacion = ?
+     SET nombre = ?, marca = ?, tipo = ?, color = ?, tipo_color = ?, efecto = ?, color_base = ?, nombre_comercial = ?, diametro_mm = ?, peso_spool_g = ?, temp_extrusor = ?, temp_cama = ?, precio_kg = ?, stock_minimo_g = ?, proveedor = ?, notas = ?, fecha_actualizacion = ?
      WHERE id = ?`,
     input.nombre.trim(),
     input.marca.trim(),
     input.tipo.trim(),
     input.color.trim(),
+    input.tipoColor?.trim() || null,
+    input.efecto?.trim() || null,
+    input.colorBase?.trim() || null,
+    input.nombreComercial?.trim() || null,
+    input.diametroMm != null ? roundMoney(input.diametroMm) : null,
+    input.pesoSpoolG != null ? Math.round(input.pesoSpoolG) : null,
+    input.tempExtrusor != null ? Math.round(input.tempExtrusor) : null,
+    input.tempCama != null ? Math.round(input.tempCama) : null,
     roundMoney(input.precioKg),
     Math.round(input.stockMinimoG),
     input.proveedor?.trim() || null,
+    input.notas?.trim() || null,
     nowIso(),
     input.id,
   );
@@ -940,6 +1185,9 @@ export function createProductRecord(input: {
   gramosEstimados: number;
   tiempoImpresionHoras: number;
   costeElectricidad: number;
+  costeMaquina?: number;
+  costeManoObra?: number;
+  costePostprocesado?: number;
   margen: number;
   pvp: number;
   materialId: string;
@@ -949,7 +1197,14 @@ export function createProductRecord(input: {
     throw new Error("No se puede crear un producto sin material principal.");
   }
   requirePositiveInteger(input.gramosEstimados, "Los gramos estimados deben ser positivos.");
-  if (input.tiempoImpresionHoras <= 0 || input.pvp <= 0 || input.costeElectricidad < 0) {
+  if (
+    input.tiempoImpresionHoras <= 0 ||
+    input.pvp <= 0 ||
+    input.costeElectricidad < 0 ||
+    (input.costeMaquina ?? 0) < 0 ||
+    (input.costeManoObra ?? 0) < 0 ||
+    (input.costePostprocesado ?? 0) < 0
+  ) {
     throw new Error("Revisa el producto: tiempo, PVP y costes deben ser validos.");
   }
 
@@ -962,8 +1217,8 @@ export function createProductRecord(input: {
   transaction(() => {
     run(
       `INSERT INTO products
-        (id, codigo, nombre, descripcion, enlace_modelo, gramos_estimados, tiempo_impresion_horas, coste_electricidad, margen, pvp, material_id, activo)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, codigo, nombre, descripcion, enlace_modelo, gramos_estimados, tiempo_impresion_horas, coste_electricidad, coste_maquina, coste_mano_obra, coste_postprocesado, margen, pvp, material_id, activo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       productId,
       nextCode("products", "PRO-"),
       input.nombre.trim(),
@@ -972,6 +1227,9 @@ export function createProductRecord(input: {
       Math.round(input.gramosEstimados),
       roundMoney(input.tiempoImpresionHoras),
       roundMoney(input.costeElectricidad),
+      roundMoney(input.costeMaquina ?? 0),
+      roundMoney(input.costeManoObra ?? 0),
+      roundMoney(input.costePostprocesado ?? 0),
       roundMoney(input.margen),
       roundMoney(input.pvp),
       input.materialId,
@@ -997,6 +1255,9 @@ export function updateProductRecord(input: {
   gramosEstimados: number;
   tiempoImpresionHoras: number;
   costeElectricidad: number;
+  costeMaquina?: number;
+  costeManoObra?: number;
+  costePostprocesado?: number;
   margen: number;
   pvp: number;
   materialId: string;
@@ -1006,7 +1267,14 @@ export function updateProductRecord(input: {
     throw new Error("Producto incompleto.");
   }
   requirePositiveInteger(input.gramosEstimados, "Los gramos estimados deben ser positivos.");
-  if (input.tiempoImpresionHoras <= 0 || input.pvp <= 0 || input.costeElectricidad < 0) {
+  if (
+    input.tiempoImpresionHoras <= 0 ||
+    input.pvp <= 0 ||
+    input.costeElectricidad < 0 ||
+    (input.costeMaquina ?? 0) < 0 ||
+    (input.costeManoObra ?? 0) < 0 ||
+    (input.costePostprocesado ?? 0) < 0
+  ) {
     throw new Error("Revisa el producto: tiempo, PVP y costes deben ser validos.");
   }
 
@@ -1018,7 +1286,7 @@ export function updateProductRecord(input: {
   transaction(() => {
     run(
       `UPDATE products
-       SET nombre = ?, descripcion = ?, enlace_modelo = ?, gramos_estimados = ?, tiempo_impresion_horas = ?, coste_electricidad = ?, margen = ?, pvp = ?, material_id = ?, activo = ?
+       SET nombre = ?, descripcion = ?, enlace_modelo = ?, gramos_estimados = ?, tiempo_impresion_horas = ?, coste_electricidad = ?, coste_maquina = ?, coste_mano_obra = ?, coste_postprocesado = ?, margen = ?, pvp = ?, material_id = ?, activo = ?
        WHERE id = ?`,
       input.nombre.trim(),
       input.descripcion?.trim() || null,
@@ -1026,6 +1294,9 @@ export function updateProductRecord(input: {
       Math.round(input.gramosEstimados),
       roundMoney(input.tiempoImpresionHoras),
       roundMoney(input.costeElectricidad),
+      roundMoney(input.costeMaquina ?? 0),
+      roundMoney(input.costeManoObra ?? 0),
+      roundMoney(input.costePostprocesado ?? 0),
       roundMoney(input.margen),
       roundMoney(input.pvp),
       input.materialId,
@@ -1077,23 +1348,30 @@ export function createOrderRecord(input: {
   const subtotal = roundMoney(
     calculations.reduce((sum, item) => sum + item.values.precioUnitario * item.line.quantity, 0),
   );
+  const costeTotalPedido = roundMoney(
+    calculations.reduce((sum, item) => sum + item.values.costeTotal, 0),
+  );
   const iva = roundMoney((subtotal * (input.vatRate ?? DEFAULT_VAT_RATE)) / 100);
   const total = roundMoney(subtotal + iva);
+  const beneficioTotal = roundMoney(subtotal - costeTotalPedido);
   const orderId = randomUUID();
 
   transaction(() => {
     run(
       `INSERT INTO orders
-        (id, codigo, cliente_id, fecha_pedido, estado, subtotal, iva, total, observaciones, escenario_demo)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, codigo, cliente_id, fecha_pedido, estado, estado_pago, subtotal, iva, total, coste_total_pedido, beneficio_total, observaciones, escenario_demo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       orderId,
       codigo,
       input.clienteId,
       nowIso(),
       "BORRADOR",
+      "NO_FACTURADO",
       subtotal,
       iva,
       total,
+      costeTotalPedido,
+      beneficioTotal,
       input.observaciones?.trim() || null,
       input.scenarioTag ?? null,
     );
@@ -1101,8 +1379,8 @@ export function createOrderRecord(input: {
     for (const item of calculations) {
       run(
         `INSERT INTO order_lines
-          (id, codigo, pedido_id, producto_id, cantidad, cantidad_desde_stock, cantidad_a_fabricar, precio_unitario, gramos_totales, coste_material, coste_electricidad_total, coste_impresora_total, coste_total, beneficio)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, codigo, pedido_id, producto_id, cantidad, cantidad_desde_stock, cantidad_a_fabricar, precio_unitario, precio_total_linea, gramos_totales, coste_material, coste_electricidad_total, coste_impresora_total, coste_total, beneficio)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         randomUUID(),
         nextCode("order_lines", "LIN-"),
         orderId,
@@ -1111,6 +1389,7 @@ export function createOrderRecord(input: {
         0,
         0,
         item.values.precioUnitario,
+        item.values.precioTotalLinea,
         item.values.gramosTotales,
         item.values.costeMaterial,
         item.values.costeElectricidadTotal,
@@ -1121,6 +1400,7 @@ export function createOrderRecord(input: {
     }
 
     registerOrderHistory(orderId, "BORRADOR", "Pedido creado en borrador.");
+    recalculateOrderTotals(orderId, input.vatRate ?? DEFAULT_VAT_RATE);
   });
 
   return orderId;
@@ -1179,7 +1459,19 @@ export function updateInvoiceRecord(input: {
   if (!input.id) {
     throw new Error("La factura necesita ID.");
   }
-  run(`UPDATE invoices SET estado_pago = ? WHERE id = ?`, input.estadoPago, input.id);
+  if (!["PENDIENTE", "PAGADA"].includes(input.estadoPago)) {
+    throw new Error("Estado de pago no valido.");
+  }
+
+  const invoice = row<{ pedido_id: string }>(`SELECT pedido_id FROM invoices WHERE id = ?`, input.id);
+  if (!invoice) {
+    throw new Error("La factura no existe.");
+  }
+
+  transaction(() => {
+    run(`UPDATE invoices SET estado_pago = ? WHERE id = ?`, input.estadoPago, input.id);
+    run(`UPDATE orders SET estado_pago = ? WHERE id = ?`, input.estadoPago, invoice.pedido_id);
+  });
 }
 
 export function createPrinterRecord(input: {
@@ -1318,6 +1610,7 @@ export function updateFinishedInventoryRecord(input: {
         nowIso(),
         input.id,
       );
+      syncFinishedInventoryMetrics(current.product_id);
       return;
     }
 
@@ -1431,10 +1724,11 @@ export function confirmOrder(orderId: string) {
 
       run(
         `UPDATE order_lines
-         SET cantidad_desde_stock = ?, cantidad_a_fabricar = ?, coste_material = ?, coste_electricidad_total = ?, coste_impresora_total = 0, coste_total = ?, beneficio = ?
+         SET cantidad_desde_stock = ?, cantidad_a_fabricar = ?, precio_total_linea = ?, coste_material = ?, coste_electricidad_total = ?, coste_impresora_total = 0, coste_total = ?, beneficio = ?
          WHERE id = ?`,
         fromStock,
         toManufacture,
+        roundMoney(line.precio_unitario * line.cantidad),
         costs.costeMaterial,
         costs.costeElectricidadTotal,
         costs.costeTotal,
@@ -1513,6 +1807,8 @@ export function confirmOrder(orderId: string) {
           ? incidents.join(" ")
           : `Pedido confirmado. ${totalFromStock} unidades salen de stock y ${totalToManufacture} pasan a fabricacion.`,
     );
+    recalculateOrderTotals(orderId);
+    syncFinishedInventoryMetricsForOrder(orderId);
   });
 
   return {
@@ -1566,8 +1862,12 @@ export function updateOrderRecord(input: {
   const subtotal = roundMoney(
     calculations.reduce((sum, item) => sum + item.values.precioUnitario * item.line.quantity, 0),
   );
+  const costeTotalPedido = roundMoney(
+    calculations.reduce((sum, item) => sum + item.values.costeTotal, 0),
+  );
   const iva = roundMoney((subtotal * DEFAULT_VAT_RATE) / 100);
   const total = roundMoney(subtotal + iva);
+  const beneficioTotal = roundMoney(subtotal - costeTotalPedido);
   const nextStatus = current.estado === "INCIDENCIA_STOCK" ? "INCIDENCIA_STOCK" : "BORRADOR";
 
   transaction(() => {
@@ -1575,7 +1875,7 @@ export function updateOrderRecord(input: {
     run(`DELETE FROM order_lines WHERE pedido_id = ?`, input.id);
     run(
       `UPDATE orders
-       SET cliente_id = ?, observaciones = ?, estado = ?, subtotal = ?, iva = ?, total = ?
+       SET cliente_id = ?, observaciones = ?, estado = ?, subtotal = ?, iva = ?, total = ?, coste_total_pedido = ?, beneficio_total = ?
        WHERE id = ?`,
       input.clienteId,
       input.observaciones?.trim() || null,
@@ -1583,14 +1883,16 @@ export function updateOrderRecord(input: {
       subtotal,
       iva,
       total,
+      costeTotalPedido,
+      beneficioTotal,
       input.id,
     );
 
     for (const item of calculations) {
       run(
         `INSERT INTO order_lines
-          (id, codigo, pedido_id, producto_id, cantidad, cantidad_desde_stock, cantidad_a_fabricar, precio_unitario, gramos_totales, coste_material, coste_electricidad_total, coste_impresora_total, coste_total, beneficio)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, codigo, pedido_id, producto_id, cantidad, cantidad_desde_stock, cantidad_a_fabricar, precio_unitario, precio_total_linea, gramos_totales, coste_material, coste_electricidad_total, coste_impresora_total, coste_total, beneficio)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         randomUUID(),
         nextCode("order_lines", "LIN-"),
         input.id,
@@ -1599,6 +1901,7 @@ export function updateOrderRecord(input: {
         0,
         0,
         item.values.precioUnitario,
+        item.values.precioTotalLinea,
         item.values.gramosTotales,
         item.values.costeMaterial,
         item.values.costeElectricidadTotal,
@@ -1615,6 +1918,8 @@ export function updateOrderRecord(input: {
         ? "Pedido editado manualmente. Mantiene incidencia hasta revalidar stock."
         : "Pedido editado manualmente. Vuelve a borrador para recalcular stock y fabricacion.",
     );
+    recalculateOrderTotals(input.id);
+    syncFinishedInventoryMetricsForOrder(input.id);
   });
 }
 
@@ -1850,8 +2155,9 @@ export function completeManufacturingOrder(manufacturingOrderId: string) {
     );
     run(
       `UPDATE order_lines
-       SET coste_material = ?, coste_electricidad_total = ?, coste_impresora_total = ?, coste_total = ?, beneficio = ?
+       SET precio_total_linea = ?, coste_material = ?, coste_electricidad_total = ?, coste_impresora_total = ?, coste_total = ?, beneficio = ?
        WHERE id = ?`,
+      roundMoney(manufacturingOrder.line_precio_unitario * (manufacturingOrder.line_cantidad_desde_stock + manufacturingOrder.cantidad)),
       updatedLineCosts.costeMaterial,
       updatedLineCosts.costeElectricidadTotal,
       updatedLineCosts.costeImpresoraTotal,
@@ -1913,6 +2219,8 @@ export function completeManufacturingOrder(manufacturingOrderId: string) {
         ? "Todas las lineas fabricables estan completadas. Pedido listo."
         : `Fabricacion completada para ${manufacturingOrder.producto_nombre}.`,
     );
+    recalculateOrderTotals(manufacturingOrder.pedido_id);
+    syncFinishedInventoryMetrics(manufacturingOrder.producto_id);
   });
 
   return {
@@ -1955,6 +2263,7 @@ export function deliverOrder(orderId: string) {
   transaction(() => {
     run(`UPDATE orders SET estado = ? WHERE id = ?`, "ENTREGADO", orderId);
     registerOrderHistory(orderId, "ENTREGADO", "Pedido entregado al cliente.");
+    syncFinishedInventoryMetricsForOrder(orderId);
   });
 }
 
@@ -2000,8 +2309,9 @@ export function generateInvoiceForOrder(orderId: string) {
       order.total,
       "PENDIENTE",
     );
-    run(`UPDATE orders SET estado = ? WHERE id = ?`, "FACTURADO", orderId);
+    run(`UPDATE orders SET estado = ?, estado_pago = ? WHERE id = ?`, "FACTURADO", "PENDIENTE", orderId);
     registerOrderHistory(orderId, "FACTURADO", `Factura ${codigo} generada.`);
+    syncFinishedInventoryMetricsForOrder(orderId);
   });
 }
 

@@ -687,6 +687,20 @@ export default async function Home({
                               </p>
                             </div>
                           </div>
+                          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                            <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Estado pago</p>
+                              <p className="mt-2 text-sm font-semibold">{order.estado_pago.toLowerCase()}</p>
+                            </div>
+                            <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Coste pedido</p>
+                              <p className="mt-2 text-sm font-semibold">{currency(order.coste_total_pedido)}</p>
+                            </div>
+                            <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Beneficio</p>
+                              <p className="mt-2 text-sm font-semibold">{currency(order.beneficio_total)}</p>
+                            </div>
+                          </div>
                           <div className="mt-4 space-y-3">
                             {order.lineas.map((line) => (
                               <div key={line.id} className="rounded-2xl border border-black/8 px-4 py-4">
@@ -700,7 +714,8 @@ export default async function Home({
                                     </p>
                                   </div>
                                   <div className="text-right text-sm">
-                                    <p>Coste total: {currency(line.coste_total + (line.coste_impresora_total ?? 0))}</p>
+                                    <p>Venta linea: {currency(line.precio_total_linea)}</p>
+                                    <p>Coste total: {currency(line.coste_total)}</p>
                                     <p className="text-[color:var(--muted)]">Beneficio: {currency(line.beneficio)}</p>
                                   </div>
                                 </div>
@@ -1074,6 +1089,11 @@ export default async function Home({
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <input name="costeElectricidad" type="number" min="0" step="0.01" placeholder="Coste electricidad" className="input" />
+                  <input name="costeMaquina" type="number" min="0" step="0.01" placeholder="Coste maquina" className="input" />
+                  <input name="costeManoObra" type="number" min="0" step="0.01" placeholder="Coste mano de obra" className="input" />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <input name="costePostprocesado" type="number" min="0" step="0.01" placeholder="Coste postprocesado" className="input" />
                   <input name="margen" type="number" step="0.01" placeholder="Margen" className="input" />
                   <input name="pvp" type="number" min="0.01" step="0.01" placeholder="PVP" className="input" />
                 </div>
@@ -1117,6 +1137,14 @@ export default async function Home({
                   <input name="color" placeholder="Color" className="input" />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
+                  <input name="tipoColor" placeholder="Tipo color" className="input" />
+                  <input name="nombreComercial" placeholder="Nombre comercial" className="input" />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <input name="colorBase" placeholder="Color base" className="input" />
+                  <input name="efecto" placeholder="Efecto" className="input" />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
                   <input name="precioKg" type="number" step="0.01" min="0" placeholder="Precio EUR/kg" className="input" />
                   <input name="proveedor" placeholder="Proveedor" className="input" />
                 </div>
@@ -1124,6 +1152,15 @@ export default async function Home({
                   <input name="stockActualG" type="number" min="0" placeholder="Stock actual (g)" className="input" />
                   <input name="stockMinimoG" type="number" min="0" placeholder="Stock minimo (g)" className="input" />
                 </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <input name="diametroMm" type="number" min="0" step="0.01" placeholder="Diametro mm" className="input" />
+                  <input name="pesoSpoolG" type="number" min="0" placeholder="Peso spool g" className="input" />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <input name="tempExtrusor" type="number" min="0" placeholder="Temp extrusor" className="input" />
+                  <input name="tempCama" type="number" min="0" placeholder="Temp cama" className="input" />
+                </div>
+                <textarea name="notas" rows={3} placeholder="Notas tecnicas" className="input" />
                 <SubmitButton pendingText="Creando...">Crear material</SubmitButton>
               </form>
 

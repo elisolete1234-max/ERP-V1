@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -34,6 +35,15 @@ function backfillCodes(database: DatabaseSync, table: string, prefix: string, or
   });
 }
 
+function nextCodeFromDatabase(database: DatabaseSync, table: string, prefix: string) {
+  const result = database
+    .prepare(`SELECT codigo FROM ${table} WHERE codigo LIKE ? ORDER BY codigo DESC LIMIT 1`)
+    .get(`${prefix}%`) as { codigo?: string } | undefined;
+  const current = result?.codigo ?? `${prefix}000`;
+  const numeric = Number(String(current).replace(prefix, "")) || 0;
+  return `${prefix}${String(numeric + 1).padStart(3, "0")}`;
+}
+
 function ensureIndexes(database: DatabaseSync) {
   database.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_codigo ON customers(codigo);
@@ -47,17 +57,83 @@ function ensureIndexes(database: DatabaseSync) {
   `);
 }
 
+function ensureMaterialMovementBaselines(database: DatabaseSync) {
+  const materials = database.prepare(
+    `SELECT id, codigo, stock_actual_g FROM materials ORDER BY rowid ASC`,
+  ).all() as Array<{ id: string; codigo: string | null; stock_actual_g: number }>;
+
+  for (const material of materials) {
+    const movementCount = database
+      .prepare(`SELECT COUNT(*) AS total FROM stock_movements WHERE material_id = ?`)
+      .get(material.id) as { total: number } | undefined;
+
+    if ((movementCount?.total ?? 0) === 0 && material.stock_actual_g > 0) {
+      database.prepare(
+        `INSERT INTO stock_movements
+          (id, codigo, material_id, tipo, cantidad_g, motivo, referencia, fecha)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        randomUUID(),
+        nextCodeFromDatabase(database, "stock_movements", "MOV-"),
+        material.id,
+        "ENTRADA",
+        Math.round(material.stock_actual_g),
+        "Stock inicial migrado a movimientos",
+        "MIGRACION_V2",
+        new Date().toISOString(),
+      );
+    }
+
+    const recalculatedStock = database.prepare(
+      `SELECT
+         COALESCE(SUM(
+           CASE
+             WHEN tipo = 'ENTRADA' THEN cantidad_g
+             WHEN tipo = 'SALIDA' THEN -cantidad_g
+             ELSE 0
+           END
+         ), 0) AS total
+       FROM stock_movements
+       WHERE material_id = ?`,
+    ).get(material.id) as { total: number } | undefined;
+
+    database.prepare(
+      `UPDATE materials SET stock_actual_g = ? WHERE id = ?`,
+    ).run(Math.round(recalculatedStock?.total ?? 0), material.id);
+  }
+}
+
 function migrateDatabase(database: DatabaseSync) {
   ensureColumn(database, "customers", "codigo", "TEXT");
   ensureColumn(database, "materials", "codigo", "TEXT");
+  ensureColumn(database, "materials", "tipo_color", "TEXT");
+  ensureColumn(database, "materials", "efecto", "TEXT");
+  ensureColumn(database, "materials", "color_base", "TEXT");
+  ensureColumn(database, "materials", "nombre_comercial", "TEXT");
+  ensureColumn(database, "materials", "diametro_mm", "REAL");
+  ensureColumn(database, "materials", "peso_spool_g", "INTEGER");
+  ensureColumn(database, "materials", "temp_extrusor", "INTEGER");
+  ensureColumn(database, "materials", "temp_cama", "INTEGER");
+  ensureColumn(database, "materials", "notas", "TEXT");
   ensureColumn(database, "products", "codigo", "TEXT");
+  ensureColumn(database, "products", "coste_maquina", "REAL DEFAULT 0");
+  ensureColumn(database, "products", "coste_mano_obra", "REAL DEFAULT 0");
+  ensureColumn(database, "products", "coste_postprocesado", "REAL DEFAULT 0");
   ensureColumn(database, "order_lines", "codigo", "TEXT");
   ensureColumn(database, "order_lines", "cantidad_desde_stock", "INTEGER DEFAULT 0");
   ensureColumn(database, "order_lines", "cantidad_a_fabricar", "INTEGER DEFAULT 0");
   ensureColumn(database, "order_lines", "coste_impresora_total", "REAL DEFAULT 0");
+  ensureColumn(database, "order_lines", "precio_total_linea", "REAL DEFAULT 0");
+  ensureColumn(database, "orders", "estado_pago", "TEXT DEFAULT 'NO_FACTURADO'");
+  ensureColumn(database, "orders", "coste_total_pedido", "REAL DEFAULT 0");
+  ensureColumn(database, "orders", "beneficio_total", "REAL DEFAULT 0");
   ensureColumn(database, "stock_movements", "codigo", "TEXT");
   ensureColumn(database, "manufacturing_orders", "impresora_id", "TEXT");
   ensureColumn(database, "manufacturing_orders", "coste_impresora_total", "REAL DEFAULT 0");
+  ensureColumn(database, "manufacturing_orders", "tiempo_estimado_horas", "REAL");
+  ensureColumn(database, "finished_product_inventory", "unidades_stock", "INTEGER DEFAULT 0");
+  ensureColumn(database, "finished_product_inventory", "unidades_reservadas", "INTEGER DEFAULT 0");
+  ensureColumn(database, "finished_product_inventory", "unidades_disponibles", "INTEGER DEFAULT 0");
   ensureIndexes(database);
   backfillCodes(database, "customers", "CLI-", "fecha_creacion ASC");
   backfillCodes(database, "materials", "MAT-", "fecha_actualizacion ASC");
@@ -67,6 +143,7 @@ function migrateDatabase(database: DatabaseSync) {
   backfillCodes(database, "manufacturing_orders", "OF-", "rowid ASC");
   backfillCodes(database, "stock_movements", "MOV-", "fecha ASC");
   backfillCodes(database, "invoices", "FAC-", "fecha ASC");
+  ensureMaterialMovementBaselines(database);
 }
 
 function createDatabase() {
@@ -92,10 +169,19 @@ function createDatabase() {
       marca TEXT NOT NULL,
       tipo TEXT NOT NULL,
       color TEXT NOT NULL,
+      tipo_color TEXT,
+      efecto TEXT,
+      color_base TEXT,
+      nombre_comercial TEXT,
+      diametro_mm REAL,
+      peso_spool_g INTEGER,
+      temp_extrusor INTEGER,
+      temp_cama INTEGER,
       precio_kg REAL NOT NULL,
       stock_actual_g INTEGER NOT NULL,
       stock_minimo_g INTEGER NOT NULL,
       proveedor TEXT,
+      notas TEXT,
       fecha_actualizacion TEXT NOT NULL
     );
 
@@ -108,6 +194,9 @@ function createDatabase() {
       gramos_estimados INTEGER NOT NULL,
       tiempo_impresion_horas REAL NOT NULL,
       coste_electricidad REAL NOT NULL,
+      coste_maquina REAL NOT NULL DEFAULT 0,
+      coste_mano_obra REAL NOT NULL DEFAULT 0,
+      coste_postprocesado REAL NOT NULL DEFAULT 0,
       margen REAL NOT NULL,
       pvp REAL NOT NULL,
       material_id TEXT NOT NULL,
@@ -121,9 +210,12 @@ function createDatabase() {
       cliente_id TEXT NOT NULL,
       fecha_pedido TEXT NOT NULL,
       estado TEXT NOT NULL,
+      estado_pago TEXT NOT NULL DEFAULT 'NO_FACTURADO',
       subtotal REAL NOT NULL,
       iva REAL NOT NULL,
       total REAL NOT NULL,
+      coste_total_pedido REAL NOT NULL DEFAULT 0,
+      beneficio_total REAL NOT NULL DEFAULT 0,
       observaciones TEXT,
       escenario_demo TEXT,
       FOREIGN KEY(cliente_id) REFERENCES customers(id) ON DELETE RESTRICT
@@ -138,6 +230,7 @@ function createDatabase() {
       cantidad_desde_stock INTEGER NOT NULL DEFAULT 0,
       cantidad_a_fabricar INTEGER NOT NULL DEFAULT 0,
       precio_unitario REAL NOT NULL,
+      precio_total_linea REAL NOT NULL DEFAULT 0,
       gramos_totales INTEGER NOT NULL,
       coste_material REAL NOT NULL,
       coste_electricidad_total REAL NOT NULL,
@@ -157,6 +250,7 @@ function createDatabase() {
       impresora_id TEXT,
       cantidad INTEGER NOT NULL,
       estado TEXT NOT NULL,
+      tiempo_estimado_horas REAL,
       fecha_inicio TEXT,
       fecha_fin TEXT,
       gramos_consumidos INTEGER,
@@ -241,6 +335,9 @@ function createDatabase() {
       codigo TEXT UNIQUE,
       product_id TEXT NOT NULL UNIQUE,
       cantidad_disponible INTEGER NOT NULL DEFAULT 0,
+      unidades_stock INTEGER NOT NULL DEFAULT 0,
+      unidades_reservadas INTEGER NOT NULL DEFAULT 0,
+      unidades_disponibles INTEGER NOT NULL DEFAULT 0,
       ubicacion TEXT,
       coste_unitario REAL NOT NULL DEFAULT 0,
       precio_venta REAL NOT NULL DEFAULT 0,

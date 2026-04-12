@@ -3,12 +3,17 @@
 import { useState } from "react";
 import {
   completeManufacturingAction,
+  confirmOrderAction,
+  deliverOrderAction,
+  generateInvoiceAction,
   startManufacturingAction,
+  retryOrderAction,
   updateFinishedInventoryAction,
   updateCustomerAction,
   updateInvoiceAction,
   updateManufacturingAction,
   updateMaterialAction,
+  updateOrderAction,
   updatePrinterAction,
   updateProductAction,
 } from "@/app/actions";
@@ -31,10 +36,19 @@ type Material = {
   marca: string;
   tipo: string;
   color: string;
+  tipo_color: string | null;
+  efecto: string | null;
+  color_base: string | null;
+  nombre_comercial: string | null;
+  diametro_mm: number | null;
+  peso_spool_g: number | null;
+  temp_extrusor: number | null;
+  temp_cama: number | null;
   precio_kg: number;
   stock_actual_g: number;
   stock_minimo_g: number;
   proveedor: string | null;
+  notas: string | null;
   fecha_actualizacion: string;
 };
 
@@ -47,6 +61,11 @@ type Product = {
   gramos_estimados: number;
   tiempo_impresion_horas: number;
   coste_electricidad: number;
+  coste_maquina: number;
+  coste_mano_obra: number;
+  coste_postprocesado: number;
+  coste_material_estimado: number;
+  coste_total_producto: number;
   margen: number;
   pvp: number;
   material_id: string;
@@ -94,6 +113,9 @@ type FinishedInventory = {
   codigo: string;
   product_id: string;
   cantidad_disponible: number;
+  unidades_stock: number;
+  unidades_reservadas: number;
+  unidades_disponibles: number;
   ubicacion: string | null;
   coste_unitario: number;
   precio_venta: number;
@@ -111,6 +133,7 @@ type Printer = {
   coste_hora: number;
   ubicacion: string | null;
   fecha_actualizacion: string;
+  orden_activa_codigo: string | null;
 };
 
 type MaterialOption = {
@@ -118,6 +141,44 @@ type MaterialOption = {
   codigo: string;
   nombre: string;
   color: string;
+};
+
+type CustomerOption = {
+  id: string;
+  codigo: string;
+  nombre: string;
+};
+
+type OrderLine = {
+  id: string;
+  codigo: string;
+  producto_id: string;
+  cantidad: number;
+  cantidad_desde_stock: number;
+  cantidad_a_fabricar: number;
+  precio_unitario: number;
+  precio_total_linea: number;
+  coste_total: number;
+  beneficio: number;
+  producto_nombre: string;
+};
+
+type OrderCard = {
+  id: string;
+  codigo: string;
+  cliente_id: string;
+  cliente_nombre: string;
+  fecha_pedido: string;
+  estado: string;
+  estado_pago: string;
+  total: number;
+  coste_total_pedido: number;
+  beneficio_total: number;
+  observaciones: string | null;
+  lineas: OrderLine[];
+  historial: Array<{ fecha: string; nota: string }>;
+  ordenesFabricacion: Array<{ id: string }>;
+  factura: { id: string } | null;
 };
 
 function formatCurrency(value: number) {
@@ -168,6 +229,18 @@ function rowHighlight(level?: "danger" | "warn" | "attention" | null) {
   if (level === "warn") return "row-warn";
   if (level === "attention") return "row-attention";
   return "";
+}
+
+function orderStatusTone(status: string) {
+  if (status === "FACTURADO") return "success";
+  if (status === "LISTO" || status === "ENTREGADO") return "info";
+  if (status === "INCIDENCIA_STOCK") return "danger";
+  if (status === "BORRADOR" || status === "CONFIRMADO" || status === "EN_PRODUCCION") return "warn";
+  return "neutral";
+}
+
+function orderStatusLabel(status: string) {
+  return status.toLowerCase().replaceAll("_", " ");
 }
 
 function ActionButtons({
@@ -269,6 +342,217 @@ export function CustomersInlineTable({ customers }: { customers: Customer[] }) {
   );
 }
 
+export function OrdersInlineBoard({
+  orders,
+  customers,
+  products,
+}: {
+  orders: OrderCard[];
+  customers: CustomerOption[];
+  products: MaterialOption[];
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  return (
+    <div className="space-y-4">
+      {orders.map((order) => {
+        const editing = editingId === order.id;
+        const latestHistory = order.historial[0] ?? null;
+        const editable = ["BORRADOR", "INCIDENCIA_STOCK"].includes(order.estado);
+        const lineDraft = [...order.lineas.slice(0, 3), ...Array.from({ length: Math.max(0, 3 - order.lineas.length) }, () => null)];
+
+        return (
+          <article
+            key={order.id}
+            className={`panel-muted p-5 ${
+              order.estado === "INCIDENCIA_STOCK"
+                ? rowHighlight("danger")
+                : order.estado === "LISTO" || order.estado === "ENTREGADO"
+                  ? rowHighlight("attention")
+                  : ""
+            }`}
+          >
+            {editing ? (
+              <form action={updateOrderAction} className="space-y-4">
+                <input type="hidden" name="id" value={order.id} />
+                <input type="hidden" name="estado" value={order.estado} />
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{order.codigo}</p>
+                    <h4 className="mt-2 text-lg font-semibold">Editar pedido</h4>
+                  </div>
+                  <div className="flex gap-2">
+                    <SubmitButton variant="chip-dark" pendingText="Guardando...">Guardar</SubmitButton>
+                    <button
+                      type="button"
+                      onClick={() => setEditingId(null)}
+                      className="rounded-full border border-black/10 bg-white/80 px-3.5 py-2 text-xs font-semibold text-[color:var(--muted-strong)]"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+                <select name="clienteId" className="input" defaultValue={order.cliente_id}>
+                  {customers.map((customer) => (
+                    <option key={customer.id} value={customer.id}>
+                      {customer.codigo} - {customer.nombre}
+                    </option>
+                  ))}
+                </select>
+                {lineDraft.map((line, index) => (
+                  <div key={`${order.id}-line-${index}`} className="grid gap-3 sm:grid-cols-[1.45fr_0.55fr_0.8fr]">
+                    <select
+                      name={`producto_${index + 1}`}
+                      className="input"
+                      defaultValue={line?.producto_id ?? ""}
+                    >
+                      <option value="">Producto linea {index + 1}</option>
+                      {products.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.codigo} - {product.nombre} - {product.color}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      name={`cantidad_${index + 1}`}
+                      type="number"
+                      min="0"
+                      defaultValue={line?.cantidad ?? ""}
+                      className="input"
+                    />
+                    <input
+                      name={`precio_${index + 1}`}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      defaultValue={line?.precio_unitario ?? ""}
+                      className="input"
+                    />
+                  </div>
+                ))}
+                <textarea
+                  name="observaciones"
+                  rows={3}
+                  defaultValue={order.observaciones ?? ""}
+                  className="input"
+                  placeholder="Observaciones"
+                />
+              </form>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{order.codigo}</p>
+                    <h4 className="mt-2 text-lg font-semibold">{order.cliente_nombre}</h4>
+                    <p className="mt-2 text-sm text-[color:var(--muted)]">{formatDate(order.fecha_pedido)}</p>
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(orderStatusTone(order.estado))}`}>
+                      {orderStatusLabel(order.estado)}
+                    </span>
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_pago === "PAGADA" ? "success" : "neutral")}`}>
+                      pago: {order.estado_pago.toLowerCase()}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Total pedido</p>
+                    <p className="mt-2 text-lg font-semibold">{formatCurrency(order.total)}</p>
+                  </div>
+                  <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Coste</p>
+                    <p className="mt-2 text-sm font-semibold">{formatCurrency(order.coste_total_pedido)}</p>
+                  </div>
+                  <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Beneficio</p>
+                    <p className="mt-2 text-sm font-semibold">{formatCurrency(order.beneficio_total)}</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {order.lineas.map((line) => (
+                    <div key={line.id} className="rounded-2xl border border-black/8 px-4 py-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold">
+                            {line.producto_nombre} x{line.cantidad}
+                          </p>
+                          <p className="mt-1 text-sm text-[color:var(--muted)]">
+                            Desde stock: {line.cantidad_desde_stock} uds - A fabricar: {line.cantidad_a_fabricar} uds
+                          </p>
+                        </div>
+                        <div className="text-right text-sm">
+                          <p>Venta linea: {formatCurrency(line.precio_total_linea)}</p>
+                          <p>Coste linea: {formatCurrency(line.coste_total)}</p>
+                          <p className="text-[color:var(--muted)]">Beneficio: {formatCurrency(line.beneficio)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {latestHistory ? (
+                  <p className="mt-4 text-sm text-[color:var(--muted)]">
+                    Ultimo cambio: {formatDate(latestHistory.fecha)} - {latestHistory.nota}
+                  </p>
+                ) : null}
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {editable ? (
+                    <button
+                      type="button"
+                      onClick={() => setEditingId(order.id)}
+                      className="rounded-full border border-[rgba(37,99,235,0.12)] bg-[color:var(--accent-soft)] px-3.5 py-2 text-xs font-semibold text-[color:var(--accent-strong)]"
+                    >
+                      Editar
+                    </button>
+                  ) : null}
+                  {order.estado === "BORRADOR" ? (
+                    <form action={confirmOrderAction}>
+                      <input type="hidden" name="pedidoId" value={order.id} />
+                      <SubmitButton variant="chip-dark" pendingText="Confirmando...">Confirmar pedido</SubmitButton>
+                    </form>
+                  ) : null}
+                  {order.estado === "INCIDENCIA_STOCK" ? (
+                    <form action={retryOrderAction}>
+                      <input type="hidden" name="pedidoId" value={order.id} />
+                      <SubmitButton variant="chip-dark" pendingText="Reintentando...">Reintentar</SubmitButton>
+                    </form>
+                  ) : null}
+                  {order.estado === "LISTO" ? (
+                    <form action={deliverOrderAction}>
+                      <input type="hidden" name="pedidoId" value={order.id} />
+                      <SubmitButton variant="chip-dark" pendingText="Entregando...">Entregar</SubmitButton>
+                    </form>
+                  ) : null}
+                  {order.estado === "ENTREGADO" ? (
+                    <form action={generateInvoiceAction}>
+                      <input type="hidden" name="pedidoId" value={order.id} />
+                      <SubmitButton variant="chip-dark" pendingText="Facturando...">Generar factura</SubmitButton>
+                    </form>
+                  ) : null}
+                  {(order.estado === "CONFIRMADO" || order.estado === "EN_PRODUCCION") && order.ordenesFabricacion.length > 0 ? (
+                    <span className="rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[color:var(--muted)]">
+                      Fabricacion pendiente en cola
+                    </span>
+                  ) : null}
+                  {order.factura ? (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">
+                      Factura generada
+                    </span>
+                  ) : null}
+                </div>
+              </>
+            )}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -306,17 +590,41 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
               <td>{material.codigo}</td>
               <td>
                 {editing ? (
-                  <div className="space-y-2">
-                    <input form={formId} name="nombre" defaultValue={material.nombre} className="input" />
-                    <input form={formId} name="marca" defaultValue={material.marca} className="input" />
-                    <input form={formId} name="tipo" defaultValue={material.tipo} className="input" />
-                    <input form={formId} name="color" defaultValue={material.color} className="input" />
-                    <input form={formId} name="proveedor" defaultValue={material.proveedor ?? ""} className="input" />
+                  <div className="space-y-3">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input form={formId} name="nombre" defaultValue={material.nombre} className="input" placeholder="Material" />
+                      <input form={formId} name="nombreComercial" defaultValue={material.nombre_comercial ?? ""} className="input" placeholder="Nombre comercial" />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input form={formId} name="marca" defaultValue={material.marca} className="input" placeholder="Marca" />
+                      <input form={formId} name="tipo" defaultValue={material.tipo} className="input" placeholder="Tipo" />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input form={formId} name="color" defaultValue={material.color} className="input" placeholder="Color visible" />
+                      <input form={formId} name="tipoColor" defaultValue={material.tipo_color ?? ""} className="input" placeholder="Tipo color" />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input form={formId} name="colorBase" defaultValue={material.color_base ?? ""} className="input" placeholder="Color base" />
+                      <input form={formId} name="efecto" defaultValue={material.efecto ?? ""} className="input" placeholder="Efecto" />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input form={formId} name="diametroMm" type="number" min="0" step="0.01" defaultValue={material.diametro_mm ?? ""} className="input" placeholder="Diametro mm" />
+                      <input form={formId} name="pesoSpoolG" type="number" min="0" defaultValue={material.peso_spool_g ?? ""} className="input" placeholder="Peso spool g" />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input form={formId} name="tempExtrusor" type="number" min="0" defaultValue={material.temp_extrusor ?? ""} className="input" placeholder="Temp extrusor" />
+                      <input form={formId} name="tempCama" type="number" min="0" defaultValue={material.temp_cama ?? ""} className="input" placeholder="Temp cama" />
+                    </div>
+                    <input form={formId} name="proveedor" defaultValue={material.proveedor ?? ""} className="input" placeholder="Proveedor" />
+                    <textarea form={formId} name="notas" defaultValue={material.notas ?? ""} rows={2} className="input" placeholder="Notas" />
                   </div>
                 ) : (
                   <div>
                     <div>{material.nombre} - {material.color}</div>
-                    <div className="text-xs text-[color:var(--muted)]">{material.marca} - {material.tipo}</div>
+                    <div className="text-xs text-[color:var(--muted)]">
+                      {material.marca} - {material.tipo}
+                      {material.nombre_comercial ? ` - ${material.nombre_comercial}` : ""}
+                    </div>
                   </div>
                 )}
               </td>
@@ -396,7 +704,7 @@ export function ProductsInlineTable({
               <td>{product.codigo}</td>
               <td>
                 {editing ? (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     <input form={formId} name="nombre" defaultValue={product.nombre} className="input" />
                     <textarea form={formId} name="descripcion" defaultValue={product.descripcion ?? ""} rows={2} className="input" />
                     <input form={formId} name="enlaceModelo" defaultValue={product.enlace_modelo ?? ""} className="input" />
@@ -428,13 +736,27 @@ export function ProductsInlineTable({
               <td>
                 {editing ? (
                   <div className="space-y-2">
-                    <input form={formId} name="gramosEstimados" type="number" min="1" defaultValue={product.gramos_estimados} className="input" />
-                    <input form={formId} name="tiempoImpresionHoras" type="number" min="0.1" step="0.1" defaultValue={product.tiempo_impresion_horas} className="input" />
-                    <input form={formId} name="costeElectricidad" type="number" min="0" step="0.01" defaultValue={product.coste_electricidad} className="input" />
-                    <input form={formId} name="margen" type="number" step="0.01" defaultValue={product.margen} className="input" />
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input form={formId} name="gramosEstimados" type="number" min="1" defaultValue={product.gramos_estimados} className="input" placeholder="Gramos" />
+                      <input form={formId} name="tiempoImpresionHoras" type="number" min="0.1" step="0.1" defaultValue={product.tiempo_impresion_horas} className="input" placeholder="Tiempo impresion" />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input form={formId} name="costeElectricidad" type="number" min="0" step="0.01" defaultValue={product.coste_electricidad} className="input" placeholder="Coste electricidad" />
+                      <input form={formId} name="costeMaquina" type="number" min="0" step="0.01" defaultValue={product.coste_maquina} className="input" placeholder="Coste maquina" />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input form={formId} name="costeManoObra" type="number" min="0" step="0.01" defaultValue={product.coste_mano_obra} className="input" placeholder="Coste mano de obra" />
+                      <input form={formId} name="costePostprocesado" type="number" min="0" step="0.01" defaultValue={product.coste_postprocesado} className="input" placeholder="Coste postprocesado" />
+                    </div>
+                    <input form={formId} name="margen" type="number" step="0.01" defaultValue={product.margen} className="input" placeholder="Margen" />
                   </div>
                 ) : (
-                  formatCurrency((product.precio_kg / 1000) * product.gramos_estimados + product.coste_electricidad)
+                  <div>
+                    <div>Receta: {formatCurrency(product.coste_total_producto)}</div>
+                    <div className="text-xs text-[color:var(--muted)]">
+                      Material {formatCurrency(product.coste_material_estimado)} · Maquina {formatCurrency(product.coste_maquina)}
+                    </div>
+                  </div>
                 )}
               </td>
               <td>
@@ -626,7 +948,7 @@ export function FinishedInventoryInlineTable({
   return (
     <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Producto</th><th>Disponible</th><th>Ubicacion</th><th>Coste/PVP</th></tr>
+        <tr><th>Acciones</th><th>ID</th><th>Producto</th><th>Stock</th><th>Ubicacion</th><th>Coste/PVP</th></tr>
       </thead>
       <tbody>
         {finishedInventory.map((item) => {
@@ -659,9 +981,14 @@ export function FinishedInventoryInlineTable({
                 {editing ? (
                   <input form={formId} name="cantidadDisponible" type="number" min="0" defaultValue={item.cantidad_disponible} className="input" />
                 ) : (
-                  <span className={item.cantidad_disponible === 0 ? "text-[color:var(--danger)]" : ""}>
-                    {item.cantidad_disponible} uds
-                  </span>
+                  <div>
+                    <div className={item.cantidad_disponible === 0 ? "text-[color:var(--danger)]" : ""}>
+                      Disp: {item.unidades_disponibles} uds
+                    </div>
+                    <div className="text-xs text-[color:var(--muted)]">
+                      Total: {item.unidades_stock} · Reservadas: {item.unidades_reservadas}
+                    </div>
+                  </div>
                 )}
               </td>
               <td>
@@ -736,7 +1063,10 @@ export function PrintersInlineTable({ printers }: { printers: Printer[] }) {
                 ) : (
                   <div>
                     <div>{printer.nombre}</div>
-                    <div className="text-xs text-[color:var(--muted)]">{printer.ubicacion || "-"}</div>
+                    <div className="text-xs text-[color:var(--muted)]">
+                      {printer.ubicacion || "-"}
+                      {printer.orden_activa_codigo ? ` · Orden ${printer.orden_activa_codigo}` : ""}
+                    </div>
                   </div>
                 )}
               </td>
