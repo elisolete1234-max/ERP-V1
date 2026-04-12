@@ -13,10 +13,10 @@ import {
   generateInvoiceForOrder,
   resetDatabase,
   restockFinishedProduct,
-  runDemoSimulation,
   startManufacturingOrder,
   updateManufacturingOrderRecord,
   updateMaterialRecord,
+  updateProductRecord,
   updateOrderRecord,
   updatePrinterRecord,
   updateInvoiceRecord,
@@ -72,6 +72,19 @@ function setupSingleProductFixture(input?: {
 
 beforeEach(() => {
   resetDatabase();
+});
+
+test("la base reseteada arranca sin datos de negocio", () => {
+  assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM customers`)!.total, 0);
+  assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM materials`)!.total, 0);
+  assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM products`)!.total, 0);
+  assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM orders`)!.total, 0);
+  assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM order_lines`)!.total, 0);
+  assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM manufacturing_orders`)!.total, 0);
+  assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM printers`)!.total, 0);
+  assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM finished_product_inventory`)!.total, 0);
+  assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM inventory_movements`)!.total, 0);
+  assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices`)!.total, 0);
 });
 
 test("usa stock terminado completo sin fabricar", () => {
@@ -226,6 +239,100 @@ test("no permite modificar stock actual del material sin movimiento", () => {
       }),
     /stock actual solo se modifica/i,
   );
+});
+
+test("editar material conserva campos opcionales vacios y guarda el detalle V2", () => {
+  const { materialId } = setupSingleProductFixture();
+
+  updateMaterialRecord({
+    id: materialId,
+    nombre: "PLA Studio",
+    marca: "ColorLab",
+    tipo: "PLA",
+    color: "Blanco",
+    tipoColor: "Gradient",
+    efecto: "Silk",
+    colorBase: "Blanco",
+    nombreComercial: "Pearl Flow",
+    diametroMm: undefined,
+    pesoSpoolG: 1000,
+    tempExtrusor: 210,
+    tempCama: undefined,
+    precioKg: 21.5,
+    stockActualG: 1000,
+    stockMinimoG: 120,
+    proveedor: "Proveedor X",
+    notas: "Perfil verificado",
+  });
+
+  const material = row<{
+    nombre: string;
+    marca: string;
+    tipo_color: string | null;
+    efecto: string | null;
+    color_base: string | null;
+    nombre_comercial: string | null;
+    diametro_mm: number | null;
+    peso_spool_g: number | null;
+    temp_extrusor: number | null;
+    temp_cama: number | null;
+  }>(
+    `SELECT nombre, marca, tipo_color, efecto, color_base, nombre_comercial, diametro_mm, peso_spool_g, temp_extrusor, temp_cama
+     FROM materials
+     WHERE id = ?`,
+    materialId,
+  )!;
+
+  assert.equal(material.nombre, "PLA Studio");
+  assert.equal(material.marca, "ColorLab");
+  assert.equal(material.tipo_color, "Gradient");
+  assert.equal(material.efecto, "Silk");
+  assert.equal(material.color_base, "Blanco");
+  assert.equal(material.nombre_comercial, "Pearl Flow");
+  assert.equal(material.diametro_mm, null);
+  assert.equal(material.peso_spool_g, 1000);
+  assert.equal(material.temp_extrusor, 210);
+  assert.equal(material.temp_cama, null);
+});
+
+test("editar producto actualiza la receta V2 sin romper el producto", () => {
+  const { productId, materialId } = setupSingleProductFixture();
+
+  updateProductRecord({
+    id: productId,
+    nombre: "Producto receta",
+    descripcion: "Version revisada",
+    enlaceModelo: "https://example.com/modelo",
+    gramosEstimados: 125,
+    tiempoImpresionHoras: 2.5,
+    costeElectricidad: 1.2,
+    costeMaquina: 2.1,
+    costeManoObra: 0.8,
+    costePostprocesado: 0.6,
+    margen: 12,
+    pvp: 34,
+    materialId,
+    activo: true,
+  });
+
+  const product = row<{
+    nombre: string;
+    coste_maquina: number;
+    coste_mano_obra: number;
+    coste_postprocesado: number;
+    gramos_estimados: number;
+  }>(
+    `SELECT nombre, coste_maquina, coste_mano_obra, coste_postprocesado, gramos_estimados
+     FROM products
+     WHERE id = ?`,
+    productId,
+  )!;
+
+  assert.equal(product.nombre, "Producto receta");
+  assert.equal(product.coste_maquina, 2.1);
+  assert.equal(product.coste_mano_obra, 0.8);
+  assert.equal(product.coste_postprocesado, 0.6);
+  assert.equal(product.gramos_estimados, 125);
 });
 
 test("crear material con stock inicial genera movimiento y deja el cache consistente", () => {
@@ -450,12 +557,4 @@ test("el inventario terminado refleja stock reservado y disponible", () => {
   )!;
   assert.equal(afterDelivery.unidades_reservadas, 0);
   assert.equal(afterDelivery.unidades_stock, 2);
-});
-
-test("la demo completa genera escenarios y trazabilidad", () => {
-  runDemoSimulation();
-  const scenarios = row<{ total: number }>(`SELECT COUNT(*) AS total FROM demo_scenario_results`)!.total;
-  const movements = row<{ total: number }>(`SELECT COUNT(*) AS total FROM inventory_movements`)!.total;
-  assert.ok(scenarios >= 4);
-  assert.ok(movements > 0);
 });

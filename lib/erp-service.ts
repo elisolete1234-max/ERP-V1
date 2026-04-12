@@ -582,62 +582,6 @@ function restoreOrderInventoryAllocations(orderId: string, orderCode: string) {
   syncFinishedInventoryMetricsForOrder(orderId);
 }
 
-function insertDemoScenarioResult(input: {
-  demoRunId: string;
-  codigo: string;
-  titulo: string;
-  cliente: string;
-  pedidoCodigo: string;
-  productos: string;
-  material: string;
-  stockInicial: number;
-  gramosRequeridos: number;
-  validacion: string;
-  ordenFabricacion?: string | null;
-  materialesConsumidos?: string | null;
-  stockFinal?: number | null;
-  costeMaterial?: number | null;
-  costeElectricidad?: number | null;
-  costeTotal?: number | null;
-  beneficio?: number | null;
-  subtotalFactura?: number | null;
-  ivaFactura?: number | null;
-  totalFactura?: number | null;
-  incidencias?: string | null;
-  estadoFinalPedido: string;
-  resumenFlujo: string;
-}) {
-  run(
-    `INSERT INTO demo_scenario_results
-      (id, demo_run_id, codigo, titulo, cliente, pedido_codigo, productos, material, stock_inicial_g, gramos_requeridos, validacion_stock, orden_fabricacion, materiales_consumidos, stock_final_g, coste_material, coste_electricidad, coste_total, beneficio, subtotal_factura, iva_factura, total_factura, incidencias, estado_final_pedido, resumen_flujo)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    randomUUID(),
-    input.demoRunId,
-    input.codigo,
-    input.titulo,
-    input.cliente,
-    input.pedidoCodigo,
-    input.productos,
-    input.material,
-    input.stockInicial,
-    input.gramosRequeridos,
-    input.validacion,
-    input.ordenFabricacion ?? null,
-    input.materialesConsumidos ?? null,
-    input.stockFinal ?? null,
-    input.costeMaterial ?? null,
-    input.costeElectricidad ?? null,
-    input.costeTotal ?? null,
-    input.beneficio ?? null,
-    input.subtotalFactura ?? null,
-    input.ivaFactura ?? null,
-    input.totalFactura ?? null,
-    input.incidencias ?? null,
-    input.estadoFinalPedido,
-    input.resumenFlujo,
-  );
-}
-
 export function getAppSnapshot() {
   const materialIds = rows<{ id: string }>(`SELECT id FROM materials`);
   for (const item of materialIds) {
@@ -736,7 +680,6 @@ export function getAppSnapshot() {
     coste_total_pedido: number;
     beneficio_total: number;
     observaciones: string | null;
-    escenario_demo: string | null;
     cliente_nombre: string;
   }>(
     `SELECT o.*, c.nombre AS cliente_nombre
@@ -788,7 +731,23 @@ export function getAppSnapshot() {
       nota: string;
       fecha: string;
     }>(`SELECT * FROM order_status_history WHERE pedido_id = ? ORDER BY fecha DESC`, order.id),
-    ordenesFabricacion: rows(
+    ordenesFabricacion: rows<{
+      id: string;
+      codigo: string;
+      pedido_id: string;
+      linea_pedido_id: string;
+      producto_id: string;
+      cantidad: number;
+      estado: string;
+      impresora_id: string | null;
+      tiempo_estimado_horas: number | null;
+      fecha_inicio: string | null;
+      fecha_fin: string | null;
+      gramos_consumidos: number | null;
+      tiempo_real_horas: number | null;
+      coste_impresora_total: number | null;
+      incidencia: string | null;
+    }>(
       `SELECT * FROM manufacturing_orders WHERE pedido_id = ? ORDER BY codigo ASC`,
       order.id,
     ),
@@ -926,37 +885,6 @@ export function getAppSnapshot() {
     referencia: string;
   }>(`SELECT * FROM inventory_movements ORDER BY fecha DESC, codigo DESC`);
 
-  const demoRun = row<{ id: string; ejecutado_en: string }>(
-    `SELECT * FROM demo_runs ORDER BY ejecutado_en DESC LIMIT 1`,
-  );
-
-  const resultados = demoRun
-    ? rows<{
-        id: string;
-        codigo: string;
-        titulo: string;
-        cliente: string;
-        pedido_codigo: string;
-        productos: string;
-        material: string;
-        stock_inicial_g: number;
-        gramos_requeridos: number;
-        validacion_stock: string;
-        orden_fabricacion: string | null;
-        materiales_consumidos: string | null;
-        stock_final_g: number | null;
-        coste_material: number | null;
-        coste_electricidad: number | null;
-        coste_total: number | null;
-        beneficio: number | null;
-        subtotal_factura: number | null;
-        iva_factura: number | null;
-        total_factura: number | null;
-        incidencias: string | null;
-        estado_final_pedido: string;
-      }>(`SELECT * FROM demo_scenario_results WHERE demo_run_id = ? ORDER BY codigo ASC`, demoRun.id)
-    : [];
-
   return {
     customers,
     materials,
@@ -968,7 +896,6 @@ export function getAppSnapshot() {
     printers,
     inventoryMovements,
     invoices,
-    demoRun: demoRun ? { ...demoRun, resultados } : null,
   };
 }
 
@@ -1319,7 +1246,6 @@ export function createOrderRecord(input: {
   clienteId: string;
   observaciones?: string;
   vatRate?: number;
-  scenarioTag?: string;
   lines: LineInput[];
 }) {
   if (!input.clienteId) {
@@ -1359,8 +1285,8 @@ export function createOrderRecord(input: {
   transaction(() => {
     run(
       `INSERT INTO orders
-        (id, codigo, cliente_id, fecha_pedido, estado, estado_pago, subtotal, iva, total, coste_total_pedido, beneficio_total, observaciones, escenario_demo)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, codigo, cliente_id, fecha_pedido, estado, estado_pago, subtotal, iva, total, coste_total_pedido, beneficio_total, observaciones)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       orderId,
       codigo,
       input.clienteId,
@@ -1373,7 +1299,6 @@ export function createOrderRecord(input: {
       costeTotalPedido,
       beneficioTotal,
       input.observaciones?.trim() || null,
-      input.scenarioTag ?? null,
     );
 
     for (const item of calculations) {
@@ -2313,128 +2238,4 @@ export function generateInvoiceForOrder(orderId: string) {
     registerOrderHistory(orderId, "FACTURADO", `Factura ${codigo} generada.`);
     syncFinishedInventoryMetricsForOrder(orderId);
   });
-}
-
-export function seedSampleData() {
-  resetDatabase();
-
-  createCustomerRecord({ nombre: "Arquitec Studio", telefono: "+34 611 000 101", email: "compras@arquitecstudio.es", direccion: "Calle Serrano 18, Madrid" });
-  createCustomerRecord({ nombre: "FixIT Robotics", telefono: "+34 611 000 202", email: "pedidos@fixitrobotics.es", direccion: "Avenida Europa 42, Alcobendas" });
-  createCustomerRecord({ nombre: "Eventos Prisma", telefono: "+34 611 000 303", email: "hola@eventosprisma.es", direccion: "Passeig de Gracia 111, Barcelona" });
-
-  createMaterialRecord({ nombre: "PLA Pro", marca: "PrintaLot", tipo: "PLA", color: "Blanco mate", precioKg: 24.9, stockActualG: 5000, stockMinimoG: 900, proveedor: "Filamentos Center" });
-  createMaterialRecord({ nombre: "PETG Tough", marca: "eSun", tipo: "PETG", color: "Negro carbon", precioKg: 28.5, stockActualG: 180, stockMinimoG: 400, proveedor: "3D Supply Hub" });
-  createMaterialRecord({ nombre: "TPU Flex", marca: "SmartFil", tipo: "TPU", color: "Azul", precioKg: 36, stockActualG: 900, stockMinimoG: 300, proveedor: "Filamentos Center" });
-  createMaterialRecord({ nombre: "ASA Outdoor", marca: "Winkle", tipo: "ASA", color: "Gris industrial", precioKg: 33.5, stockActualG: 1200, stockMinimoG: 350, proveedor: "3D Supply Hub" });
-  createMaterialRecord({ nombre: "Resina ABS-like", marca: "Anycubic", tipo: "Resina", color: "Gris translucido", precioKg: 42, stockActualG: 1500, stockMinimoG: 400, proveedor: "Resin Market" });
-
-  const materials = rows<{ id: string; nombre: string }>(`SELECT id, nombre FROM materials ORDER BY nombre ASC`);
-  const materialByName = new Map(materials.map((material) => [material.nombre, material.id]));
-
-  createProductRecord({ nombre: "Soporte de sensor modular", descripcion: "Soporte para sensores industriales con fijacion mural.", enlaceModelo: "https://example.com/modelos/soporte-sensor", gramosEstimados: 120, tiempoImpresionHoras: 4.2, costeElectricidad: 0.48, margen: 7.06, pvp: 16.9, materialId: materialByName.get("PLA Pro") ?? "" });
-  createProductRecord({ nombre: "Carcasa router reforzada", descripcion: "Carcasa tecnica para electronica con ventilacion.", enlaceModelo: "https://example.com/modelos/carcasa-router", gramosEstimados: 220, tiempoImpresionHoras: 6.5, costeElectricidad: 0.82, margen: 21.41, pvp: 28.5, materialId: materialByName.get("PETG Tough") ?? "" });
-  createProductRecord({ nombre: "Clip flexible premium", descripcion: "Clip resistente para packaging reutilizable.", enlaceModelo: "https://example.com/modelos/clip-flex", gramosEstimados: 45, tiempoImpresionHoras: 1.8, costeElectricidad: 0.21, margen: 4.17, pvp: 6, materialId: materialByName.get("TPU Flex") ?? "" });
-  createProductRecord({ nombre: "Trofeo mini resina", descripcion: "Pieza decorativa en alta definicion para eventos.", enlaceModelo: "https://example.com/modelos/trofeo-mini", gramosEstimados: 70, tiempoImpresionHoras: 2.6, costeElectricidad: 0.33, margen: 5.73, pvp: 9, materialId: materialByName.get("Resina ABS-like") ?? "" });
-
-  createPrinterRecord({ nombre: "Bambu X1C", estado: "LIBRE", costeHora: 1.4, ubicacion: "Banco A" });
-  createPrinterRecord({ nombre: "Prusa MK4", estado: "LIBRE", costeHora: 1.1, ubicacion: "Banco B" });
-  createPrinterRecord({ nombre: "Formlabs Form 3", estado: "MANTENIMIENTO", costeHora: 1.9, ubicacion: "Zona resina" });
-
-  const customers = rows<{ id: string; nombre: string }>(`SELECT id, nombre FROM customers ORDER BY nombre ASC`);
-  const customerByName = new Map(customers.map((customer) => [customer.nombre, customer.id]));
-  const products = rows<{ id: string; nombre: string }>(`SELECT id, nombre FROM products ORDER BY nombre ASC`);
-  const productByName = new Map(products.map((product) => [product.nombre, product.id]));
-
-  restockFinishedProduct(productByName.get("Clip flexible premium") ?? "", 8, "Stock inicial de demo", "Estanteria B2", 2.35);
-  restockFinishedProduct(productByName.get("Trofeo mini resina") ?? "", 1, "Stock inicial de demo", "Vitrina A1", 4.9);
-
-  createOrderRecord({ clienteId: customerByName.get("Arquitec Studio") ?? "", observaciones: "Pedido normal para validar flujo completo.", scenarioTag: "ESCENARIO_1", lines: [{ productId: productByName.get("Soporte de sensor modular") ?? "", quantity: 2 }] });
-  createOrderRecord({ clienteId: customerByName.get("FixIT Robotics") ?? "", observaciones: "Pedido bloqueado por falta de stock de material.", scenarioTag: "ESCENARIO_2", lines: [{ productId: productByName.get("Carcasa router reforzada") ?? "", quantity: 1 }] });
-  createOrderRecord({ clienteId: customerByName.get("Eventos Prisma") ?? "", observaciones: "Pedido base para explorar la app.", scenarioTag: "ESCENARIO_BASE", lines: [{ productId: productByName.get("Clip flexible premium") ?? "", quantity: 2 }, { productId: productByName.get("Trofeo mini resina") ?? "", quantity: 1 }] });
-}
-
-export function runDemoSimulation() {
-  seedSampleData();
-  const demoRunId = randomUUID();
-  run(`INSERT INTO demo_runs (id, ejecutado_en) VALUES (?, ?)`, demoRunId, nowIso());
-
-  const initialSnapshot = getAppSnapshot();
-  const scenario1Order = initialSnapshot.orders.find((order) => order.escenario_demo === "ESCENARIO_1");
-  const scenario2Order = initialSnapshot.orders.find((order) => order.escenario_demo === "ESCENARIO_2");
-  if (!scenario1Order || !scenario2Order) {
-    throw new Error("No se pudieron preparar los pedidos base de la demo.");
-  }
-
-  const customers = rows<{ id: string; nombre: string }>(`SELECT id, nombre FROM customers ORDER BY nombre ASC`);
-  const customerByName = new Map(customers.map((customer) => [customer.nombre, customer.id]));
-  const products = rows<{ id: string; nombre: string }>(`SELECT id, nombre FROM products ORDER BY nombre ASC`);
-  const productByName = new Map(products.map((product) => [product.nombre, product.id]));
-
-  const line1 = scenario1Order.lineas[0];
-  const stock1 = row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, line1.material_id)?.stock_actual_g ?? 0;
-  const validation1 = confirmOrder(scenario1Order.id);
-  const manufacturing1 = rows<{ id: string; codigo: string }>(`SELECT id, codigo FROM manufacturing_orders WHERE pedido_id = ? ORDER BY codigo ASC`, scenario1Order.id);
-  let scenario1PrinterCost = 0;
-  for (const item of manufacturing1) {
-    startManufacturingOrder(item.id);
-    const completion = completeManufacturingOrder(item.id);
-    scenario1PrinterCost += completion.printerCost ?? 0;
-  }
-  deliverOrder(scenario1Order.id);
-  generateInvoiceForOrder(scenario1Order.id);
-  const stock1Final = row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, line1.material_id)?.stock_actual_g ?? 0;
-  insertDemoScenarioResult({ demoRunId, codigo: "ESCENARIO_1", titulo: "Pedido normal", cliente: scenario1Order.cliente_nombre, pedidoCodigo: scenario1Order.codigo, productos: scenario1Order.lineas.map((line) => `${line.producto_nombre} x${line.cantidad}`).join(", "), material: `${line1.material_nombre} ${line1.material_color}`, stockInicial: stock1, gramosRequeridos: line1.gramos_totales, validacion: `Stock validado. ${validation1.fromStockUnits} uds desde stock y ${validation1.toManufactureUnits} uds a fabricar.`, ordenFabricacion: manufacturing1.map((item) => item.codigo).join(", "), materialesConsumidos: `${line1.gramos_totales} g descontados automaticamente.`, stockFinal: stock1Final, costeMaterial: line1.coste_material, costeElectricidad: roundMoney(line1.coste_electricidad_total + scenario1PrinterCost), costeTotal: roundMoney(line1.coste_total + scenario1PrinterCost), beneficio: roundMoney(line1.beneficio - scenario1PrinterCost), subtotalFactura: scenario1Order.subtotal, ivaFactura: scenario1Order.iva, totalFactura: scenario1Order.total, estadoFinalPedido: "facturado", resumenFlujo: "cliente -> producto -> pedido -> validacion stock -> fabricacion -> consumo materiales -> actualizacion stock -> entrega -> factura" });
-
-  const line2 = scenario2Order.lineas[0];
-  const stock2 = row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, line2.material_id)?.stock_actual_g ?? 0;
-  const validation2 = confirmOrder(scenario2Order.id);
-  insertDemoScenarioResult({ demoRunId, codigo: "ESCENARIO_2", titulo: "Falta de stock", cliente: scenario2Order.cliente_nombre, pedidoCodigo: scenario2Order.codigo, productos: scenario2Order.lineas.map((line) => `${line.producto_nombre} x${line.cantidad}`).join(", "), material: `${line2.material_nombre} ${line2.material_color}`, stockInicial: stock2, gramosRequeridos: line2.gramos_totales, validacion: validation2.incidents.join(" "), ordenFabricacion: "Bloqueada por stock", materialesConsumidos: "Sin consumo. El stock no se desconto.", stockFinal: stock2, costeMaterial: line2.coste_material, costeElectricidad: line2.coste_electricidad_total, costeTotal: line2.coste_total, beneficio: line2.beneficio, incidencias: validation2.incidents.join(" "), estadoFinalPedido: "incidencia_stock", resumenFlujo: "cliente -> producto -> pedido -> validacion stock -> incidencia_stock" });
-
-  restockMaterial(line2.material_id, 500, "Reposicion para continuar pedido bloqueado");
-  const validation3 = retryOrderAfterRestock(scenario2Order.id);
-  const manufacturing3 = rows<{ id: string; codigo: string }>(`SELECT id, codigo FROM manufacturing_orders WHERE pedido_id = ? ORDER BY codigo ASC`, scenario2Order.id);
-  let scenario3PrinterCost = 0;
-  for (const item of manufacturing3) {
-    startManufacturingOrder(item.id);
-    const completion = completeManufacturingOrder(item.id);
-    scenario3PrinterCost += completion.printerCost ?? 0;
-  }
-  deliverOrder(scenario2Order.id);
-  generateInvoiceForOrder(scenario2Order.id);
-  const stock2Final = row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, line2.material_id)?.stock_actual_g ?? 0;
-  insertDemoScenarioResult({ demoRunId, codigo: "ESCENARIO_3", titulo: "Reposicion y continuacion", cliente: scenario2Order.cliente_nombre, pedidoCodigo: scenario2Order.codigo, productos: scenario2Order.lineas.map((line) => `${line.producto_nombre} x${line.cantidad}`).join(", "), material: `${line2.material_nombre} ${line2.material_color}`, stockInicial: stock2, gramosRequeridos: line2.gramos_totales, validacion: `Reposicion completada. ${validation3.toManufactureUnits} uds pasan a fabricacion.`, ordenFabricacion: manufacturing3.map((item) => item.codigo).join(", "), materialesConsumidos: `${line2.gramos_totales} g consumidos tras desbloquear el pedido.`, stockFinal: stock2Final, costeMaterial: line2.coste_material, costeElectricidad: roundMoney(line2.coste_electricidad_total + scenario3PrinterCost), costeTotal: roundMoney(line2.coste_total + scenario3PrinterCost), beneficio: roundMoney(line2.beneficio - scenario3PrinterCost), subtotalFactura: scenario2Order.subtotal, ivaFactura: scenario2Order.iva, totalFactura: scenario2Order.total, incidencias: "Pedido desbloqueado tras la reposicion.", estadoFinalPedido: "facturado", resumenFlujo: "cliente -> producto -> pedido -> reposicion -> validacion stock -> fabricacion -> entrega -> factura" });
-
-  const directOrderId = createOrderRecord({ clienteId: customerByName.get("Eventos Prisma") ?? "", observaciones: "Pedido servido solo con producto terminado.", scenarioTag: "ESCENARIO_4", lines: [{ productId: productByName.get("Clip flexible premium") ?? "", quantity: 3 }] });
-  const directInventoryStart = row<{ cantidad_disponible: number }>(`SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`, productByName.get("Clip flexible premium") ?? "")?.cantidad_disponible ?? 0;
-  const directValidation = confirmOrder(directOrderId);
-  const directSnapshot = getAppSnapshot().orders.find((order) => order.id === directOrderId);
-  if (!directSnapshot) {
-    throw new Error("No se pudo refrescar el pedido directo.");
-  }
-  deliverOrder(directOrderId);
-  generateInvoiceForOrder(directOrderId);
-  const directInventoryFinal = row<{ cantidad_disponible: number }>(`SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`, productByName.get("Clip flexible premium") ?? "")?.cantidad_disponible ?? 0;
-  insertDemoScenarioResult({ demoRunId, codigo: "ESCENARIO_4", titulo: "Stock terminado disponible", cliente: directSnapshot.cliente_nombre, pedidoCodigo: directSnapshot.codigo, productos: directSnapshot.lineas.map((line) => `${line.producto_nombre} x${line.cantidad}`).join(", "), material: "Inventario de productos terminados", stockInicial: directInventoryStart, gramosRequeridos: directSnapshot.lineas[0]?.gramos_totales ?? 0, validacion: `Se usaron ${directValidation.fromStockUnits} unidades de stock terminado y no se fabrico nada.`, ordenFabricacion: "No creada", materialesConsumidos: "Sin consumo de material. Salida directa de inventario terminado.", stockFinal: directInventoryFinal, costeMaterial: 0, costeElectricidad: 0, costeTotal: 0, beneficio: directSnapshot.lineas[0]?.beneficio ?? 0, subtotalFactura: directSnapshot.subtotal, ivaFactura: directSnapshot.iva, totalFactura: directSnapshot.total, estadoFinalPedido: "facturado", resumenFlujo: "cliente -> producto -> pedido -> stock terminado -> entrega -> factura" });
-
-  const mixedOrderId = createOrderRecord({ clienteId: customerByName.get("Arquitec Studio") ?? "", observaciones: "Pedido mixto con stock terminado parcial y fabricacion del resto.", scenarioTag: "ESCENARIO_5", lines: [{ productId: productByName.get("Trofeo mini resina") ?? "", quantity: 3 }] });
-  const mixedFinishedStart = row<{ cantidad_disponible: number }>(`SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`, productByName.get("Trofeo mini resina") ?? "")?.cantidad_disponible ?? 0;
-  const mixedMaterialStart = row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE nombre = ?`, "Resina ABS-like")?.stock_actual_g ?? 0;
-  const mixedValidation = confirmOrder(mixedOrderId);
-  const mixedManufacturing = rows<{ id: string; codigo: string }>(`SELECT id, codigo FROM manufacturing_orders WHERE pedido_id = ? ORDER BY codigo ASC`, mixedOrderId);
-  let mixedPrinterCost = 0;
-  for (const item of mixedManufacturing) {
-    startManufacturingOrder(item.id);
-    const completion = completeManufacturingOrder(item.id);
-    mixedPrinterCost += completion.printerCost ?? 0;
-  }
-  const mixedSnapshot = getAppSnapshot().orders.find((order) => order.id === mixedOrderId);
-  if (!mixedSnapshot) {
-    throw new Error("No se pudo refrescar el pedido mixto.");
-  }
-  deliverOrder(mixedOrderId);
-  generateInvoiceForOrder(mixedOrderId);
-  const mixedMaterialFinal = row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE nombre = ?`, "Resina ABS-like")?.stock_actual_g ?? 0;
-  const mixedFinishedFinal = row<{ cantidad_disponible: number }>(`SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`, productByName.get("Trofeo mini resina") ?? "")?.cantidad_disponible ?? 0;
-  const mixedLine = mixedSnapshot.lineas[0];
-  insertDemoScenarioResult({ demoRunId, codigo: "ESCENARIO_5", titulo: "Escenario mixto", cliente: mixedSnapshot.cliente_nombre, pedidoCodigo: mixedSnapshot.codigo, productos: mixedSnapshot.lineas.map((line) => `${line.producto_nombre} x${line.cantidad}`).join(", "), material: "Stock terminado + fabricacion", stockInicial: mixedFinishedStart, gramosRequeridos: mixedLine?.gramos_totales ?? 0, validacion: `Se usaron ${mixedValidation.fromStockUnits} unidades ya fabricadas y ${mixedValidation.toManufactureUnits} se fabricaron.`, ordenFabricacion: mixedManufacturing.map((item) => item.codigo).join(", "), materialesConsumidos: `${mixedMaterialStart - mixedMaterialFinal} g de material consumidos. Inventario terminado final: ${mixedFinishedFinal} uds.`, stockFinal: mixedFinishedFinal, costeMaterial: mixedLine?.coste_material ?? 0, costeElectricidad: roundMoney((mixedLine?.coste_electricidad_total ?? 0) + mixedPrinterCost), costeTotal: roundMoney((mixedLine?.coste_total ?? 0) + mixedPrinterCost), beneficio: roundMoney((mixedLine?.beneficio ?? 0) - mixedPrinterCost), subtotalFactura: mixedSnapshot.subtotal, ivaFactura: mixedSnapshot.iva, totalFactura: mixedSnapshot.total, estadoFinalPedido: "facturado", resumenFlujo: "cliente -> producto -> pedido -> stock terminado parcial -> fabricacion resto -> consumo materiales -> entrega -> factura" });
 }

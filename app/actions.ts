@@ -15,8 +15,6 @@ import {
   restockMaterial,
   restockFinishedProduct,
   retryOrderAfterRestock,
-  runDemoSimulation,
-  seedSampleData,
   updateCustomerRecord,
   updateFinishedInventoryRecord,
   updateInvoiceRecord,
@@ -35,6 +33,17 @@ function asNumber(value: FormDataEntryValue | null) {
   const normalized = String(value ?? "").replace(",", ".");
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function asOptionalNumber(value: FormDataEntryValue | null) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return undefined;
+  }
+
+  const normalized = raw.replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function redirectWithMessage(
@@ -112,10 +121,10 @@ export async function createMaterialAction(formData: FormData) {
         efecto: asString(formData.get("efecto")),
         colorBase: asString(formData.get("colorBase")),
         nombreComercial: asString(formData.get("nombreComercial")),
-        diametroMm: asNumber(formData.get("diametroMm")),
-        pesoSpoolG: asNumber(formData.get("pesoSpoolG")),
-        tempExtrusor: asNumber(formData.get("tempExtrusor")),
-        tempCama: asNumber(formData.get("tempCama")),
+        diametroMm: asOptionalNumber(formData.get("diametroMm")),
+        pesoSpoolG: asOptionalNumber(formData.get("pesoSpoolG")),
+        tempExtrusor: asOptionalNumber(formData.get("tempExtrusor")),
+        tempCama: asOptionalNumber(formData.get("tempCama")),
         precioKg: asNumber(formData.get("precioKg")),
         stockActualG: asNumber(formData.get("stockActualG")),
         stockMinimoG: asNumber(formData.get("stockMinimoG")),
@@ -140,10 +149,10 @@ export async function updateMaterialAction(formData: FormData) {
         efecto: asString(formData.get("efecto")),
         colorBase: asString(formData.get("colorBase")),
         nombreComercial: asString(formData.get("nombreComercial")),
-        diametroMm: asNumber(formData.get("diametroMm")),
-        pesoSpoolG: asNumber(formData.get("pesoSpoolG")),
-        tempExtrusor: asNumber(formData.get("tempExtrusor")),
-        tempCama: asNumber(formData.get("tempCama")),
+        diametroMm: asOptionalNumber(formData.get("diametroMm")),
+        pesoSpoolG: asOptionalNumber(formData.get("pesoSpoolG")),
+        tempExtrusor: asOptionalNumber(formData.get("tempExtrusor")),
+        tempCama: asOptionalNumber(formData.get("tempCama")),
         precioKg: asNumber(formData.get("precioKg")),
         stockActualG: asNumber(formData.get("stockActualG")),
         stockMinimoG: asNumber(formData.get("stockMinimoG")),
@@ -165,9 +174,9 @@ export async function createProductAction(formData: FormData) {
         gramosEstimados: asNumber(formData.get("gramosEstimados")),
         tiempoImpresionHoras: asNumber(formData.get("tiempoImpresionHoras")),
         costeElectricidad: asNumber(formData.get("costeElectricidad")),
-        costeMaquina: asNumber(formData.get("costeMaquina")),
-        costeManoObra: asNumber(formData.get("costeManoObra")),
-        costePostprocesado: asNumber(formData.get("costePostprocesado")),
+        costeMaquina: asOptionalNumber(formData.get("costeMaquina")),
+        costeManoObra: asOptionalNumber(formData.get("costeManoObra")),
+        costePostprocesado: asOptionalNumber(formData.get("costePostprocesado")),
         margen: asNumber(formData.get("margen")),
         pvp: asNumber(formData.get("pvp")),
         materialId: asString(formData.get("materialId")),
@@ -189,9 +198,9 @@ export async function updateProductAction(formData: FormData) {
         gramosEstimados: asNumber(formData.get("gramosEstimados")),
         tiempoImpresionHoras: asNumber(formData.get("tiempoImpresionHoras")),
         costeElectricidad: asNumber(formData.get("costeElectricidad")),
-        costeMaquina: asNumber(formData.get("costeMaquina")),
-        costeManoObra: asNumber(formData.get("costeManoObra")),
-        costePostprocesado: asNumber(formData.get("costePostprocesado")),
+        costeMaquina: asOptionalNumber(formData.get("costeMaquina")),
+        costeManoObra: asOptionalNumber(formData.get("costeManoObra")),
+        costePostprocesado: asOptionalNumber(formData.get("costePostprocesado")),
         margen: asNumber(formData.get("margen")),
         pvp: asNumber(formData.get("pvp")),
         materialId: asString(formData.get("materialId")),
@@ -402,21 +411,5 @@ export async function updateInvoiceAction(formData: FormData) {
       }),
     "Factura actualizada.",
     "/?section=facturas",
-  );
-}
-
-export async function seedDataAction() {
-  await executeAndRefresh(
-    () => seedSampleData(),
-    "Datos de ejemplo cargados.",
-    "/?section=dashboard#demo-results",
-  );
-}
-
-export async function runDemoAction() {
-  await executeAndRefresh(
-    () => runDemoSimulation(),
-    "Demo ejecutada con los escenarios completos.",
-    "/?section=dashboard#demo-results",
   );
 }

@@ -143,6 +143,12 @@ type MaterialOption = {
   color: string;
 };
 
+type ProductOption = {
+  id: string;
+  codigo: string;
+  nombre: string;
+};
+
 type CustomerOption = {
   id: string;
   codigo: string;
@@ -243,6 +249,77 @@ function orderStatusLabel(status: string) {
   return status.toLowerCase().replaceAll("_", " ");
 }
 
+const tableInputClass = "input table-input";
+const tableTextareaClass = "input table-input";
+
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M13.9 3.6a1.7 1.7 0 0 1 2.4 2.4L8 14.3l-3.2.8.8-3.2 8.3-8.3Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="m4.8 10.4 3.3 3.3 7.1-7.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M5.5 5.5 14.5 14.5M14.5 5.5l-9 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M7 5.7v8.6l6.8-4.3L7 5.7Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function RotateIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M15.7 9.9A5.7 5.7 0 1 1 10 4.3c1.3 0 2.5.4 3.5 1.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M12.8 2.9h3.5v3.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function TruckIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M3 5.5h9v6.1H3zM12 7.4h2.8l2 2.1v2.1H12z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <circle cx="6" cy="14.1" r="1.3" fill="currentColor" />
+      <circle cx="14.3" cy="14.1" r="1.3" fill="currentColor" />
+    </svg>
+  );
+}
+
+function InvoiceIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M6 3.5h8v13l-2-1.2-2 1.2-2-1.2-2 1.2v-13Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M7.7 7h4.6M7.7 10h4.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="animate-spin">
+      <path d="M10 3.2a6.8 6.8 0 1 1-4.8 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function ActionButtons({
   editing,
   onEdit,
@@ -259,28 +336,34 @@ function ActionButtons({
       <button
         type="button"
         onClick={onEdit}
-        className="rounded-full border border-[rgba(37,99,235,0.12)] bg-[color:var(--accent-soft)] px-3.5 py-2 text-xs font-semibold text-[color:var(--accent-strong)] shadow-[0_8px_16px_rgba(37,99,235,0.08)]"
+        title="Editar"
+        aria-label="Editar"
+        className="icon-action-button icon-action-button--soft"
       >
-        Editar
+        <PencilIcon />
       </button>
     );
   }
 
   return (
-    <div className="flex gap-2">
+    <div className="table-action-group">
       <button
         type="submit"
         form={formId}
-        className="rounded-full bg-[linear-gradient(135deg,#111827,#1d4ed8)] px-3.5 py-2 text-xs font-semibold text-white shadow-[0_10px_20px_rgba(29,78,216,0.16)]"
+        title="Guardar"
+        aria-label="Guardar"
+        className="icon-action-button icon-action-button--dark"
       >
-        Guardar
+        <CheckIcon />
       </button>
       <button
         type="button"
         onClick={onCancel}
-        className="rounded-full border border-black/10 bg-white/80 px-3.5 py-2 text-xs font-semibold text-[color:var(--muted-strong)] shadow-[0_6px_14px_rgba(15,23,42,0.04)]"
+        title="Cancelar"
+        aria-label="Cancelar"
+        className="icon-action-button"
       >
-        Cancelar
+        <CloseIcon />
       </button>
     </div>
   );
@@ -314,17 +397,17 @@ export function CustomersInlineTable({ customers }: { customers: Customer[] }) {
               <td>{customer.codigo}</td>
               <td>
                 {editing ? (
-                  <input form={formId} name="nombre" defaultValue={customer.nombre} className="input" />
+                  <input form={formId} name="nombre" defaultValue={customer.nombre} className={tableInputClass} />
                 ) : (
                   customer.nombre
                 )}
               </td>
               <td>
                 {editing ? (
-                  <div className="space-y-2">
-                    <input form={formId} name="telefono" defaultValue={customer.telefono ?? ""} placeholder="Telefono" className="input" />
-                    <input form={formId} name="email" type="email" defaultValue={customer.email ?? ""} placeholder="Email" className="input" />
-                    <textarea form={formId} name="direccion" defaultValue={customer.direccion ?? ""} rows={2} placeholder="Direccion" className="input" />
+                  <div className="table-edit-stack table-cell-edit">
+                    <input form={formId} name="telefono" defaultValue={customer.telefono ?? ""} placeholder="Telefono" className={tableInputClass} />
+                    <input form={formId} name="email" type="email" defaultValue={customer.email ?? ""} placeholder="Email" className={tableInputClass} />
+                    <textarea form={formId} name="direccion" defaultValue={customer.direccion ?? ""} rows={2} placeholder="Direccion" className={tableTextareaClass} />
                   </div>
                 ) : (
                   <div>
@@ -349,12 +432,12 @@ export function OrdersInlineBoard({
 }: {
   orders: OrderCard[];
   customers: CustomerOption[];
-  products: MaterialOption[];
+  products: ProductOption[];
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {orders.map((order) => {
         const editing = editingId === order.id;
         const latestHistory = order.historial[0] ?? null;
@@ -364,7 +447,7 @@ export function OrdersInlineBoard({
         return (
           <article
             key={order.id}
-            className={`panel-muted p-5 ${
+            className={`panel-muted p-4 ${
               order.estado === "INCIDENCIA_STOCK"
                 ? rowHighlight("danger")
                 : order.estado === "LISTO" || order.estado === "ENTREGADO"
@@ -381,18 +464,27 @@ export function OrdersInlineBoard({
                     <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{order.codigo}</p>
                     <h4 className="mt-2 text-lg font-semibold">Editar pedido</h4>
                   </div>
-                  <div className="flex gap-2">
-                    <SubmitButton variant="chip-dark" pendingText="Guardando...">Guardar</SubmitButton>
+                  <div className="table-action-group">
+                    <SubmitButton
+                      variant="icon-dark"
+                      pendingText={<SpinnerIcon />}
+                      title="Guardar"
+                      aria-label="Guardar"
+                    >
+                      <CheckIcon />
+                    </SubmitButton>
                     <button
                       type="button"
                       onClick={() => setEditingId(null)}
-                      className="rounded-full border border-black/10 bg-white/80 px-3.5 py-2 text-xs font-semibold text-[color:var(--muted-strong)]"
+                      title="Cancelar"
+                      aria-label="Cancelar"
+                      className="icon-action-button"
                     >
-                      Cancelar
+                      <CloseIcon />
                     </button>
                   </div>
                 </div>
-                <select name="clienteId" className="input" defaultValue={order.cliente_id}>
+                <select name="clienteId" className={tableInputClass} defaultValue={order.cliente_id}>
                   {customers.map((customer) => (
                     <option key={customer.id} value={customer.id}>
                       {customer.codigo} - {customer.nombre}
@@ -400,16 +492,16 @@ export function OrdersInlineBoard({
                   ))}
                 </select>
                 {lineDraft.map((line, index) => (
-                  <div key={`${order.id}-line-${index}`} className="grid gap-3 sm:grid-cols-[1.45fr_0.55fr_0.8fr]">
+                  <div key={`${order.id}-line-${index}`} className="table-edit-grid-3">
                     <select
                       name={`producto_${index + 1}`}
-                      className="input"
+                      className={tableInputClass}
                       defaultValue={line?.producto_id ?? ""}
                     >
                       <option value="">Producto linea {index + 1}</option>
                       {products.map((product) => (
                         <option key={product.id} value={product.id}>
-                          {product.codigo} - {product.nombre} - {product.color}
+                          {product.codigo} - {product.nombre}
                         </option>
                       ))}
                     </select>
@@ -418,7 +510,7 @@ export function OrdersInlineBoard({
                       type="number"
                       min="0"
                       defaultValue={line?.cantidad ?? ""}
-                      className="input"
+                      className={tableInputClass}
                     />
                     <input
                       name={`precio_${index + 1}`}
@@ -426,7 +518,7 @@ export function OrdersInlineBoard({
                       min="0"
                       step="0.01"
                       defaultValue={line?.precio_unitario ?? ""}
-                      className="input"
+                      className={tableInputClass}
                     />
                   </div>
                 ))}
@@ -434,7 +526,7 @@ export function OrdersInlineBoard({
                   name="observaciones"
                   rows={3}
                   defaultValue={order.observaciones ?? ""}
-                  className="input"
+                  className={tableTextareaClass}
                   placeholder="Observaciones"
                 />
               </form>
@@ -456,7 +548,7 @@ export function OrdersInlineBoard({
                   </div>
                 </div>
 
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <div className="mt-3 grid gap-3 sm:grid-cols-3">
                   <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
                     <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Total pedido</p>
                     <p className="mt-2 text-lg font-semibold">{formatCurrency(order.total)}</p>
@@ -471,9 +563,9 @@ export function OrdersInlineBoard({
                   </div>
                 </div>
 
-                <div className="mt-4 space-y-3">
+                <div className="mt-3 space-y-2.5">
                   {order.lineas.map((line) => (
-                    <div key={line.id} className="rounded-2xl border border-black/8 px-4 py-4">
+                    <div key={line.id} className="rounded-2xl border border-black/8 px-3.5 py-3.5">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <p className="font-semibold">
@@ -494,43 +586,73 @@ export function OrdersInlineBoard({
                 </div>
 
                 {latestHistory ? (
-                  <p className="mt-4 text-sm text-[color:var(--muted)]">
+                  <p className="mt-3 text-sm text-[color:var(--muted)]">
                     Ultimo cambio: {formatDate(latestHistory.fecha)} - {latestHistory.nota}
                   </p>
                 ) : null}
 
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-3 table-action-group">
                   {editable ? (
                     <button
                       type="button"
                       onClick={() => setEditingId(order.id)}
-                      className="rounded-full border border-[rgba(37,99,235,0.12)] bg-[color:var(--accent-soft)] px-3.5 py-2 text-xs font-semibold text-[color:var(--accent-strong)]"
+                      title="Editar"
+                      aria-label="Editar"
+                      className="icon-action-button icon-action-button--soft"
                     >
-                      Editar
+                      <PencilIcon />
                     </button>
                   ) : null}
                   {order.estado === "BORRADOR" ? (
                     <form action={confirmOrderAction}>
                       <input type="hidden" name="pedidoId" value={order.id} />
-                      <SubmitButton variant="chip-dark" pendingText="Confirmando...">Confirmar pedido</SubmitButton>
+                      <SubmitButton
+                        variant="icon-dark"
+                        pendingText={<SpinnerIcon />}
+                        title="Confirmar pedido"
+                        aria-label="Confirmar pedido"
+                      >
+                        <CheckIcon />
+                      </SubmitButton>
                     </form>
                   ) : null}
                   {order.estado === "INCIDENCIA_STOCK" ? (
                     <form action={retryOrderAction}>
                       <input type="hidden" name="pedidoId" value={order.id} />
-                      <SubmitButton variant="chip-dark" pendingText="Reintentando...">Reintentar</SubmitButton>
+                      <SubmitButton
+                        variant="icon-dark"
+                        pendingText={<SpinnerIcon />}
+                        title="Reintentar"
+                        aria-label="Reintentar"
+                      >
+                        <RotateIcon />
+                      </SubmitButton>
                     </form>
                   ) : null}
                   {order.estado === "LISTO" ? (
                     <form action={deliverOrderAction}>
                       <input type="hidden" name="pedidoId" value={order.id} />
-                      <SubmitButton variant="chip-dark" pendingText="Entregando...">Entregar</SubmitButton>
+                      <SubmitButton
+                        variant="icon-dark"
+                        pendingText={<SpinnerIcon />}
+                        title="Entregar"
+                        aria-label="Entregar"
+                      >
+                        <TruckIcon />
+                      </SubmitButton>
                     </form>
                   ) : null}
                   {order.estado === "ENTREGADO" ? (
                     <form action={generateInvoiceAction}>
                       <input type="hidden" name="pedidoId" value={order.id} />
-                      <SubmitButton variant="chip-dark" pendingText="Facturando...">Generar factura</SubmitButton>
+                      <SubmitButton
+                        variant="icon-dark"
+                        pendingText={<SpinnerIcon />}
+                        title="Generar factura"
+                        aria-label="Generar factura"
+                      >
+                        <InvoiceIcon />
+                      </SubmitButton>
                     </form>
                   ) : null}
                   {(order.estado === "CONFIRMADO" || order.estado === "EN_PRODUCCION") && order.ordenesFabricacion.length > 0 ? (
@@ -590,59 +712,75 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
               <td>{material.codigo}</td>
               <td>
                 {editing ? (
-                  <div className="space-y-3">
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <input form={formId} name="nombre" defaultValue={material.nombre} className="input" placeholder="Material" />
-                      <input form={formId} name="nombreComercial" defaultValue={material.nombre_comercial ?? ""} className="input" placeholder="Nombre comercial" />
+                  <div className="table-edit-stack table-cell-edit--wide">
+                    <div className="table-edit-grid-2">
+                      <input form={formId} name="nombre" defaultValue={material.nombre} className={tableInputClass} placeholder="Material" />
+                      <input form={formId} name="nombreComercial" defaultValue={material.nombre_comercial ?? ""} className={tableInputClass} placeholder="Nombre comercial" />
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <input form={formId} name="marca" defaultValue={material.marca} className="input" placeholder="Marca" />
-                      <input form={formId} name="tipo" defaultValue={material.tipo} className="input" placeholder="Tipo" />
+                    <div className="table-edit-grid-2">
+                      <input form={formId} name="marca" defaultValue={material.marca} className={tableInputClass} placeholder="Marca" />
+                      <input form={formId} name="tipo" defaultValue={material.tipo} className={tableInputClass} placeholder="Tipo" />
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <input form={formId} name="color" defaultValue={material.color} className="input" placeholder="Color visible" />
-                      <input form={formId} name="tipoColor" defaultValue={material.tipo_color ?? ""} className="input" placeholder="Tipo color" />
+                    <div className="table-edit-grid-2">
+                      <input form={formId} name="color" defaultValue={material.color} className={tableInputClass} placeholder="Color visible" />
+                      <input form={formId} name="tipoColor" defaultValue={material.tipo_color ?? ""} className={tableInputClass} placeholder="Tipo color" />
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <input form={formId} name="colorBase" defaultValue={material.color_base ?? ""} className="input" placeholder="Color base" />
-                      <input form={formId} name="efecto" defaultValue={material.efecto ?? ""} className="input" placeholder="Efecto" />
+                    <div className="table-edit-grid-2">
+                      <input form={formId} name="colorBase" defaultValue={material.color_base ?? ""} className={tableInputClass} placeholder="Color base" />
+                      <input form={formId} name="efecto" defaultValue={material.efecto ?? ""} className={tableInputClass} placeholder="Efecto" />
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <input form={formId} name="diametroMm" type="number" min="0" step="0.01" defaultValue={material.diametro_mm ?? ""} className="input" placeholder="Diametro mm" />
-                      <input form={formId} name="pesoSpoolG" type="number" min="0" defaultValue={material.peso_spool_g ?? ""} className="input" placeholder="Peso spool g" />
+                    <div className="table-edit-grid-2">
+                      <input form={formId} name="diametroMm" type="number" min="0" step="0.01" defaultValue={material.diametro_mm ?? ""} className={tableInputClass} placeholder="Diametro mm" />
+                      <input form={formId} name="pesoSpoolG" type="number" min="0" defaultValue={material.peso_spool_g ?? ""} className={tableInputClass} placeholder="Peso spool g" />
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <input form={formId} name="tempExtrusor" type="number" min="0" defaultValue={material.temp_extrusor ?? ""} className="input" placeholder="Temp extrusor" />
-                      <input form={formId} name="tempCama" type="number" min="0" defaultValue={material.temp_cama ?? ""} className="input" placeholder="Temp cama" />
+                    <div className="table-edit-grid-2">
+                      <input form={formId} name="tempExtrusor" type="number" min="0" defaultValue={material.temp_extrusor ?? ""} className={tableInputClass} placeholder="Temp extrusor" />
+                      <input form={formId} name="tempCama" type="number" min="0" defaultValue={material.temp_cama ?? ""} className={tableInputClass} placeholder="Temp cama" />
                     </div>
-                    <input form={formId} name="proveedor" defaultValue={material.proveedor ?? ""} className="input" placeholder="Proveedor" />
-                    <textarea form={formId} name="notas" defaultValue={material.notas ?? ""} rows={2} className="input" placeholder="Notas" />
+                    <input form={formId} name="proveedor" defaultValue={material.proveedor ?? ""} className={tableInputClass} placeholder="Proveedor" />
+                    <textarea form={formId} name="notas" defaultValue={material.notas ?? ""} rows={2} className={tableTextareaClass} placeholder="Notas" />
                   </div>
                 ) : (
                   <div>
-                    <div>{material.nombre} - {material.color}</div>
                     <div className="text-xs text-[color:var(--muted)]">
-                      {material.marca} - {material.tipo}
-                      {material.nombre_comercial ? ` - ${material.nombre_comercial}` : ""}
+                      <span className="font-semibold text-[color:var(--foreground)]">
+                        {material.marca} - {material.tipo}
+                      </span>
                     </div>
+                    <div className="mt-1 text-xs text-[color:var(--muted)]">
+                      {[
+                        material.tipo_color,
+                        material.efecto,
+                        material.color_base ?? material.color,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || material.color}
+                    </div>
+                    {material.nombre_comercial || material.nombre ? (
+                      <div className="mt-1 text-xs text-[color:var(--muted)]">
+                        {[material.nombre, material.nombre_comercial]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </td>
               <td>
                 {editing ? (
-                  <input form={formId} name="precioKg" type="number" min="0" step="0.01" defaultValue={material.precio_kg} className="input" />
+                  <input form={formId} name="precioKg" type="number" min="0" step="0.01" defaultValue={material.precio_kg} className={tableInputClass} />
                 ) : (
                   `${material.precio_kg.toFixed(2)} EUR`
                 )}
               </td>
               <td>
                 {editing ? (
-                  <div className="space-y-2">
+                  <div className="table-edit-stack table-cell-edit">
                     <input form={formId} name="stockActualG" type="hidden" value={material.stock_actual_g} />
                     <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-2 text-sm">
                       Stock actual: {material.stock_actual_g} g
                     </div>
-                    <input form={formId} name="stockMinimoG" type="number" min="0" defaultValue={material.stock_minimo_g} className="input" />
+                    <input form={formId} name="stockMinimoG" type="number" min="0" defaultValue={material.stock_minimo_g} className={tableInputClass} />
                   </div>
                 ) : (
                   <div>
@@ -704,10 +842,10 @@ export function ProductsInlineTable({
               <td>{product.codigo}</td>
               <td>
                 {editing ? (
-                  <div className="space-y-3">
-                    <input form={formId} name="nombre" defaultValue={product.nombre} className="input" />
-                    <textarea form={formId} name="descripcion" defaultValue={product.descripcion ?? ""} rows={2} className="input" />
-                    <input form={formId} name="enlaceModelo" defaultValue={product.enlace_modelo ?? ""} className="input" />
+                  <div className="table-edit-stack table-cell-edit--wide">
+                    <input form={formId} name="nombre" defaultValue={product.nombre} className={tableInputClass} />
+                    <textarea form={formId} name="descripcion" defaultValue={product.descripcion ?? ""} rows={2} className={tableTextareaClass} />
+                    <input form={formId} name="enlaceModelo" defaultValue={product.enlace_modelo ?? ""} className={tableInputClass} />
                     <label className="flex items-center gap-2 text-sm">
                       <input form={formId} type="checkbox" name="activo" defaultChecked={product.activo} />
                       Activo
@@ -722,7 +860,7 @@ export function ProductsInlineTable({
               </td>
               <td>
                 {editing ? (
-                  <select form={formId} name="materialId" defaultValue={product.material_id} className="input">
+                  <select form={formId} name="materialId" defaultValue={product.material_id} className={tableInputClass}>
                     {materials.map((material) => (
                       <option key={material.id} value={material.id}>
                         {material.codigo} - {material.nombre} - {material.color}
@@ -735,20 +873,20 @@ export function ProductsInlineTable({
               </td>
               <td>
                 {editing ? (
-                  <div className="space-y-2">
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <input form={formId} name="gramosEstimados" type="number" min="1" defaultValue={product.gramos_estimados} className="input" placeholder="Gramos" />
-                      <input form={formId} name="tiempoImpresionHoras" type="number" min="0.1" step="0.1" defaultValue={product.tiempo_impresion_horas} className="input" placeholder="Tiempo impresion" />
+                  <div className="table-edit-stack table-cell-edit">
+                    <div className="table-edit-grid-2">
+                      <input form={formId} name="gramosEstimados" type="number" min="1" defaultValue={product.gramos_estimados} className={tableInputClass} placeholder="Gramos" />
+                      <input form={formId} name="tiempoImpresionHoras" type="number" min="0.1" step="0.1" defaultValue={product.tiempo_impresion_horas} className={tableInputClass} placeholder="Tiempo impresion" />
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <input form={formId} name="costeElectricidad" type="number" min="0" step="0.01" defaultValue={product.coste_electricidad} className="input" placeholder="Coste electricidad" />
-                      <input form={formId} name="costeMaquina" type="number" min="0" step="0.01" defaultValue={product.coste_maquina} className="input" placeholder="Coste maquina" />
+                    <div className="table-edit-grid-2">
+                      <input form={formId} name="costeElectricidad" type="number" min="0" step="0.01" defaultValue={product.coste_electricidad} className={tableInputClass} placeholder="Coste electricidad" />
+                      <input form={formId} name="costeMaquina" type="number" min="0" step="0.01" defaultValue={product.coste_maquina} className={tableInputClass} placeholder="Coste maquina" />
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <input form={formId} name="costeManoObra" type="number" min="0" step="0.01" defaultValue={product.coste_mano_obra} className="input" placeholder="Coste mano de obra" />
-                      <input form={formId} name="costePostprocesado" type="number" min="0" step="0.01" defaultValue={product.coste_postprocesado} className="input" placeholder="Coste postprocesado" />
+                    <div className="table-edit-grid-2">
+                      <input form={formId} name="costeManoObra" type="number" min="0" step="0.01" defaultValue={product.coste_mano_obra} className={tableInputClass} placeholder="Coste mano de obra" />
+                      <input form={formId} name="costePostprocesado" type="number" min="0" step="0.01" defaultValue={product.coste_postprocesado} className={tableInputClass} placeholder="Coste postprocesado" />
                     </div>
-                    <input form={formId} name="margen" type="number" step="0.01" defaultValue={product.margen} className="input" placeholder="Margen" />
+                    <input form={formId} name="margen" type="number" step="0.01" defaultValue={product.margen} className={tableInputClass} placeholder="Margen" />
                   </div>
                 ) : (
                   <div>
@@ -761,7 +899,7 @@ export function ProductsInlineTable({
               </td>
               <td>
                 {editing ? (
-                  <input form={formId} name="pvp" type="number" min="0.01" step="0.01" defaultValue={product.pvp} className="input" />
+                  <input form={formId} name="pvp" type="number" min="0.01" step="0.01" defaultValue={product.pvp} className={tableInputClass} />
                 ) : (
                   formatCurrency(product.pvp)
                 )}
@@ -805,20 +943,30 @@ export function ManufacturingInlineTable({
                 <form id={formId} action={updateManufacturingAction}>
                   <input type="hidden" name="id" value={order.id} />
                 </form>
-                <div className="flex flex-wrap gap-2">
+                <div className="table-action-group">
                   {!editing && order.estado === "PENDIENTE" ? (
                     <form action={startManufacturingAction}>
                       <input type="hidden" name="fabricacionId" value={order.id} />
-                      <SubmitButton variant="chip-dark" pendingText="Iniciando...">
-                        Iniciar
+                      <SubmitButton
+                        variant="icon-dark"
+                        pendingText={<SpinnerIcon />}
+                        title="Iniciar"
+                        aria-label="Iniciar"
+                      >
+                        <PlayIcon />
                       </SubmitButton>
                     </form>
                   ) : null}
                   {!editing && order.estado === "INICIADA" ? (
                     <form action={completeManufacturingAction}>
                       <input type="hidden" name="fabricacionId" value={order.id} />
-                      <SubmitButton variant="chip-dark" pendingText="Completando...">
-                        Completar
+                      <SubmitButton
+                        variant="icon-dark"
+                        pendingText={<SpinnerIcon />}
+                        title="Completar"
+                        aria-label="Completar"
+                      >
+                        <CheckIcon />
                       </SubmitButton>
                     </form>
                   ) : null}
@@ -834,10 +982,10 @@ export function ManufacturingInlineTable({
               <td>{order.pedido_codigo}</td>
               <td>
                 {editing ? (
-                  <div className="space-y-2">
+                  <div className="table-edit-stack table-cell-edit">
                     <div className="text-sm font-medium">{order.producto_nombre}</div>
-                    <input form={formId} name="cantidad" type="number" min="1" defaultValue={order.cantidad} className="input" />
-                    <textarea form={formId} name="incidencia" defaultValue={order.incidencia ?? ""} rows={2} className="input" />
+                    <input form={formId} name="cantidad" type="number" min="1" defaultValue={order.cantidad} className={tableInputClass} />
+                    <textarea form={formId} name="incidencia" defaultValue={order.incidencia ?? ""} rows={2} className={tableTextareaClass} />
                   </div>
                 ) : (
                   order.producto_nombre
@@ -845,7 +993,7 @@ export function ManufacturingInlineTable({
               </td>
               <td>
                 {editing ? (
-                  <select form={formId} name="estado" defaultValue={order.estado} className="input">
+                  <select form={formId} name="estado" defaultValue={order.estado} className={tableInputClass}>
                     <option value="PENDIENTE">pendiente</option>
                     <option value="BLOQUEADA_POR_STOCK">bloqueada_por_stock</option>
                   </select>
@@ -867,7 +1015,7 @@ export function ManufacturingInlineTable({
               </td>
               <td>
                 {editing ? (
-                  <input form={formId} name="tiempoRealHoras" type="number" min="0" step="0.1" defaultValue={order.tiempo_real_horas ?? ""} className="input" />
+                  <input form={formId} name="tiempoRealHoras" type="number" min="0" step="0.1" defaultValue={order.tiempo_real_horas ?? ""} className={tableInputClass} />
                 ) : (
                   <div>
                     <div>{order.gramos_consumidos ?? "-"} g</div>
@@ -920,7 +1068,7 @@ export function InvoicesInlineTable({
               <td>{formatCurrency(invoice.total)}</td>
               <td>
                 {editing ? (
-                  <select form={formId} name="estadoPago" defaultValue={invoice.estado_pago} className="input">
+                  <select form={formId} name="estadoPago" defaultValue={invoice.estado_pago} className={tableInputClass}>
                     <option value="PENDIENTE">pendiente</option>
                     <option value="PAGADA">pagada</option>
                   </select>
@@ -979,7 +1127,7 @@ export function FinishedInventoryInlineTable({
               </td>
               <td>
                 {editing ? (
-                  <input form={formId} name="cantidadDisponible" type="number" min="0" defaultValue={item.cantidad_disponible} className="input" />
+                  <input form={formId} name="cantidadDisponible" type="number" min="0" defaultValue={item.cantidad_disponible} className={tableInputClass} />
                 ) : (
                   <div>
                     <div className={item.cantidad_disponible === 0 ? "text-[color:var(--danger)]" : ""}>
@@ -993,16 +1141,16 @@ export function FinishedInventoryInlineTable({
               </td>
               <td>
                 {editing ? (
-                  <input form={formId} name="ubicacion" defaultValue={item.ubicacion ?? ""} className="input" />
+                  <input form={formId} name="ubicacion" defaultValue={item.ubicacion ?? ""} className={tableInputClass} />
                 ) : (
                   item.ubicacion || "-"
                 )}
               </td>
               <td>
                 {editing ? (
-                  <div className="space-y-2">
-                    <input form={formId} name="costeUnitario" type="number" min="0" step="0.01" defaultValue={item.coste_unitario} className="input" />
-                    <input form={formId} name="precioVenta" type="number" min="0" step="0.01" defaultValue={item.precio_venta} className="input" />
+                  <div className="table-edit-stack table-cell-edit">
+                    <input form={formId} name="costeUnitario" type="number" min="0" step="0.01" defaultValue={item.coste_unitario} className={tableInputClass} />
+                    <input form={formId} name="precioVenta" type="number" min="0" step="0.01" defaultValue={item.precio_venta} className={tableInputClass} />
                   </div>
                 ) : (
                   <div>
@@ -1056,9 +1204,9 @@ export function PrintersInlineTable({ printers }: { printers: Printer[] }) {
               <td>{printer.codigo}</td>
               <td>
                 {editing ? (
-                  <div className="space-y-2">
-                    <input form={formId} name="nombre" defaultValue={printer.nombre} className="input" />
-                    <input form={formId} name="ubicacion" defaultValue={printer.ubicacion ?? ""} className="input" />
+                  <div className="table-edit-stack table-cell-edit">
+                    <input form={formId} name="nombre" defaultValue={printer.nombre} className={tableInputClass} />
+                    <input form={formId} name="ubicacion" defaultValue={printer.ubicacion ?? ""} className={tableInputClass} />
                   </div>
                 ) : (
                   <div>
@@ -1072,7 +1220,7 @@ export function PrintersInlineTable({ printers }: { printers: Printer[] }) {
               </td>
               <td>
                 {editing ? (
-                  <select form={formId} name="estado" defaultValue={printer.estado} className="input">
+                  <select form={formId} name="estado" defaultValue={printer.estado} className={tableInputClass}>
                     <option value="LIBRE">libre</option>
                     <option value="IMPRIMIENDO">imprimiendo</option>
                     <option value="MANTENIMIENTO">mantenimiento</option>
@@ -1085,14 +1233,14 @@ export function PrintersInlineTable({ printers }: { printers: Printer[] }) {
               </td>
               <td>
                 {editing ? (
-                  <input form={formId} name="horasUsoAcumuladas" type="number" min="0" step="0.1" defaultValue={printer.horas_uso_acumuladas} className="input" />
+                  <input form={formId} name="horasUsoAcumuladas" type="number" min="0" step="0.1" defaultValue={printer.horas_uso_acumuladas} className={tableInputClass} />
                 ) : (
                   `${printer.horas_uso_acumuladas} h`
                 )}
               </td>
               <td>
                 {editing ? (
-                  <input form={formId} name="costeHora" type="number" min="0" step="0.01" defaultValue={printer.coste_hora} className="input" />
+                  <input form={formId} name="costeHora" type="number" min="0" step="0.01" defaultValue={printer.coste_hora} className={tableInputClass} />
                 ) : (
                   `${printer.coste_hora.toFixed(2)} EUR`
                 )}

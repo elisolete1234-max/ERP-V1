@@ -20,7 +20,7 @@ Proyecto estable, listo para demostracion y evolucion futura (V2).
 
 ---
 
-ERP demo funcional para un negocio de impresion 3D. Esta V1 permite gestionar clientes, materiales, productos, pedidos, fabricacion, inventario, impresoras, movimientos y facturacion con logica real de negocio, datos semilla y simulaciones completas.
+ERP funcional para un negocio de impresion 3D. Esta V1 permite gestionar clientes, materiales, productos, pedidos, fabricacion, inventario, impresoras, movimientos y facturacion con logica real de negocio sobre una base vacia lista para uso real desde cero.
 
 La version actual queda cerrada como V1 estable:
 
@@ -28,7 +28,7 @@ La version actual queda cerrada como V1 estable:
 - con logica de negocio centralizada
 - con UX consolidada
 - con diseno visual estable
-- lista para demo, validacion con usuarios o evolucion posterior
+- lista para presentacion, validacion con usuarios o evolucion posterior
 
 ---
 
@@ -38,7 +38,7 @@ Fabriq Flow cubre el flujo principal del negocio desde que entra un pedido hasta
 
 Objetivos de esta V1:
 
-- demo local sencilla de ejecutar
+- arranque local sencillo de ejecutar
 - logica funcional, no solo pantallas
 - trazabilidad visible del proceso
 - base clara para evolucionar a una V2
@@ -89,7 +89,7 @@ La V1 incluye estos modulos:
 9. Impresoras
 10. Movimientos de inventario
 11. Facturas
-12. Dashboard y simulacion de escenarios
+12. Dashboard operativo
 
 ---
 
@@ -118,18 +118,6 @@ Flujo operativo implementado:
    - puede entregarse
 6. Una vez entregado:
    - puede generarse la factura
-
-### Escenarios demo implementados
-
-La demo funcional genera y muestra escenarios como:
-
-- pedido normal con stock y material suficiente
-- falta de stock de materiales
-- reposicion y continuacion del pedido bloqueado
-- pedido servido completamente desde producto terminado
-- flujo mixto: parte desde stock terminado y parte fabricada
-
----
 
 ## 5. Logica critica implementada
 
@@ -166,7 +154,6 @@ Se conserva trazabilidad en:
 - historial de estados del pedido
 - movimientos de inventario
 - ordenes de fabricacion
-- simulacion de escenarios
 - relacion pedido / linea / fabricacion / factura
 
 ---
@@ -214,7 +201,7 @@ Cobertura actual:
 - acumulacion correcta de horas y coste por impresora
 - transiciones correctas de estado del pedido
 - facturacion solo cuando procede
-- ejecucion de la demo completa con trazabilidad
+- arranque en vacio sin datos de negocio
 
 Comandos de verificacion:
 
@@ -260,11 +247,11 @@ npm start
 
 ### Que probar rapidamente
 
-- `Cargar datos de ejemplo`
-  Crea datos iniciales para navegar la app.
-
-- `Ejecutar demo`
-  Ejecuta los escenarios de negocio con trazabilidad visible.
+- Crear un cliente
+- Crear un material
+- Crear un producto
+- Crear un pedido
+- Confirmar, fabricar, entregar y facturar
 
 ---
 
@@ -326,15 +313,11 @@ Objetivo: que la herramienta sea clara, rapida y presentable sin sacrificar la l
 Limitaciones actuales de la V1:
 
 - `node:sqlite` sigue siendo experimental en Node 24 y muestra warning, aunque funciona correctamente
-- la app esta pensada para uso local y demo, no para despliegue multiusuario real
+- la app esta pensada para uso local, no para despliegue multiusuario real
 - no hay autenticacion ni sistema de roles
 - no hay exportacion a PDF o CSV
 - no hay control avanzado de concurrencia para edicion simultanea
 - el dashboard esta orientado a operativa, no a analitica profunda
-- la simulacion es funcional y trazable, pero no sustituye un motor de planificacion industrial completo
-
----
-
 ## 12. Mejoras futuras propuestas para V2
 
 Siguientes pasos recomendados para una V2:
@@ -386,7 +369,7 @@ Esta version se considera:
 - V1 estable
 - funcional de extremo a extremo
 - validada con tests, lint y build
-- apta para demo, presentacion o continuacion futura
+- apta para presentacion o continuacion futura
 
 Ultima verificacion de esta V1:
 
@@ -400,14 +383,13 @@ npm test
 
 ## 14. Resumen rapido
 
-Fabriq Flow ERP V1 es una demo local profesional de un ERP para impresion 3D con:
+Fabriq Flow ERP V1 es una base local profesional de un ERP para impresion 3D con:
 
 - logica real de negocio
 - inventario dual: materiales y producto terminado
 - fabricacion con impresoras
 - trazabilidad
 - facturacion
-- simulacion de escenarios
 - UI presentable y estable
 
 Sirve tanto para ensenar el proyecto como para retomarlo mas adelante sin perder contexto.

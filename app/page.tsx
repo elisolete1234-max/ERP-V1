@@ -12,8 +12,6 @@ import {
   restockFinishedProductAction,
   restockMaterialAction,
   retryOrderAction,
-  runDemoAction,
-  seedDataAction,
   updateOrderAction,
 } from "./actions";
 import {
@@ -22,6 +20,7 @@ import {
   InvoicesInlineTable,
   ManufacturingInlineTable,
   MaterialsInlineTable,
+  OrdersInlineBoard,
   PrintersInlineTable,
   ProductsInlineTable,
 } from "./components/editable-tables";
@@ -236,7 +235,6 @@ export default async function Home({
     printers,
     inventoryMovements,
     invoices,
-    demoRun,
   } = toPlainData(getAppSnapshot());
 
   const orderFilter = resolved.orderStatus ?? "ALL";
@@ -356,18 +354,6 @@ export default async function Home({
               </Link>
             ))}
           </nav>
-          <div className="mt-5 space-y-3 rounded-[24px] border border-black/6 bg-[color:var(--surface-muted)] p-4">
-            <form action={seedDataAction}>
-              <SubmitButton className="w-full" pendingText="Cargando..." variant="secondary">
-                Cargar datos de ejemplo
-              </SubmitButton>
-            </form>
-            <form action={runDemoAction}>
-              <SubmitButton className="w-full" pendingText="Ejecutando demo..." variant="primary">
-                Ejecutar demo
-              </SubmitButton>
-            </form>
-          </div>
         </aside>
 
         <div className="space-y-6">
@@ -533,60 +519,6 @@ export default async function Home({
               </div>
             </div>
 
-            <div id="demo-results" className="panel scroll-mt-6 p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-xl font-semibold">Simulacion funcional</h3>
-                <p className="text-sm text-[color:var(--muted)]">
-                  {demoRun ? `Ultima ejecucion: ${dateLabel(demoRun.ejecutado_en)}` : "Aun no se ha ejecutado la demo"}
-                </p>
-              </div>
-              {demoRun?.resultados?.length ? (
-                <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                  {demoRun.resultados.map((result) => (
-                    <article key={result.id} className="panel-muted p-5">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-xs uppercase tracking-[0.25em] text-[color:var(--muted)]">{result.codigo}</p>
-                          <h4 className="mt-2 text-lg font-semibold">{result.titulo}</h4>
-                        </div>
-                        <StatusPill label={result.estado_final_pedido} tone={result.incidencias ? "warn" : "success"} />
-                      </div>
-                      <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
-                        <p><strong>Cliente:</strong> {result.cliente}</p>
-                        <p><strong>Pedido:</strong> {result.pedido_codigo}</p>
-                        <p><strong>Productos:</strong> {result.productos}</p>
-                        <p><strong>Inventario:</strong> {result.material}</p>
-                        <p><strong>Disponible inicial:</strong> {result.stock_inicial_g}</p>
-                        <p><strong>Validacion:</strong> {result.validacion_stock}</p>
-                        <p><strong>Orden fabricacion:</strong> {result.orden_fabricacion ?? "No creada"}</p>
-                        <p><strong>Consumo:</strong> {result.materiales_consumidos ?? "Sin consumo"}</p>
-                        <p><strong>Disponible final:</strong> {result.stock_final_g ?? "sin cambios"}</p>
-                        <p><strong>Coste material:</strong> {result.coste_material != null ? currency(result.coste_material) : "-"}</p>
-                        <p>
-                          <strong>Coste energia / impresora:</strong>{" "}
-                          {result.coste_electricidad != null ? currency(result.coste_electricidad) : "-"}
-                        </p>
-                        <p><strong>Coste total:</strong> {result.coste_total != null ? currency(result.coste_total) : "-"}</p>
-                        <p><strong>Beneficio:</strong> {result.beneficio != null ? currency(result.beneficio) : "-"}</p>
-                        <p><strong>Subtotal factura:</strong> {result.subtotal_factura != null ? currency(result.subtotal_factura) : "-"}</p>
-                        <p><strong>IVA:</strong> {result.iva_factura != null ? currency(result.iva_factura) : "-"}</p>
-                        <p><strong>Total factura:</strong> {result.total_factura != null ? currency(result.total_factura) : "-"}</p>
-                        <p><strong>Incidencias:</strong> {result.incidencias ?? "Ninguna"}</p>
-                      </div>
-                      <p className="mt-4 rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3 text-sm text-[color:var(--muted)]">
-                        {(result as { resumenFlujo?: string; resumen_flujo?: string }).resumenFlujo ??
-                          (result as { resumenFlujo?: string; resumen_flujo?: string }).resumen_flujo ??
-                          "cliente -> pedido -> stock -> fabricacion -> entrega -> factura"}
-                      </p>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-5 rounded-2xl border border-dashed border-black/10 bg-white/60 px-5 py-8 text-sm text-[color:var(--muted)]">
-                  Ejecuta la demo para ver los escenarios de stock terminado, bloqueo por materiales, reposicion y flujo mixto.
-                </div>
-              )}
-            </div>
           </Section>
 
           <Section active={section === "pedidos"} title="Pedidos" subtitle="Ventas y avance">
@@ -643,13 +575,13 @@ export default async function Home({
                   </div>
                 </div>
 
-                <div className="list-scroll mt-5 space-y-4">
+                <div className="list-scroll mt-5">
                   {filteredOrders.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[color:var(--muted)]">
                       No hay pedidos para este filtro.
                     </div>
                   ) : (
-                    filteredOrders.map((order) => {
+                    false ? filteredOrders.map((order) => {
                       const latestHistory = order.historial[0] ?? null;
                       return (
                         <article
@@ -816,7 +748,21 @@ export default async function Home({
                           </details>
                         </article>
                       );
-                    })
+                    }) : (
+                      <OrdersInlineBoard
+                        orders={filteredOrders}
+                        customers={customers.map((customer) => ({
+                          id: customer.id,
+                          codigo: customer.codigo,
+                          nombre: customer.nombre,
+                        }))}
+                        products={products.map((product) => ({
+                          id: product.id,
+                          codigo: product.codigo,
+                          nombre: product.nombre,
+                        }))}
+                      />
+                    )
                   )}
                 </div>
               </div>

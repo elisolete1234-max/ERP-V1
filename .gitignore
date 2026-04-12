@@ -37,6 +37,9 @@ yarn-error.log*
 
 # local database
 /data/*.db
+/backups/*
+!/backups/.gitkeep
+/backup.config.json
 
 # vercel
 .vercel

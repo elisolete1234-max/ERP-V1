@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsc -p tsconfig.tests.json && node --test --test-isolation=none .test-dist/tests/**/*.test.js"
+    "test": "tsc -p tsconfig.tests.json && node --test --test-isolation=none .test-dist/tests/**/*.test.js",
+    "backup:db": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\backup-db.ps1",
+    "backup:register-task": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\register-backup-task.ps1"
   },
   "dependencies": {
     "next": "16.2.3",
