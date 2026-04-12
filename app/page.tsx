@@ -96,7 +96,7 @@ function toPlainData<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-type Snapshot = ReturnType<typeof getAppSnapshot>;
+type Snapshot = Awaited<ReturnType<typeof getAppSnapshot>>;
 type OrderView = Snapshot["orders"][number];
 
 function badgeClass(tone: "success" | "warn" | "danger" | "info" | "neutral") {
@@ -224,6 +224,7 @@ export default async function Home({
   const section = sectionKeys.includes(resolved.section as (typeof sectionKeys)[number])
     ? (resolved.section as (typeof sectionKeys)[number])
     : "dashboard";
+  const snapshot = toPlainData(await getAppSnapshot());
   const {
     customers,
     materials,
@@ -235,7 +236,7 @@ export default async function Home({
     printers,
     inventoryMovements,
     invoices,
-  } = toPlainData(getAppSnapshot());
+  } = snapshot;
 
   const orderFilter = resolved.orderStatus ?? "ALL";
   const manufacturingFilter = resolved.manufacturingStatus ?? "ALL";

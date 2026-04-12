@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { db } from "./db";
+import { row, rows, run, transaction } from "./db";
 
 type LineInput = {
   productId: string;
@@ -24,32 +24,8 @@ function parseBoolean(value: number) {
   return value === 1;
 }
 
-function row<T>(statement: string, ...params: unknown[]) {
-  return db.prepare(statement).get(...params) as T | undefined;
-}
-
-function rows<T>(statement: string, ...params: unknown[]) {
-  return db.prepare(statement).all(...params) as T[];
-}
-
-function run(statement: string, ...params: unknown[]) {
-  return db.prepare(statement).run(...params);
-}
-
-function transaction<T>(task: () => T) {
-  run("BEGIN");
-  try {
-    const result = task();
-    run("COMMIT");
-    return result;
-  } catch (error) {
-    run("ROLLBACK");
-    throw error;
-  }
-}
-
-function nextCode(table: string, prefix: string) {
-  const result = row<{ codigo: string }>(
+async function nextCode(table: string, prefix: string) {
+  const result = await row<{ codigo: string }>(
     `SELECT codigo FROM ${table} WHERE codigo LIKE ? ORDER BY codigo DESC LIMIT 1`,
     `${prefix}%`,
   );
@@ -65,8 +41,8 @@ function requirePositiveInteger(value: number, message: string) {
   return Math.round(value);
 }
 
-function getProductOrThrow(productId: string) {
-  const product = row<{
+async function getProductOrThrow(productId: string) {
+  const product = await row<{
     id: string;
     nombre: string;
     gramos_estimados: number;
@@ -136,7 +112,7 @@ function calculateLineCosts(input: {
   };
 }
 
-function draftLineCalculations(product: ReturnType<typeof getProductOrThrow>, quantity: number, unitPrice?: number) {
+function draftLineCalculations(product: Awaited<ReturnType<typeof getProductOrThrow>>, quantity: number, unitPrice?: number) {
   const precioUnitario = roundMoney(unitPrice && unitPrice > 0 ? unitPrice : product.pvp);
   const costs = calculateLineCosts({
     quantity,
@@ -158,8 +134,8 @@ function draftLineCalculations(product: ReturnType<typeof getProductOrThrow>, qu
   };
 }
 
-function getMaterialComputedStock(materialId: string) {
-  const totals = row<{ total: number }>(
+async function getMaterialComputedStock(materialId: string) {
+  const totals = await row<{ total: number }>(
     `SELECT
        COALESCE(SUM(
          CASE
@@ -176,9 +152,9 @@ function getMaterialComputedStock(materialId: string) {
   return Math.round(totals?.total ?? 0);
 }
 
-function syncMaterialStockCache(materialId: string) {
-  const nextStock = getMaterialComputedStock(materialId);
-  run(
+async function syncMaterialStockCache(materialId: string) {
+  const nextStock = await getMaterialComputedStock(materialId);
+  await run(
     `UPDATE materials
      SET stock_actual_g = ?, fecha_actualizacion = ?
      WHERE id = ?`,
@@ -190,23 +166,24 @@ function syncMaterialStockCache(materialId: string) {
   return nextStock;
 }
 
-function syncFinishedInventoryMetrics(productId: string) {
-  ensureFinishedInventoryRow(productId);
-  const reserved = row<{ total: number }>(
+async function syncFinishedInventoryMetrics(productId: string) {
+  await ensureFinishedInventoryRow(productId);
+  const reserved =
+    (await row<{ total: number }>(
     `SELECT COALESCE(SUM(l.cantidad_desde_stock), 0) AS total
      FROM order_lines l
      JOIN orders o ON o.id = l.pedido_id
      WHERE l.producto_id = ?
        AND o.estado IN ('CONFIRMADO', 'EN_PRODUCCION', 'LISTO')`,
     productId,
-  )?.total ?? 0;
+    ))?.total ?? 0;
 
-  const current = row<{ cantidad_disponible: number }>(
+  const current = await row<{ cantidad_disponible: number }>(
     `SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`,
     productId,
   );
   const available = Math.max(0, Math.round(current?.cantidad_disponible ?? 0));
-  run(
+  await run(
     `UPDATE finished_product_inventory
      SET unidades_reservadas = ?, unidades_disponibles = ?, unidades_stock = ?, fecha_actualizacion = ?
      WHERE product_id = ?`,
@@ -218,19 +195,19 @@ function syncFinishedInventoryMetrics(productId: string) {
   );
 }
 
-function syncFinishedInventoryMetricsForOrder(orderId: string) {
-  const productIds = rows<{ producto_id: string }>(
+async function syncFinishedInventoryMetricsForOrder(orderId: string) {
+  const productIds = await rows<{ producto_id: string }>(
     `SELECT DISTINCT producto_id FROM order_lines WHERE pedido_id = ?`,
     orderId,
   );
 
   for (const item of productIds) {
-    syncFinishedInventoryMetrics(item.producto_id);
+    await syncFinishedInventoryMetrics(item.producto_id);
   }
 }
 
-function recalculateOrderTotals(orderId: string, vatRate = DEFAULT_VAT_RATE) {
-  const totals = row<{
+async function recalculateOrderTotals(orderId: string, vatRate = DEFAULT_VAT_RATE) {
+  const totals = await row<{
     subtotal: number;
     coste_total: number;
     beneficio: number;
@@ -250,7 +227,7 @@ function recalculateOrderTotals(orderId: string, vatRate = DEFAULT_VAT_RATE) {
   const costeTotal = roundMoney(totals?.coste_total ?? 0);
   const beneficio = roundMoney(totals?.beneficio ?? 0);
 
-  run(
+  await run(
     `UPDATE orders
      SET subtotal = ?, iva = ?, total = ?, coste_total_pedido = ?, beneficio_total = ?
      WHERE id = ?`,
@@ -265,8 +242,8 @@ function recalculateOrderTotals(orderId: string, vatRate = DEFAULT_VAT_RATE) {
   return { subtotal, iva, total, costeTotal, beneficio };
 }
 
-function registerOrderHistory(pedidoId: string, estado: string, nota: string) {
-  run(
+async function registerOrderHistory(pedidoId: string, estado: string, nota: string) {
+  await run(
     `INSERT INTO order_status_history (id, pedido_id, estado, nota, fecha) VALUES (?, ?, ?, ?, ?)`,
     randomUUID(),
     pedidoId,
@@ -276,7 +253,7 @@ function registerOrderHistory(pedidoId: string, estado: string, nota: string) {
   );
 }
 
-function registerInventoryMovement(input: {
+async function registerInventoryMovement(input: {
   inventarioTipo: "MATERIAL" | "PRODUCTO_TERMINADO";
   itemId: string;
   itemCodigo?: string | null;
@@ -294,7 +271,7 @@ function registerInventoryMovement(input: {
       (id, codigo, inventario_tipo, item_id, item_codigo, tipo, fecha, cantidad, motivo, referencia)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     randomUUID(),
-    nextCode("inventory_movements", "MIV-"),
+    await nextCode("inventory_movements", "MIV-"),
     input.inventarioTipo,
     input.itemId,
     input.itemCodigo ?? null,
@@ -306,8 +283,8 @@ function registerInventoryMovement(input: {
   );
 }
 
-function getMaterialInventoryOrThrow(materialId: string) {
-  const material = row<{
+async function getMaterialInventoryOrThrow(materialId: string) {
+  const material = await row<{
     id: string;
     codigo: string;
     stock_actual_g: number;
@@ -317,9 +294,9 @@ function getMaterialInventoryOrThrow(materialId: string) {
     throw new Error("El material no existe.");
   }
 
-  const computedStock = getMaterialComputedStock(materialId);
+  const computedStock = await getMaterialComputedStock(materialId);
   if (computedStock !== material.stock_actual_g) {
-    run(
+    await run(
       `UPDATE materials
        SET stock_actual_g = ?, fecha_actualizacion = ?
        WHERE id = ?`,
@@ -332,7 +309,7 @@ function getMaterialInventoryOrThrow(materialId: string) {
   return { ...material, stock_actual_g: computedStock };
 }
 
-function applyMaterialInventoryMovement(input: {
+async function applyMaterialInventoryMovement(input: {
   materialId: string;
   tipo: "ENTRADA" | "SALIDA";
   cantidadG: number;
@@ -340,18 +317,18 @@ function applyMaterialInventoryMovement(input: {
   referencia: string;
 }) {
   const quantity = requirePositiveInteger(input.cantidadG, "La cantidad del movimiento debe ser mayor que cero.");
-  const material = getMaterialInventoryOrThrow(input.materialId);
+  const material = await getMaterialInventoryOrThrow(input.materialId);
   const delta = input.tipo === "SALIDA" ? -quantity : quantity;
   const nextStock = material.stock_actual_g + delta;
   if (nextStock < 0) {
     throw new Error("No se puede dejar el stock de materiales en negativo.");
   }
-  run(
+  await run(
     `INSERT INTO stock_movements
       (id, codigo, material_id, tipo, cantidad_g, motivo, referencia, fecha)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     randomUUID(),
-    nextCode("stock_movements", "MOV-"),
+    await nextCode("stock_movements", "MOV-"),
     input.materialId,
     input.tipo,
     quantity,
@@ -359,7 +336,7 @@ function applyMaterialInventoryMovement(input: {
     input.referencia,
     nowIso(),
   );
-  registerInventoryMovement({
+  await registerInventoryMovement({
     inventarioTipo: "MATERIAL",
     itemId: input.materialId,
     itemCodigo: material.codigo,
@@ -369,14 +346,14 @@ function applyMaterialInventoryMovement(input: {
     referencia: input.referencia,
   });
 
-  syncMaterialStockCache(input.materialId);
+  await syncMaterialStockCache(input.materialId);
 
   return { previousStock: material.stock_actual_g, nextStock, itemCodigo: material.codigo };
 }
 
-function getFinishedInventoryOrThrow(productId: string) {
-  ensureFinishedInventoryRow(productId);
-  const inventory = row<{
+async function getFinishedInventoryOrThrow(productId: string) {
+  await ensureFinishedInventoryRow(productId);
+  const inventory = await row<{
     id: string;
     codigo: string;
     product_id: string;
@@ -395,13 +372,13 @@ function getFinishedInventoryOrThrow(productId: string) {
     throw new Error("El inventario de producto terminado no existe.");
   }
 
-  syncFinishedInventoryMetrics(productId);
+  await syncFinishedInventoryMetrics(productId);
   return inventory;
 }
 
-function countUnfulfilledOrderLines(orderId: string) {
+async function countUnfulfilledOrderLines(orderId: string) {
   return (
-    row<{ total: number }>(
+    (await row<{ total: number }>(
       `SELECT COUNT(*) AS total
        FROM order_lines l
        WHERE l.pedido_id = ?
@@ -414,11 +391,11 @@ function countUnfulfilledOrderLines(orderId: string) {
            ), 0)
          ) < l.cantidad`,
       orderId,
-    )?.total ?? 0
+    ))?.total ?? 0
   );
 }
 
-function applyFinishedInventoryMovement(input: {
+async function applyFinishedInventoryMovement(input: {
   productId: string;
   tipo: InventoryMovementType;
   cantidad: number;
@@ -430,14 +407,14 @@ function applyFinishedInventoryMovement(input: {
   precioVenta?: number | null;
 }) {
   const quantity = requirePositiveInteger(input.cantidad, "La cantidad del movimiento debe ser mayor que cero.");
-  const inventory = getFinishedInventoryOrThrow(input.productId);
+  const inventory = await getFinishedInventoryOrThrow(input.productId);
   const signedDelta = input.signedDelta ?? (input.tipo === "SALIDA" ? -quantity : quantity);
   const nextQuantity = inventory.cantidad_disponible + signedDelta;
   if (nextQuantity < 0) {
     throw new Error("No se puede dejar el stock de producto terminado en negativo.");
   }
 
-  run(
+  await run(
     `UPDATE finished_product_inventory
      SET cantidad_disponible = ?, ubicacion = ?, coste_unitario = ?, precio_venta = ?, fecha_actualizacion = ?
      WHERE product_id = ?`,
@@ -448,7 +425,7 @@ function applyFinishedInventoryMovement(input: {
     nowIso(),
     input.productId,
   );
-  registerInventoryMovement({
+  await registerInventoryMovement({
     inventarioTipo: "PRODUCTO_TERMINADO",
     itemId: input.productId,
     itemCodigo: inventory.codigo,
@@ -457,13 +434,13 @@ function applyFinishedInventoryMovement(input: {
     motivo: input.motivo,
     referencia: input.referencia,
   });
-  syncFinishedInventoryMetrics(input.productId);
+  await syncFinishedInventoryMetrics(input.productId);
 
   return { previousQuantity: inventory.cantidad_disponible, nextQuantity, itemCodigo: inventory.codigo };
 }
 
-function ensureFinishedInventoryRow(productId: string) {
-  const existing = row<{ id: string }>(
+async function ensureFinishedInventoryRow(productId: string) {
+  const existing = await row<{ id: string }>(
     `SELECT id FROM finished_product_inventory WHERE product_id = ?`,
     productId,
   );
@@ -471,17 +448,17 @@ function ensureFinishedInventoryRow(productId: string) {
     return;
   }
 
-  const product = row<{ pvp: number }>(`SELECT pvp FROM products WHERE id = ?`, productId);
+  const product = await row<{ pvp: number }>(`SELECT pvp FROM products WHERE id = ?`, productId);
   if (!product) {
     throw new Error("El producto no existe.");
   }
 
-  run(
+  await run(
     `INSERT INTO finished_product_inventory
       (id, codigo, product_id, cantidad_disponible, unidades_stock, unidades_reservadas, unidades_disponibles, ubicacion, coste_unitario, precio_venta, fecha_actualizacion)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     randomUUID(),
-    nextCode("finished_product_inventory", "STK-"),
+    await nextCode("finished_product_inventory", "STK-"),
     productId,
     0,
     0,
@@ -492,11 +469,11 @@ function ensureFinishedInventoryRow(productId: string) {
     roundMoney(product.pvp),
     nowIso(),
   );
-  syncFinishedInventoryMetrics(productId);
+  await syncFinishedInventoryMetrics(productId);
 }
 
-function getFirstAvailablePrinter() {
-  return row<{
+async function getFirstAvailablePrinter() {
+  return await row<{
     id: string;
     codigo: string;
     nombre: string;
@@ -512,8 +489,8 @@ function getFirstAvailablePrinter() {
   );
 }
 
-function restoreOrderInventoryAllocations(orderId: string, orderCode: string) {
-  const allocations = rows<{
+async function restoreOrderInventoryAllocations(orderId: string, orderCode: string) {
+  const allocations = await rows<{
     id: string;
     producto_id: string;
     cantidad_desde_stock: number;
@@ -532,7 +509,7 @@ function restoreOrderInventoryAllocations(orderId: string, orderCode: string) {
 
   for (const allocation of allocations) {
     if (allocation.cantidad_desde_stock > 0) {
-      run(
+      await run(
         `UPDATE finished_product_inventory
          SET cantidad_disponible = cantidad_disponible + ?, fecha_actualizacion = ?
          WHERE product_id = ?`,
@@ -540,7 +517,7 @@ function restoreOrderInventoryAllocations(orderId: string, orderCode: string) {
         nowIso(),
         allocation.producto_id,
       );
-      registerInventoryMovement({
+      await registerInventoryMovement({
         inventarioTipo: "PRODUCTO_TERMINADO",
         itemId: allocation.producto_id,
         itemCodigo: allocation.inventario_codigo,
@@ -551,7 +528,7 @@ function restoreOrderInventoryAllocations(orderId: string, orderCode: string) {
       });
     }
 
-    run(
+    await run(
       `UPDATE order_lines
        SET cantidad_desde_stock = 0, cantidad_a_fabricar = 0
        WHERE id = ?`,
@@ -559,7 +536,7 @@ function restoreOrderInventoryAllocations(orderId: string, orderCode: string) {
     );
   }
 
-  const activePrinters = rows<{ impresora_id: string | null }>(
+  const activePrinters = await rows<{ impresora_id: string | null }>(
     `SELECT impresora_id
      FROM manufacturing_orders
      WHERE pedido_id = ? AND estado = 'INICIADA' AND impresora_id IS NOT NULL`,
@@ -568,7 +545,7 @@ function restoreOrderInventoryAllocations(orderId: string, orderCode: string) {
 
   for (const item of activePrinters) {
     if (item.impresora_id) {
-      run(
+      await run(
         `UPDATE printers
          SET estado = 'LIBRE', fecha_actualizacion = ?
          WHERE id = ?`,
@@ -578,22 +555,22 @@ function restoreOrderInventoryAllocations(orderId: string, orderCode: string) {
     }
   }
 
-  run(`DELETE FROM manufacturing_orders WHERE pedido_id = ?`, orderId);
-  syncFinishedInventoryMetricsForOrder(orderId);
+  await run(`DELETE FROM manufacturing_orders WHERE pedido_id = ?`, orderId);
+  await syncFinishedInventoryMetricsForOrder(orderId);
 }
 
-export function getAppSnapshot() {
-  const materialIds = rows<{ id: string }>(`SELECT id FROM materials`);
+export async function getAppSnapshot() {
+  const materialIds = await rows<{ id: string }>(`SELECT id FROM materials`);
   for (const item of materialIds) {
     syncMaterialStockCache(item.id);
   }
 
-  const inventoryProducts = rows<{ product_id: string }>(`SELECT product_id FROM finished_product_inventory`);
+  const inventoryProducts = await rows<{ product_id: string }>(`SELECT product_id FROM finished_product_inventory`);
   for (const item of inventoryProducts) {
     syncFinishedInventoryMetrics(item.product_id);
   }
 
-  const customers = rows<{
+  const customers = await rows<{
     id: string;
     codigo: string;
     nombre: string;
@@ -603,7 +580,7 @@ export function getAppSnapshot() {
     fecha_creacion: string;
   }>(`SELECT * FROM customers ORDER BY fecha_creacion DESC`);
 
-  const materials = rows<{
+  const materials = await rows<{
     id: string;
     codigo: string;
     nombre: string;
@@ -626,7 +603,7 @@ export function getAppSnapshot() {
     fecha_actualizacion: string;
   }>(`SELECT * FROM materials ORDER BY nombre ASC`);
 
-  const products = rows<{
+  const productsBase = await rows<{
     id: string;
     codigo: string;
     nombre: string;
@@ -649,7 +626,9 @@ export function getAppSnapshot() {
      FROM products p
      JOIN materials m ON m.id = p.material_id
      ORDER BY p.nombre ASC`,
-  ).map((product) => {
+  );
+
+  const products = productsBase.map((product) => {
     const costeMaterial = roundMoney((product.precio_kg / 1000) * product.gramos_estimados);
     const costeTotalReceta = roundMoney(
       costeMaterial +
@@ -667,7 +646,7 @@ export function getAppSnapshot() {
     };
   });
 
-  const orders = rows<{
+  const ordersBase = await rows<{
     id: string;
     codigo: string;
     cliente_id: string;
@@ -686,9 +665,11 @@ export function getAppSnapshot() {
      FROM orders o
      JOIN customers c ON c.id = o.cliente_id
      ORDER BY o.fecha_pedido DESC`,
-  ).map((order) => ({
+  );
+
+  const orders = await Promise.all(ordersBase.map(async (order) => ({
     ...order,
-    lineas: rows<{
+    lineas: await rows<{
       id: string;
       codigo: string;
       pedido_id: string;
@@ -724,14 +705,14 @@ export function getAppSnapshot() {
        ORDER BY l.codigo ASC`,
       order.id,
     ),
-    historial: rows<{
+    historial: await rows<{
       id: string;
       pedido_id: string;
       estado: string;
       nota: string;
       fecha: string;
     }>(`SELECT * FROM order_status_history WHERE pedido_id = ? ORDER BY fecha DESC`, order.id),
-    ordenesFabricacion: rows<{
+    ordenesFabricacion: await rows<{
       id: string;
       codigo: string;
       pedido_id: string;
@@ -751,10 +732,10 @@ export function getAppSnapshot() {
       `SELECT * FROM manufacturing_orders WHERE pedido_id = ? ORDER BY codigo ASC`,
       order.id,
     ),
-    factura: row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, order.id) ?? null,
-  }));
+    factura: (await row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, order.id)) ?? null,
+  })));
 
-  const manufacturingOrders = rows<{
+  const manufacturingOrders = await rows<{
     id: string;
     codigo: string;
     pedido_id: string;
@@ -787,7 +768,7 @@ export function getAppSnapshot() {
      ORDER BY mo.codigo ASC`,
   );
 
-  const stockMovements = rows<{
+  const stockMovements = await rows<{
     id: string;
     codigo: string;
     material_id: string;
@@ -804,7 +785,7 @@ export function getAppSnapshot() {
      ORDER BY sm.fecha DESC`,
   );
 
-  const invoices = rows<{
+  const invoices = await rows<{
     id: string;
     codigo: string;
     pedido_id: string;
@@ -827,7 +808,7 @@ export function getAppSnapshot() {
      ORDER BY i.fecha DESC`,
   );
 
-  const finishedInventory = rows<{
+  const finishedInventory = await rows<{
     id: string;
     codigo: string;
     product_id: string;
@@ -851,7 +832,7 @@ export function getAppSnapshot() {
      ORDER BY p.nombre ASC`,
   );
 
-  const printers = rows<{
+  const printers = await rows<{
     id: string;
     codigo: string;
     nombre: string;
@@ -872,7 +853,7 @@ export function getAppSnapshot() {
      ORDER BY pr.codigo ASC, pr.nombre ASC`,
   );
 
-  const inventoryMovements = rows<{
+  const inventoryMovements = await rows<{
     id: string;
     codigo: string;
     inventario_tipo: string;
@@ -899,26 +880,26 @@ export function getAppSnapshot() {
   };
 }
 
-export function resetDatabase() {
-  transaction(() => {
-    run("DELETE FROM demo_scenario_results");
-    run("DELETE FROM demo_runs");
-    run("DELETE FROM inventory_movements");
-    run("DELETE FROM order_status_history");
-    run("DELETE FROM invoices");
-    run("DELETE FROM stock_movements");
-    run("DELETE FROM manufacturing_orders");
-    run("DELETE FROM order_lines");
-    run("DELETE FROM orders");
-    run("DELETE FROM finished_product_inventory");
-    run("DELETE FROM printers");
-    run("DELETE FROM products");
-    run("DELETE FROM materials");
-    run("DELETE FROM customers");
+export async function resetDatabase() {
+  await transaction(async () => {
+    await run("DELETE FROM demo_scenario_results");
+    await run("DELETE FROM demo_runs");
+    await run("DELETE FROM inventory_movements");
+    await run("DELETE FROM order_status_history");
+    await run("DELETE FROM invoices");
+    await run("DELETE FROM stock_movements");
+    await run("DELETE FROM manufacturing_orders");
+    await run("DELETE FROM order_lines");
+    await run("DELETE FROM orders");
+    await run("DELETE FROM finished_product_inventory");
+    await run("DELETE FROM printers");
+    await run("DELETE FROM products");
+    await run("DELETE FROM materials");
+    await run("DELETE FROM customers");
   });
 }
 
-export function createCustomerRecord(input: {
+export async function createCustomerRecord(input: {
   nombre: string;
   telefono?: string;
   email?: string;
@@ -928,11 +909,11 @@ export function createCustomerRecord(input: {
     throw new Error("El cliente necesita al menos un nombre.");
   }
 
-  run(
+  await run(
     `INSERT INTO customers (id, codigo, nombre, telefono, email, direccion, fecha_creacion)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
     randomUUID(),
-    nextCode("customers", "CLI-"),
+    await nextCode("customers", "CLI-"),
     input.nombre.trim(),
     input.telefono?.trim() || null,
     input.email?.trim() || null,
@@ -941,7 +922,7 @@ export function createCustomerRecord(input: {
   );
 }
 
-export function updateCustomerRecord(input: {
+export async function updateCustomerRecord(input: {
   id: string;
   nombre: string;
   telefono?: string;
@@ -952,7 +933,7 @@ export function updateCustomerRecord(input: {
     throw new Error("El cliente necesita ID y nombre.");
   }
 
-  run(
+  await run(
     `UPDATE customers
      SET nombre = ?, telefono = ?, email = ?, direccion = ?
      WHERE id = ?`,
@@ -964,7 +945,7 @@ export function updateCustomerRecord(input: {
   );
 }
 
-export function createMaterialRecord(input: {
+export async function createMaterialRecord(input: {
   nombre: string;
   marca: string;
   tipo: string;
@@ -999,13 +980,13 @@ export function createMaterialRecord(input: {
   }
 
   const materialId = randomUUID();
-  transaction(() => {
-    run(
+  await transaction(async () => {
+    await run(
       `INSERT INTO materials
         (id, codigo, nombre, marca, tipo, color, tipo_color, efecto, color_base, nombre_comercial, diametro_mm, peso_spool_g, temp_extrusor, temp_cama, precio_kg, stock_actual_g, stock_minimo_g, proveedor, notas, fecha_actualizacion)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       materialId,
-      nextCode("materials", "MAT-"),
+      await nextCode("materials", "MAT-"),
       input.nombre.trim(),
       input.marca.trim(),
       input.tipo.trim(),
@@ -1027,7 +1008,7 @@ export function createMaterialRecord(input: {
     );
 
     if (Math.round(input.stockActualG) > 0) {
-      applyMaterialInventoryMovement({
+      await applyMaterialInventoryMovement({
         materialId,
         tipo: "ENTRADA",
         cantidadG: Math.round(input.stockActualG),
@@ -1038,7 +1019,7 @@ export function createMaterialRecord(input: {
   });
 }
 
-export function updateMaterialRecord(input: {
+export async function updateMaterialRecord(input: {
   id: string;
   nombre: string;
   marca: string;
@@ -1072,7 +1053,7 @@ export function updateMaterialRecord(input: {
     throw new Error("No se permiten importes ni stock minimo negativos.");
   }
 
-  const current = row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, input.id);
+  const current = await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, input.id);
   if (!current) {
     throw new Error("El material no existe.");
   }
@@ -1080,7 +1061,7 @@ export function updateMaterialRecord(input: {
     throw new Error("El stock actual solo se modifica mediante movimientos de inventario.");
   }
 
-  run(
+  await run(
     `UPDATE materials
      SET nombre = ?, marca = ?, tipo = ?, color = ?, tipo_color = ?, efecto = ?, color_base = ?, nombre_comercial = ?, diametro_mm = ?, peso_spool_g = ?, temp_extrusor = ?, temp_cama = ?, precio_kg = ?, stock_minimo_g = ?, proveedor = ?, notas = ?, fecha_actualizacion = ?
      WHERE id = ?`,
@@ -1105,7 +1086,7 @@ export function updateMaterialRecord(input: {
   );
 }
 
-export function createProductRecord(input: {
+export async function createProductRecord(input: {
   nombre: string;
   descripcion?: string;
   enlaceModelo?: string;
@@ -1135,19 +1116,19 @@ export function createProductRecord(input: {
     throw new Error("Revisa el producto: tiempo, PVP y costes deben ser validos.");
   }
 
-  const material = row(`SELECT id FROM materials WHERE id = ?`, input.materialId);
+  const material = await row(`SELECT id FROM materials WHERE id = ?`, input.materialId);
   if (!material) {
     throw new Error("El material principal no existe.");
   }
 
   const productId = randomUUID();
-  transaction(() => {
-    run(
+  await transaction(async () => {
+    await run(
       `INSERT INTO products
         (id, codigo, nombre, descripcion, enlace_modelo, gramos_estimados, tiempo_impresion_horas, coste_electricidad, coste_maquina, coste_mano_obra, coste_postprocesado, margen, pvp, material_id, activo)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       productId,
-      nextCode("products", "PRO-"),
+      await nextCode("products", "PRO-"),
       input.nombre.trim(),
       input.descripcion?.trim() || null,
       input.enlaceModelo?.trim() || null,
@@ -1162,8 +1143,8 @@ export function createProductRecord(input: {
       input.materialId,
       input.activo === false ? 0 : 1,
     );
-    ensureFinishedInventoryRow(productId);
-    run(
+    await ensureFinishedInventoryRow(productId);
+    await run(
       `UPDATE finished_product_inventory
        SET precio_venta = ?, fecha_actualizacion = ?
        WHERE product_id = ?`,
@@ -1174,7 +1155,7 @@ export function createProductRecord(input: {
   });
 }
 
-export function updateProductRecord(input: {
+export async function updateProductRecord(input: {
   id: string;
   nombre: string;
   descripcion?: string;
@@ -1205,13 +1186,13 @@ export function updateProductRecord(input: {
     throw new Error("Revisa el producto: tiempo, PVP y costes deben ser validos.");
   }
 
-  const material = row(`SELECT id FROM materials WHERE id = ?`, input.materialId);
+  const material = await row(`SELECT id FROM materials WHERE id = ?`, input.materialId);
   if (!material) {
     throw new Error("El material principal no existe.");
   }
 
-  transaction(() => {
-    run(
+  await transaction(async () => {
+    await run(
       `UPDATE products
        SET nombre = ?, descripcion = ?, enlace_modelo = ?, gramos_estimados = ?, tiempo_impresion_horas = ?, coste_electricidad = ?, coste_maquina = ?, coste_mano_obra = ?, coste_postprocesado = ?, margen = ?, pvp = ?, material_id = ?, activo = ?
        WHERE id = ?`,
@@ -1230,8 +1211,8 @@ export function updateProductRecord(input: {
       input.activo === false ? 0 : 1,
       input.id,
     );
-    ensureFinishedInventoryRow(input.id);
-    run(
+    await ensureFinishedInventoryRow(input.id);
+    await run(
       `UPDATE finished_product_inventory
        SET precio_venta = ?, fecha_actualizacion = ?
        WHERE product_id = ?`,
@@ -1242,7 +1223,7 @@ export function updateProductRecord(input: {
   });
 }
 
-export function createOrderRecord(input: {
+export async function createOrderRecord(input: {
   clienteId: string;
   observaciones?: string;
   vatRate?: number;
@@ -1264,12 +1245,14 @@ export function createOrderRecord(input: {
     throw new Error("Debes añadir al menos una linea valida al pedido.");
   }
 
-  const codigo = nextCode("orders", "PED-");
-  const calculations = validLines.map((line) => {
-    const product = getProductOrThrow(line.productId);
-    const values = draftLineCalculations(product, Math.round(line.quantity), line.unitPrice);
-    return { line, values };
-  });
+  const codigo = await nextCode("orders", "PED-");
+  const calculations = await Promise.all(
+    validLines.map(async (line) => {
+      const product = await getProductOrThrow(line.productId);
+      const values = draftLineCalculations(product, Math.round(line.quantity), line.unitPrice);
+      return { line, values };
+    }),
+  );
 
   const subtotal = roundMoney(
     calculations.reduce((sum, item) => sum + item.values.precioUnitario * item.line.quantity, 0),
@@ -1282,8 +1265,8 @@ export function createOrderRecord(input: {
   const beneficioTotal = roundMoney(subtotal - costeTotalPedido);
   const orderId = randomUUID();
 
-  transaction(() => {
-    run(
+  await transaction(async () => {
+    await run(
       `INSERT INTO orders
         (id, codigo, cliente_id, fecha_pedido, estado, estado_pago, subtotal, iva, total, coste_total_pedido, beneficio_total, observaciones)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1302,12 +1285,12 @@ export function createOrderRecord(input: {
     );
 
     for (const item of calculations) {
-      run(
+      await run(
         `INSERT INTO order_lines
           (id, codigo, pedido_id, producto_id, cantidad, cantidad_desde_stock, cantidad_a_fabricar, precio_unitario, precio_total_linea, gramos_totales, coste_material, coste_electricidad_total, coste_impresora_total, coste_total, beneficio)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         randomUUID(),
-        nextCode("order_lines", "LIN-"),
+        await nextCode("order_lines", "LIN-"),
         orderId,
         item.line.productId,
         Math.round(item.line.quantity),
@@ -1324,14 +1307,14 @@ export function createOrderRecord(input: {
       );
     }
 
-    registerOrderHistory(orderId, "BORRADOR", "Pedido creado en borrador.");
-    recalculateOrderTotals(orderId, input.vatRate ?? DEFAULT_VAT_RATE);
+    await registerOrderHistory(orderId, "BORRADOR", "Pedido creado en borrador.");
+    await recalculateOrderTotals(orderId, input.vatRate ?? DEFAULT_VAT_RATE);
   });
 
   return orderId;
 }
 
-export function updateManufacturingOrderRecord(input: {
+export async function updateManufacturingOrderRecord(input: {
   id: string;
   estado: string;
   cantidad: number;
@@ -1348,7 +1331,7 @@ export function updateManufacturingOrderRecord(input: {
     throw new Error("El tiempo real no puede ser negativo.");
   }
 
-  const current = row<{ estado: string; impresora_id: string | null }>(
+  const current = await row<{ estado: string; impresora_id: string | null }>(
     `SELECT estado, impresora_id FROM manufacturing_orders WHERE id = ?`,
     input.id,
   );
@@ -1365,7 +1348,7 @@ export function updateManufacturingOrderRecord(input: {
     throw new Error("Estado de fabricacion no valido para edicion manual.");
   }
 
-  run(
+  await run(
     `UPDATE manufacturing_orders
      SET estado = ?, cantidad = ?, tiempo_real_horas = ?, incidencia = ?
      WHERE id = ?`,
@@ -1377,7 +1360,7 @@ export function updateManufacturingOrderRecord(input: {
   );
 }
 
-export function updateInvoiceRecord(input: {
+export async function updateInvoiceRecord(input: {
   id: string;
   estadoPago: string;
 }) {
@@ -1388,18 +1371,18 @@ export function updateInvoiceRecord(input: {
     throw new Error("Estado de pago no valido.");
   }
 
-  const invoice = row<{ pedido_id: string }>(`SELECT pedido_id FROM invoices WHERE id = ?`, input.id);
+  const invoice = await row<{ pedido_id: string }>(`SELECT pedido_id FROM invoices WHERE id = ?`, input.id);
   if (!invoice) {
     throw new Error("La factura no existe.");
   }
 
-  transaction(() => {
-    run(`UPDATE invoices SET estado_pago = ? WHERE id = ?`, input.estadoPago, input.id);
-    run(`UPDATE orders SET estado_pago = ? WHERE id = ?`, input.estadoPago, invoice.pedido_id);
+  await transaction(async () => {
+    await run(`UPDATE invoices SET estado_pago = ? WHERE id = ?`, input.estadoPago, input.id);
+    await run(`UPDATE orders SET estado_pago = ? WHERE id = ?`, input.estadoPago, invoice.pedido_id);
   });
 }
 
-export function createPrinterRecord(input: {
+export async function createPrinterRecord(input: {
   nombre: string;
   estado?: PrinterState;
   horasUsoAcumuladas?: number;
@@ -1413,12 +1396,12 @@ export function createPrinterRecord(input: {
     throw new Error("No se permiten horas ni costes negativos.");
   }
 
-  run(
+  await run(
     `INSERT INTO printers
       (id, codigo, nombre, estado, horas_uso_acumuladas, coste_hora, ubicacion, fecha_actualizacion)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     randomUUID(),
-    nextCode("printers", "IMP-"),
+    await nextCode("printers", "IMP-"),
     input.nombre.trim(),
     input.estado ?? "LIBRE",
     roundMoney(input.horasUsoAcumuladas ?? 0),
@@ -1428,7 +1411,7 @@ export function createPrinterRecord(input: {
   );
 }
 
-export function updatePrinterRecord(input: {
+export async function updatePrinterRecord(input: {
   id: string;
   nombre: string;
   estado: PrinterState;
@@ -1443,7 +1426,7 @@ export function updatePrinterRecord(input: {
     throw new Error("No se permiten horas ni costes negativos.");
   }
 
-  const activeOrders = rows<{ id: string }>(
+  const activeOrders = await rows<{ id: string }>(
     `SELECT id FROM manufacturing_orders WHERE impresora_id = ? AND estado = 'INICIADA'`,
     input.id,
   );
@@ -1454,7 +1437,7 @@ export function updatePrinterRecord(input: {
     throw new Error("No se puede cambiar el estado de una impresora con una orden activa.");
   }
 
-  run(
+  await run(
     `UPDATE printers
      SET nombre = ?, estado = ?, horas_uso_acumuladas = ?, coste_hora = ?, ubicacion = ?, fecha_actualizacion = ?
      WHERE id = ?`,
@@ -1468,7 +1451,7 @@ export function updatePrinterRecord(input: {
   );
 }
 
-export function restockFinishedProduct(
+export async function restockFinishedProduct(
   productId: string,
   quantity: number,
   reason: string,
@@ -1476,7 +1459,7 @@ export function restockFinishedProduct(
   unitCost?: number,
 ) {
   const parsedQuantity = requirePositiveInteger(quantity, "La entrada de producto terminado debe ser mayor que cero.");
-  const product = row<{ id: string; pvp: number }>(`SELECT id, pvp FROM products WHERE id = ?`, productId);
+  const product = await row<{ id: string; pvp: number }>(`SELECT id, pvp FROM products WHERE id = ?`, productId);
   if (!product) {
     throw new Error("El producto no existe.");
   }
@@ -1484,8 +1467,8 @@ export function restockFinishedProduct(
     throw new Error("El coste unitario no puede ser negativo.");
   }
 
-  transaction(() => {
-    applyFinishedInventoryMovement({
+  await transaction(async () => {
+    await applyFinishedInventoryMovement({
       productId,
       tipo: "ENTRADA",
       cantidad: parsedQuantity,
@@ -1498,7 +1481,7 @@ export function restockFinishedProduct(
   });
 }
 
-export function updateFinishedInventoryRecord(input: {
+export async function updateFinishedInventoryRecord(input: {
   id: string;
   cantidadDisponible: number;
   ubicacion?: string;
@@ -1512,7 +1495,7 @@ export function updateFinishedInventoryRecord(input: {
     throw new Error("No se permiten cantidades ni importes negativos.");
   }
 
-  const current = row<{
+  const current = await row<{
     id: string;
     codigo: string;
     product_id: string;
@@ -1522,10 +1505,10 @@ export function updateFinishedInventoryRecord(input: {
     throw new Error("El registro de inventario no existe.");
   }
 
-  transaction(() => {
+  await transaction(async () => {
     const delta = Math.round(input.cantidadDisponible) - current.cantidad_disponible;
     if (delta === 0) {
-      run(
+      await run(
         `UPDATE finished_product_inventory
          SET ubicacion = ?, coste_unitario = ?, precio_venta = ?, fecha_actualizacion = ?
          WHERE id = ?`,
@@ -1535,11 +1518,11 @@ export function updateFinishedInventoryRecord(input: {
         nowIso(),
         input.id,
       );
-      syncFinishedInventoryMetrics(current.product_id);
+      await syncFinishedInventoryMetrics(current.product_id);
       return;
     }
 
-    applyFinishedInventoryMovement({
+    await applyFinishedInventoryMovement({
       productId: current.product_id,
       tipo: "AJUSTE",
       cantidad: Math.abs(delta),
@@ -1553,8 +1536,8 @@ export function updateFinishedInventoryRecord(input: {
   });
 }
 
-export function confirmOrder(orderId: string) {
-  const order = row<{ id: string; codigo: string; estado: string }>(
+export async function confirmOrder(orderId: string) {
+  const order = await row<{ id: string; codigo: string; estado: string }>(
     `SELECT id, codigo, estado FROM orders WHERE id = ?`,
     orderId,
   );
@@ -1565,7 +1548,7 @@ export function confirmOrder(orderId: string) {
     throw new Error("Solo se pueden confirmar pedidos pendientes de planificacion.");
   }
 
-  const linesBase = rows<{ producto_id: string }>(
+  const linesBase = await rows<{ producto_id: string }>(
     `SELECT producto_id FROM order_lines WHERE pedido_id = ?`,
     orderId,
   );
@@ -1574,10 +1557,10 @@ export function confirmOrder(orderId: string) {
   }
 
   for (const line of linesBase) {
-    ensureFinishedInventoryRow(line.producto_id);
+    await ensureFinishedInventoryRow(line.producto_id);
   }
 
-  const lines = rows<{
+  const lines = await rows<{
     id: string;
     producto_id: string;
     cantidad: number;
@@ -1627,11 +1610,12 @@ export function confirmOrder(orderId: string) {
   let totalFromStock = 0;
   let totalToManufacture = 0;
 
-  transaction(() => {
-    restoreOrderInventoryAllocations(orderId, order.codigo);
+  await transaction(async () => {
+    await restoreOrderInventoryAllocations(orderId, order.codigo);
 
     const materialNeeds = new Map<string, { required: number; available: number; label: string }>();
-    const planning = lines.map((line) => {
+    const planning = [];
+    for (const line of lines) {
       const availableFinished = line.stock_producto_terminado + line.cantidad_desde_stock;
       const fromStock = Math.min(line.cantidad, availableFinished);
       const toManufacture = line.cantidad - fromStock;
@@ -1647,7 +1631,7 @@ export function confirmOrder(orderId: string) {
       totalFromStock += fromStock;
       totalToManufacture += toManufacture;
 
-      run(
+      await run(
         `UPDATE order_lines
          SET cantidad_desde_stock = ?, cantidad_a_fabricar = ?, precio_total_linea = ?, coste_material = ?, coste_electricidad_total = ?, coste_impresora_total = 0, coste_total = ?, beneficio = ?
          WHERE id = ?`,
@@ -1662,7 +1646,7 @@ export function confirmOrder(orderId: string) {
       );
 
       if (fromStock > 0) {
-        applyFinishedInventoryMovement({
+        await applyFinishedInventoryMovement({
           productId: line.producto_id,
           tipo: "SALIDA",
           cantidad: fromStock,
@@ -1681,8 +1665,8 @@ export function confirmOrder(orderId: string) {
         materialNeeds.set(line.material_id, materialEntry);
       }
 
-      return { ...line, toManufacture };
-    });
+      planning.push({ ...line, toManufacture });
+    }
 
     incidents.push(
       ...Array.from(materialNeeds.values())
@@ -1695,12 +1679,12 @@ export function confirmOrder(orderId: string) {
         continue;
       }
 
-      run(
+      await run(
         `INSERT INTO manufacturing_orders
           (id, codigo, pedido_id, linea_pedido_id, producto_id, cantidad, estado, fecha_inicio, fecha_fin, gramos_consumidos, tiempo_real_horas, coste_impresora_total, incidencia)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         randomUUID(),
-        nextCode("manufacturing_orders", "OF-"),
+        await nextCode("manufacturing_orders", "OF-"),
         orderId,
         line.id,
         line.producto_id,
@@ -1722,8 +1706,8 @@ export function confirmOrder(orderId: string) {
           ? "LISTO"
           : "CONFIRMADO";
 
-    run(`UPDATE orders SET estado = ? WHERE id = ?`, nextStatus, orderId);
-    registerOrderHistory(
+    await run(`UPDATE orders SET estado = ? WHERE id = ?`, nextStatus, orderId);
+    await registerOrderHistory(
       orderId,
       nextStatus,
       nextStatus === "LISTO"
@@ -1732,8 +1716,8 @@ export function confirmOrder(orderId: string) {
           ? incidents.join(" ")
           : `Pedido confirmado. ${totalFromStock} unidades salen de stock y ${totalToManufacture} pasan a fabricacion.`,
     );
-    recalculateOrderTotals(orderId);
-    syncFinishedInventoryMetricsForOrder(orderId);
+    await recalculateOrderTotals(orderId);
+    await syncFinishedInventoryMetricsForOrder(orderId);
   });
 
   return {
@@ -1744,11 +1728,11 @@ export function confirmOrder(orderId: string) {
   };
 }
 
-export function retryOrderAfterRestock(orderId: string) {
-  return confirmOrder(orderId);
+export async function retryOrderAfterRestock(orderId: string) {
+  return await confirmOrder(orderId);
 }
 
-export function updateOrderRecord(input: {
+export async function updateOrderRecord(input: {
   id: string;
   clienteId: string;
   observaciones?: string;
@@ -1759,14 +1743,14 @@ export function updateOrderRecord(input: {
     throw new Error("Pedido incompleto.");
   }
 
-  const current = row<{ estado: string; codigo: string }>(
+  const current = await row<{ estado: string; codigo: string }>(
     `SELECT estado, codigo FROM orders WHERE id = ?`,
     input.id,
   );
   if (!current) {
     throw new Error("El pedido no existe.");
   }
-  const customer = row(`SELECT id FROM customers WHERE id = ?`, input.clienteId);
+  const customer = await row(`SELECT id FROM customers WHERE id = ?`, input.clienteId);
   if (!customer) {
     throw new Error("El cliente no existe.");
   }
@@ -1779,11 +1763,13 @@ export function updateOrderRecord(input: {
     throw new Error("Debes mantener al menos una linea valida.");
   }
 
-  const calculations = validLines.map((line) => {
-    const product = getProductOrThrow(line.productId);
-    const values = draftLineCalculations(product, Math.round(line.quantity), line.unitPrice);
-    return { line, values };
-  });
+  const calculations = await Promise.all(
+    validLines.map(async (line) => {
+      const product = await getProductOrThrow(line.productId);
+      const values = draftLineCalculations(product, Math.round(line.quantity), line.unitPrice);
+      return { line, values };
+    }),
+  );
   const subtotal = roundMoney(
     calculations.reduce((sum, item) => sum + item.values.precioUnitario * item.line.quantity, 0),
   );
@@ -1795,10 +1781,10 @@ export function updateOrderRecord(input: {
   const beneficioTotal = roundMoney(subtotal - costeTotalPedido);
   const nextStatus = current.estado === "INCIDENCIA_STOCK" ? "INCIDENCIA_STOCK" : "BORRADOR";
 
-  transaction(() => {
-    restoreOrderInventoryAllocations(input.id, current.codigo);
-    run(`DELETE FROM order_lines WHERE pedido_id = ?`, input.id);
-    run(
+  await transaction(async () => {
+    await restoreOrderInventoryAllocations(input.id, current.codigo);
+    await run(`DELETE FROM order_lines WHERE pedido_id = ?`, input.id);
+    await run(
       `UPDATE orders
        SET cliente_id = ?, observaciones = ?, estado = ?, subtotal = ?, iva = ?, total = ?, coste_total_pedido = ?, beneficio_total = ?
        WHERE id = ?`,
@@ -1814,12 +1800,12 @@ export function updateOrderRecord(input: {
     );
 
     for (const item of calculations) {
-      run(
+      await run(
         `INSERT INTO order_lines
           (id, codigo, pedido_id, producto_id, cantidad, cantidad_desde_stock, cantidad_a_fabricar, precio_unitario, precio_total_linea, gramos_totales, coste_material, coste_electricidad_total, coste_impresora_total, coste_total, beneficio)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         randomUUID(),
-        nextCode("order_lines", "LIN-"),
+        await nextCode("order_lines", "LIN-"),
         input.id,
         item.line.productId,
         Math.round(item.line.quantity),
@@ -1836,20 +1822,20 @@ export function updateOrderRecord(input: {
       );
     }
 
-    registerOrderHistory(
+    await registerOrderHistory(
       input.id,
       nextStatus,
       nextStatus === "INCIDENCIA_STOCK"
         ? "Pedido editado manualmente. Mantiene incidencia hasta revalidar stock."
         : "Pedido editado manualmente. Vuelve a borrador para recalcular stock y fabricacion.",
     );
-    recalculateOrderTotals(input.id);
-    syncFinishedInventoryMetricsForOrder(input.id);
+    await recalculateOrderTotals(input.id);
+    await syncFinishedInventoryMetricsForOrder(input.id);
   });
 }
 
-export function startManufacturingOrder(manufacturingOrderId: string) {
-  const manufacturingOrder = row<{
+export async function startManufacturingOrder(manufacturingOrderId: string) {
+  const manufacturingOrder = await row<{
     id: string;
     pedido_id: string;
     codigo: string;
@@ -1889,8 +1875,8 @@ export function startManufacturingOrder(manufacturingOrderId: string) {
 
   const gramsRequired = manufacturingOrder.gramos_estimados * manufacturingOrder.cantidad;
   if (manufacturingOrder.stock_actual_g < gramsRequired) {
-    transaction(() => {
-      run(
+    await transaction(async () => {
+      await run(
         `UPDATE manufacturing_orders
          SET estado = ?, incidencia = ?
          WHERE id = ?`,
@@ -1898,8 +1884,8 @@ export function startManufacturingOrder(manufacturingOrderId: string) {
         `No hay stock suficiente. Requiere ${gramsRequired} g y hay ${manufacturingOrder.stock_actual_g} g.`,
         manufacturingOrderId,
       );
-      run(`UPDATE orders SET estado = ? WHERE id = ?`, "INCIDENCIA_STOCK", manufacturingOrder.pedido_id);
-      registerOrderHistory(
+      await run(`UPDATE orders SET estado = ? WHERE id = ?`, "INCIDENCIA_STOCK", manufacturingOrder.pedido_id);
+      await registerOrderHistory(
         manufacturingOrder.pedido_id,
         "INCIDENCIA_STOCK",
         "La fabricacion no pudo iniciarse por falta de material.",
@@ -1910,7 +1896,7 @@ export function startManufacturingOrder(manufacturingOrderId: string) {
 
   const printer =
     (manufacturingOrder.impresora_id
-      ? row<{
+      ? await row<{
           id: string;
           codigo: string;
           nombre: string;
@@ -1918,7 +1904,7 @@ export function startManufacturingOrder(manufacturingOrderId: string) {
           horas_uso_acumuladas: number;
           coste_hora: number;
         }>(`SELECT * FROM printers WHERE id = ?`, manufacturingOrder.impresora_id)
-      : undefined) ?? getFirstAvailablePrinter();
+      : undefined) ?? (await getFirstAvailablePrinter());
 
   if (!printer) {
     throw new Error("No hay impresoras libres para lanzar la orden.");
@@ -1927,7 +1913,7 @@ export function startManufacturingOrder(manufacturingOrderId: string) {
     throw new Error("La impresora asignada no esta libre.");
   }
 
-  const busyConflict = row<{ id: string }>(
+  const busyConflict = await row<{ id: string }>(
     `SELECT id
      FROM manufacturing_orders
      WHERE impresora_id = ? AND estado = 'INICIADA' AND id <> ?
@@ -1939,8 +1925,8 @@ export function startManufacturingOrder(manufacturingOrderId: string) {
     throw new Error("La impresora seleccionada ya tiene una orden activa.");
   }
 
-  transaction(() => {
-    run(
+  await transaction(async () => {
+    await run(
       `UPDATE manufacturing_orders
        SET estado = ?, impresora_id = ?, fecha_inicio = COALESCE(fecha_inicio, ?), incidencia = NULL
        WHERE id = ?`,
@@ -1949,15 +1935,15 @@ export function startManufacturingOrder(manufacturingOrderId: string) {
       nowIso(),
       manufacturingOrderId,
     );
-    run(
+    await run(
       `UPDATE printers
        SET estado = 'IMPRIMIENDO', fecha_actualizacion = ?
        WHERE id = ?`,
       nowIso(),
       printer.id,
     );
-    run(`UPDATE orders SET estado = ? WHERE id = ?`, "EN_PRODUCCION", manufacturingOrder.pedido_id);
-    registerOrderHistory(
+    await run(`UPDATE orders SET estado = ? WHERE id = ?`, "EN_PRODUCCION", manufacturingOrder.pedido_id);
+    await registerOrderHistory(
       manufacturingOrder.pedido_id,
       "EN_PRODUCCION",
       `Fabricacion iniciada para ${manufacturingOrder.producto_nombre} en ${printer.nombre}.`,
@@ -1965,8 +1951,8 @@ export function startManufacturingOrder(manufacturingOrderId: string) {
   });
 }
 
-export function completeManufacturingOrder(manufacturingOrderId: string) {
-  const manufacturingOrder = row<{
+export async function completeManufacturingOrder(manufacturingOrderId: string) {
+  const manufacturingOrder = await row<{
     id: string;
     codigo: string;
     pedido_id: string;
@@ -2066,8 +2052,8 @@ export function completeManufacturingOrder(manufacturingOrderId: string) {
     printerCostTotal: printerCost,
   });
 
-  transaction(() => {
-    run(
+  await transaction(async () => {
+    await run(
       `UPDATE manufacturing_orders
        SET estado = ?, fecha_fin = ?, gramos_consumidos = ?, tiempo_real_horas = ?, coste_impresora_total = ?, incidencia = NULL
        WHERE id = ?`,
@@ -2078,7 +2064,7 @@ export function completeManufacturingOrder(manufacturingOrderId: string) {
       printerCost,
       manufacturingOrderId,
     );
-    run(
+    await run(
       `UPDATE order_lines
        SET precio_total_linea = ?, coste_material = ?, coste_electricidad_total = ?, coste_impresora_total = ?, coste_total = ?, beneficio = ?
        WHERE id = ?`,
@@ -2091,7 +2077,7 @@ export function completeManufacturingOrder(manufacturingOrderId: string) {
       manufacturingOrder.linea_pedido_id,
     );
 
-    applyMaterialInventoryMovement({
+    await applyMaterialInventoryMovement({
       materialId: manufacturingOrder.material_id,
       tipo: "SALIDA",
       cantidadG: gramsRequired,
@@ -2099,7 +2085,7 @@ export function completeManufacturingOrder(manufacturingOrderId: string) {
       referencia: manufacturingOrder.pedido_codigo,
     });
 
-    applyFinishedInventoryMovement({
+    await applyFinishedInventoryMovement({
       productId: manufacturingOrder.producto_id,
       tipo: "ENTRADA",
       cantidad: manufacturingOrder.cantidad,
@@ -2108,7 +2094,7 @@ export function completeManufacturingOrder(manufacturingOrderId: string) {
       costeUnitario: unitCost,
     });
 
-    applyFinishedInventoryMovement({
+    await applyFinishedInventoryMovement({
       productId: manufacturingOrder.producto_id,
       tipo: "SALIDA",
       cantidad: manufacturingOrder.cantidad,
@@ -2116,7 +2102,7 @@ export function completeManufacturingOrder(manufacturingOrderId: string) {
       referencia: manufacturingOrder.pedido_codigo,
     });
 
-    run(
+    await run(
       `UPDATE printers
        SET estado = 'LIBRE', horas_uso_acumuladas = horas_uso_acumuladas + ?, fecha_actualizacion = ?
        WHERE id = ?`,
@@ -2125,10 +2111,11 @@ export function completeManufacturingOrder(manufacturingOrderId: string) {
       manufacturingOrder.impresora_id,
     );
 
-    const pendingStates = rows<{ estado: string }>(
+    const pendingStateRows = await rows<{ estado: string }>(
       `SELECT estado FROM manufacturing_orders WHERE pedido_id = ?`,
       manufacturingOrder.pedido_id,
-    ).map((item) => item.estado);
+    );
+    const pendingStates = pendingStateRows.map((item) => item.estado);
 
     const nextStatus = pendingStates.some((item) => item === "BLOQUEADA_POR_STOCK")
       ? "INCIDENCIA_STOCK"
@@ -2136,16 +2123,16 @@ export function completeManufacturingOrder(manufacturingOrderId: string) {
         ? "LISTO"
         : "EN_PRODUCCION";
 
-    run(`UPDATE orders SET estado = ? WHERE id = ?`, nextStatus, manufacturingOrder.pedido_id);
-    registerOrderHistory(
+    await run(`UPDATE orders SET estado = ? WHERE id = ?`, nextStatus, manufacturingOrder.pedido_id);
+    await registerOrderHistory(
       manufacturingOrder.pedido_id,
       nextStatus,
       nextStatus === "LISTO"
         ? "Todas las lineas fabricables estan completadas. Pedido listo."
         : `Fabricacion completada para ${manufacturingOrder.producto_nombre}.`,
     );
-    recalculateOrderTotals(manufacturingOrder.pedido_id);
-    syncFinishedInventoryMetrics(manufacturingOrder.producto_id);
+    await recalculateOrderTotals(manufacturingOrder.pedido_id);
+    await syncFinishedInventoryMetrics(manufacturingOrder.producto_id);
   });
 
   return {
@@ -2157,11 +2144,11 @@ export function completeManufacturingOrder(manufacturingOrderId: string) {
   };
 }
 
-export function restockMaterial(materialId: string, quantityG: number, reason: string) {
+export async function restockMaterial(materialId: string, quantityG: number, reason: string) {
   const parsedQuantity = requirePositiveInteger(quantityG, "La reposicion debe ser mayor que cero.");
 
-  transaction(() => {
-    applyMaterialInventoryMovement({
+  await transaction(async () => {
+    await applyMaterialInventoryMovement({
       materialId,
       tipo: "ENTRADA",
       cantidadG: parsedQuantity,
@@ -2171,8 +2158,8 @@ export function restockMaterial(materialId: string, quantityG: number, reason: s
   });
 }
 
-export function deliverOrder(orderId: string) {
-  const order = row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId);
+export async function deliverOrder(orderId: string) {
+  const order = await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId);
   if (!order) {
     throw new Error("El pedido no existe.");
   }
@@ -2180,20 +2167,20 @@ export function deliverOrder(orderId: string) {
     throw new Error("Solo se pueden entregar pedidos que esten listos.");
   }
 
-  const pendingUnits = countUnfulfilledOrderLines(orderId);
+  const pendingUnits = await countUnfulfilledOrderLines(orderId);
   if (pendingUnits > 0) {
     throw new Error("No se puede entregar un pedido con unidades pendientes.");
   }
 
-  transaction(() => {
-    run(`UPDATE orders SET estado = ? WHERE id = ?`, "ENTREGADO", orderId);
-    registerOrderHistory(orderId, "ENTREGADO", "Pedido entregado al cliente.");
-    syncFinishedInventoryMetricsForOrder(orderId);
+  await transaction(async () => {
+    await run(`UPDATE orders SET estado = ? WHERE id = ?`, "ENTREGADO", orderId);
+    await registerOrderHistory(orderId, "ENTREGADO", "Pedido entregado al cliente.");
+    await syncFinishedInventoryMetricsForOrder(orderId);
   });
 }
 
-export function generateInvoiceForOrder(orderId: string) {
-  const order = row<{
+export async function generateInvoiceForOrder(orderId: string) {
+  const order = await row<{
     id: string;
     codigo: string;
     cliente_id: string;
@@ -2206,11 +2193,11 @@ export function generateInvoiceForOrder(orderId: string) {
   if (!order) {
     throw new Error("El pedido no existe.");
   }
-  if (countUnfulfilledOrderLines(orderId) > 0) {
+  if ((await countUnfulfilledOrderLines(orderId)) > 0) {
     throw new Error("No se puede facturar un pedido incompleto.");
   }
 
-  const existing = row(`SELECT id FROM invoices WHERE pedido_id = ?`, orderId);
+  const existing = await row(`SELECT id FROM invoices WHERE pedido_id = ?`, orderId);
   if (existing) {
     return;
   }
@@ -2218,9 +2205,9 @@ export function generateInvoiceForOrder(orderId: string) {
     throw new Error("No se puede facturar si el pedido no esta entregado.");
   }
 
-  transaction(() => {
-    const codigo = nextCode("invoices", "FAC-");
-    run(
+  await transaction(async () => {
+    const codigo = await nextCode("invoices", "FAC-");
+    await run(
       `INSERT INTO invoices
         (id, codigo, pedido_id, cliente_id, fecha, subtotal, iva, total, estado_pago)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -2234,8 +2221,9 @@ export function generateInvoiceForOrder(orderId: string) {
       order.total,
       "PENDIENTE",
     );
-    run(`UPDATE orders SET estado = ?, estado_pago = ? WHERE id = ?`, "FACTURADO", "PENDIENTE", orderId);
-    registerOrderHistory(orderId, "FACTURADO", `Factura ${codigo} generada.`);
-    syncFinishedInventoryMetricsForOrder(orderId);
+    await run(`UPDATE orders SET estado = ?, estado_pago = ? WHERE id = ?`, "FACTURADO", "PENDIENTE", orderId);
+    await registerOrderHistory(orderId, "FACTURADO", `Factura ${codigo} generada.`);
+    await syncFinishedInventoryMetricsForOrder(orderId);
   });
 }
+

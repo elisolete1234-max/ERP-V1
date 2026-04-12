@@ -1,51 +1,139 @@
-import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
+import { randomUUID } from "node:crypto";
+import { createClient, type Client, type InArgs, type ResultSet, type Transaction } from "@libsql/client";
 
 type GlobalDb = typeof globalThis & {
-  fabriqDb?: DatabaseSync;
+  fabriqDb?: Client;
+  fabriqDbInit?: Promise<void>;
+  fabriqDbBootstrapping?: boolean;
+};
+
+type ColumnInfo = {
+  name: string;
+};
+
+type DbExecutor = {
+  execute: (statement: string, params?: InArgs) => Promise<ResultSet>;
+  executeMultiple: (sql: string) => Promise<void>;
 };
 
 const globalDb = globalThis as GlobalDb;
+const transactionStorage = new AsyncLocalStorage<DbExecutor>();
 
-function hasColumn(database: DatabaseSync, table: string, column: string) {
-  const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  return columns.some((item) => item.name === column);
+function getProjectDatabaseFile() {
+  const dataDir = path.join(process.cwd(), "data");
+  mkdirSync(dataDir, { recursive: true });
+  return path.join(dataDir, "fabriq-erp.db");
 }
 
-function ensureColumn(database: DatabaseSync, table: string, column: string, definition: string) {
-  if (!hasColumn(database, table, column)) {
-    database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+function isRemoteDatabaseConfigured() {
+  return Boolean(process.env.TURSO_DATABASE_URL);
+}
+
+function getDatabaseUrl() {
+  if (process.env.TURSO_DATABASE_URL) {
+    return process.env.TURSO_DATABASE_URL;
   }
+
+  if (process.env.VERCEL) {
+    throw new Error("TURSO_DATABASE_URL es obligatorio en despliegue Vercel.");
+  }
+
+  return pathToFileURL(getProjectDatabaseFile()).toString();
 }
 
-function backfillCodes(database: DatabaseSync, table: string, prefix: string, orderBy = "rowid ASC") {
-  const rows = database
-    .prepare(`SELECT id FROM ${table} WHERE codigo IS NULL OR codigo = '' ORDER BY ${orderBy}`)
-    .all() as Array<{ id: string }>;
-  const currentMax = database
-    .prepare(`SELECT codigo FROM ${table} WHERE codigo LIKE ? ORDER BY codigo DESC LIMIT 1`)
-    .get(`${prefix}%`) as { codigo?: string } | undefined;
-  const base = currentMax?.codigo ? Number(String(currentMax.codigo).replace(prefix, "")) || 0 : 0;
+function createDatabaseClient() {
+  const url = getDatabaseUrl();
+  const authToken = process.env.TURSO_AUTH_TOKEN;
 
-  rows.forEach((item, index) => {
-    const code = `${prefix}${String(base + index + 1).padStart(3, "0")}`;
-    database.prepare(`UPDATE ${table} SET codigo = ? WHERE id = ?`).run(code, item.id);
+  return createClient({
+    url,
+    authToken: authToken || undefined,
+    intMode: "number",
   });
 }
 
-function nextCodeFromDatabase(database: DatabaseSync, table: string, prefix: string) {
-  const result = database
-    .prepare(`SELECT codigo FROM ${table} WHERE codigo LIKE ? ORDER BY codigo DESC LIMIT 1`)
-    .get(`${prefix}%`) as { codigo?: string } | undefined;
+export const db = globalDb.fabriqDb ?? createDatabaseClient();
+
+if (process.env.NODE_ENV !== "production") {
+  globalDb.fabriqDb = db;
+}
+
+function getActiveExecutor(): DbExecutor {
+  return (
+    transactionStorage.getStore() ?? {
+      execute: (statement: string, params?: InArgs) => db.execute(statement, params),
+      executeMultiple: (sql: string) => db.executeMultiple(sql),
+    }
+  );
+}
+
+function normalizeArgs(params: unknown[]): InArgs | undefined {
+  if (params.length === 0) {
+    return undefined;
+  }
+
+  return params.map((value) => {
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+
+    return value as string | number | boolean | null;
+  });
+}
+
+function toPlainRows<T>(resultSet: ResultSet) {
+  return resultSet.rows.map((entry) => {
+    const row: Record<string, unknown> = {};
+    for (const column of resultSet.columns) {
+      row[column] = entry[column];
+    }
+    return row as T;
+  });
+}
+
+async function hasColumn(table: string, column: string) {
+  const columns = await rows<ColumnInfo>(`PRAGMA table_info(${table})`);
+  return columns.some((item) => item.name === column);
+}
+
+async function ensureColumn(table: string, column: string, definition: string) {
+  if (!(await hasColumn(table, column))) {
+    await run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+  }
+}
+
+async function backfillCodes(table: string, prefix: string, orderBy = "rowid ASC") {
+  const pendingRows = await rows<{ id: string }>(
+    `SELECT id FROM ${table} WHERE codigo IS NULL OR codigo = '' ORDER BY ${orderBy}`,
+  );
+  const currentMax = await row<{ codigo?: string }>(
+    `SELECT codigo FROM ${table} WHERE codigo LIKE ? ORDER BY codigo DESC LIMIT 1`,
+    `${prefix}%`,
+  );
+  const base = currentMax?.codigo ? Number(String(currentMax.codigo).replace(prefix, "")) || 0 : 0;
+
+  for (const [index, item] of pendingRows.entries()) {
+    const code = `${prefix}${String(base + index + 1).padStart(3, "0")}`;
+    await run(`UPDATE ${table} SET codigo = ? WHERE id = ?`, code, item.id);
+  }
+}
+
+async function nextCodeFromDatabase(table: string, prefix: string) {
+  const result = await row<{ codigo?: string }>(
+    `SELECT codigo FROM ${table} WHERE codigo LIKE ? ORDER BY codigo DESC LIMIT 1`,
+    `${prefix}%`,
+  );
   const current = result?.codigo ?? `${prefix}000`;
   const numeric = Number(String(current).replace(prefix, "")) || 0;
   return `${prefix}${String(numeric + 1).padStart(3, "0")}`;
 }
 
-function ensureIndexes(database: DatabaseSync) {
-  database.exec(`
+async function ensureIndexes() {
+  await exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_codigo ON customers(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_materials_codigo ON materials(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_products_codigo ON products(codigo);
@@ -57,24 +145,24 @@ function ensureIndexes(database: DatabaseSync) {
   `);
 }
 
-function ensureMaterialMovementBaselines(database: DatabaseSync) {
-  const materials = database.prepare(
+async function ensureMaterialMovementBaselines() {
+  const materials = await rows<{ id: string; codigo: string | null; stock_actual_g: number }>(
     `SELECT id, codigo, stock_actual_g FROM materials ORDER BY rowid ASC`,
-  ).all() as Array<{ id: string; codigo: string | null; stock_actual_g: number }>;
+  );
 
   for (const material of materials) {
-    const movementCount = database
-      .prepare(`SELECT COUNT(*) AS total FROM stock_movements WHERE material_id = ?`)
-      .get(material.id) as { total: number } | undefined;
+    const movementCount = await row<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM stock_movements WHERE material_id = ?`,
+      material.id,
+    );
 
     if ((movementCount?.total ?? 0) === 0 && material.stock_actual_g > 0) {
-      database.prepare(
+      await run(
         `INSERT INTO stock_movements
           (id, codigo, material_id, tipo, cantidad_g, motivo, referencia, fecha)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         randomUUID(),
-        nextCodeFromDatabase(database, "stock_movements", "MOV-"),
+        await nextCodeFromDatabase("stock_movements", "MOV-"),
         material.id,
         "ENTRADA",
         Math.round(material.stock_actual_g),
@@ -84,7 +172,7 @@ function ensureMaterialMovementBaselines(database: DatabaseSync) {
       );
     }
 
-    const recalculatedStock = database.prepare(
+    const recalculatedStock = await row<{ total: number }>(
       `SELECT
          COALESCE(SUM(
            CASE
@@ -95,63 +183,62 @@ function ensureMaterialMovementBaselines(database: DatabaseSync) {
          ), 0) AS total
        FROM stock_movements
        WHERE material_id = ?`,
-    ).get(material.id) as { total: number } | undefined;
+      material.id,
+    );
 
-    database.prepare(
+    await run(
       `UPDATE materials SET stock_actual_g = ? WHERE id = ?`,
-    ).run(Math.round(recalculatedStock?.total ?? 0), material.id);
+      Math.round(recalculatedStock?.total ?? 0),
+      material.id,
+    );
   }
 }
 
-function migrateDatabase(database: DatabaseSync) {
-  ensureColumn(database, "customers", "codigo", "TEXT");
-  ensureColumn(database, "materials", "codigo", "TEXT");
-  ensureColumn(database, "materials", "tipo_color", "TEXT");
-  ensureColumn(database, "materials", "efecto", "TEXT");
-  ensureColumn(database, "materials", "color_base", "TEXT");
-  ensureColumn(database, "materials", "nombre_comercial", "TEXT");
-  ensureColumn(database, "materials", "diametro_mm", "REAL");
-  ensureColumn(database, "materials", "peso_spool_g", "INTEGER");
-  ensureColumn(database, "materials", "temp_extrusor", "INTEGER");
-  ensureColumn(database, "materials", "temp_cama", "INTEGER");
-  ensureColumn(database, "materials", "notas", "TEXT");
-  ensureColumn(database, "products", "codigo", "TEXT");
-  ensureColumn(database, "products", "coste_maquina", "REAL DEFAULT 0");
-  ensureColumn(database, "products", "coste_mano_obra", "REAL DEFAULT 0");
-  ensureColumn(database, "products", "coste_postprocesado", "REAL DEFAULT 0");
-  ensureColumn(database, "order_lines", "codigo", "TEXT");
-  ensureColumn(database, "order_lines", "cantidad_desde_stock", "INTEGER DEFAULT 0");
-  ensureColumn(database, "order_lines", "cantidad_a_fabricar", "INTEGER DEFAULT 0");
-  ensureColumn(database, "order_lines", "coste_impresora_total", "REAL DEFAULT 0");
-  ensureColumn(database, "order_lines", "precio_total_linea", "REAL DEFAULT 0");
-  ensureColumn(database, "orders", "estado_pago", "TEXT DEFAULT 'NO_FACTURADO'");
-  ensureColumn(database, "orders", "coste_total_pedido", "REAL DEFAULT 0");
-  ensureColumn(database, "orders", "beneficio_total", "REAL DEFAULT 0");
-  ensureColumn(database, "stock_movements", "codigo", "TEXT");
-  ensureColumn(database, "manufacturing_orders", "impresora_id", "TEXT");
-  ensureColumn(database, "manufacturing_orders", "coste_impresora_total", "REAL DEFAULT 0");
-  ensureColumn(database, "manufacturing_orders", "tiempo_estimado_horas", "REAL");
-  ensureColumn(database, "finished_product_inventory", "unidades_stock", "INTEGER DEFAULT 0");
-  ensureColumn(database, "finished_product_inventory", "unidades_reservadas", "INTEGER DEFAULT 0");
-  ensureColumn(database, "finished_product_inventory", "unidades_disponibles", "INTEGER DEFAULT 0");
-  ensureIndexes(database);
-  backfillCodes(database, "customers", "CLI-", "fecha_creacion ASC");
-  backfillCodes(database, "materials", "MAT-", "fecha_actualizacion ASC");
-  backfillCodes(database, "products", "PRO-", "nombre ASC");
-  backfillCodes(database, "orders", "PED-", "fecha_pedido ASC");
-  backfillCodes(database, "order_lines", "LIN-", "rowid ASC");
-  backfillCodes(database, "manufacturing_orders", "OF-", "rowid ASC");
-  backfillCodes(database, "stock_movements", "MOV-", "fecha ASC");
-  backfillCodes(database, "invoices", "FAC-", "fecha ASC");
-  ensureMaterialMovementBaselines(database);
+async function migrateDatabase() {
+  await ensureColumn("customers", "codigo", "TEXT");
+  await ensureColumn("materials", "codigo", "TEXT");
+  await ensureColumn("materials", "tipo_color", "TEXT");
+  await ensureColumn("materials", "efecto", "TEXT");
+  await ensureColumn("materials", "color_base", "TEXT");
+  await ensureColumn("materials", "nombre_comercial", "TEXT");
+  await ensureColumn("materials", "diametro_mm", "REAL");
+  await ensureColumn("materials", "peso_spool_g", "INTEGER");
+  await ensureColumn("materials", "temp_extrusor", "INTEGER");
+  await ensureColumn("materials", "temp_cama", "INTEGER");
+  await ensureColumn("materials", "notas", "TEXT");
+  await ensureColumn("products", "codigo", "TEXT");
+  await ensureColumn("products", "coste_maquina", "REAL DEFAULT 0");
+  await ensureColumn("products", "coste_mano_obra", "REAL DEFAULT 0");
+  await ensureColumn("products", "coste_postprocesado", "REAL DEFAULT 0");
+  await ensureColumn("order_lines", "codigo", "TEXT");
+  await ensureColumn("order_lines", "cantidad_desde_stock", "INTEGER DEFAULT 0");
+  await ensureColumn("order_lines", "cantidad_a_fabricar", "INTEGER DEFAULT 0");
+  await ensureColumn("order_lines", "coste_impresora_total", "REAL DEFAULT 0");
+  await ensureColumn("order_lines", "precio_total_linea", "REAL DEFAULT 0");
+  await ensureColumn("orders", "estado_pago", "TEXT DEFAULT 'NO_FACTURADO'");
+  await ensureColumn("orders", "coste_total_pedido", "REAL DEFAULT 0");
+  await ensureColumn("orders", "beneficio_total", "REAL DEFAULT 0");
+  await ensureColumn("stock_movements", "codigo", "TEXT");
+  await ensureColumn("manufacturing_orders", "impresora_id", "TEXT");
+  await ensureColumn("manufacturing_orders", "coste_impresora_total", "REAL DEFAULT 0");
+  await ensureColumn("manufacturing_orders", "tiempo_estimado_horas", "REAL");
+  await ensureColumn("finished_product_inventory", "unidades_stock", "INTEGER DEFAULT 0");
+  await ensureColumn("finished_product_inventory", "unidades_reservadas", "INTEGER DEFAULT 0");
+  await ensureColumn("finished_product_inventory", "unidades_disponibles", "INTEGER DEFAULT 0");
+  await ensureIndexes();
+  await backfillCodes("customers", "CLI-", "fecha_creacion ASC");
+  await backfillCodes("materials", "MAT-", "fecha_actualizacion ASC");
+  await backfillCodes("products", "PRO-", "nombre ASC");
+  await backfillCodes("orders", "PED-", "fecha_pedido ASC");
+  await backfillCodes("order_lines", "LIN-", "rowid ASC");
+  await backfillCodes("manufacturing_orders", "OF-", "rowid ASC");
+  await backfillCodes("stock_movements", "MOV-", "fecha ASC");
+  await backfillCodes("invoices", "FAC-", "fecha ASC");
+  await ensureMaterialMovementBaselines();
 }
 
-function createDatabase() {
-  const dataDir = path.join(process.cwd(), "data");
-  mkdirSync(dataDir, { recursive: true });
-  const database = new DatabaseSync(path.join(dataDir, "fabriq-erp.db"));
-  database.exec("PRAGMA foreign_keys = ON;");
-  database.exec(`
+async function createSchema() {
+  await exec(`
     CREATE TABLE IF NOT EXISTS customers (
       id TEXT PRIMARY KEY,
       codigo TEXT,
@@ -370,24 +457,95 @@ function createDatabase() {
     );
   `);
 
-  migrateDatabase(database);
-  ensureColumn(database, "finished_product_inventory", "codigo", "TEXT");
-  ensureColumn(database, "printers", "codigo", "TEXT");
-  ensureColumn(database, "inventory_movements", "codigo", "TEXT");
-  database.exec(`
+  await migrateDatabase();
+  await ensureColumn("finished_product_inventory", "codigo", "TEXT");
+  await ensureColumn("printers", "codigo", "TEXT");
+  await ensureColumn("inventory_movements", "codigo", "TEXT");
+  await exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_finished_inventory_codigo ON finished_product_inventory(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_printers_codigo ON printers(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_movements_codigo ON inventory_movements(codigo);
   `);
-  backfillCodes(database, "finished_product_inventory", "STK-", "rowid ASC");
-  backfillCodes(database, "printers", "IMP-", "rowid ASC");
-  backfillCodes(database, "inventory_movements", "MIV-", "fecha ASC");
-
-  return database;
+  await backfillCodes("finished_product_inventory", "STK-", "rowid ASC");
+  await backfillCodes("printers", "IMP-", "rowid ASC");
+  await backfillCodes("inventory_movements", "MIV-", "fecha ASC");
 }
 
-export const db = globalDb.fabriqDb ?? createDatabase();
+export async function ensureDatabaseReady() {
+  if (!globalDb.fabriqDbInit) {
+    globalDb.fabriqDbBootstrapping = true;
+    globalDb.fabriqDbInit = createSchema()
+      .catch((error) => {
+        globalDb.fabriqDbInit = undefined;
+        throw error;
+      })
+      .finally(() => {
+        globalDb.fabriqDbBootstrapping = false;
+      });
+  }
 
-if (process.env.NODE_ENV !== "production") {
-  globalDb.fabriqDb = db;
+  await globalDb.fabriqDbInit;
+}
+
+export async function row<T>(statement: string, ...params: unknown[]) {
+  if (!globalDb.fabriqDbBootstrapping) {
+    await ensureDatabaseReady();
+  }
+  const result = await getActiveExecutor().execute(statement, normalizeArgs(params));
+  return toPlainRows<T>(result)[0];
+}
+
+export async function rows<T>(statement: string, ...params: unknown[]) {
+  if (!globalDb.fabriqDbBootstrapping) {
+    await ensureDatabaseReady();
+  }
+  const result = await getActiveExecutor().execute(statement, normalizeArgs(params));
+  return toPlainRows<T>(result);
+}
+
+export async function run(statement: string, ...params: unknown[]) {
+  if (!globalDb.fabriqDbBootstrapping) {
+    await ensureDatabaseReady();
+  }
+  return getActiveExecutor().execute(statement, normalizeArgs(params));
+}
+
+export async function exec(sql: string) {
+  if (!globalDb.fabriqDbBootstrapping) {
+    await ensureDatabaseReady();
+  }
+  return getActiveExecutor().executeMultiple(sql);
+}
+
+function createTransactionExecutor(transactionHandle: Transaction): DbExecutor {
+  return {
+    execute: (statement: string, params?: InArgs) => transactionHandle.execute({ sql: statement, args: params }),
+    executeMultiple: (sql: string) => transactionHandle.executeMultiple(sql),
+  };
+}
+
+export async function transaction<T>(task: () => Promise<T>) {
+  await ensureDatabaseReady();
+  const transactionHandle = await db.transaction("write");
+  const executor = createTransactionExecutor(transactionHandle);
+
+  try {
+    const result = await transactionStorage.run(executor, task);
+    await transactionHandle.commit();
+    return result;
+  } catch (error) {
+    if (!transactionHandle.closed) {
+      await transactionHandle.rollback();
+    }
+    throw error;
+  } finally {
+    transactionHandle.close();
+  }
+}
+
+export function getDatabaseRuntimeInfo() {
+  return {
+    mode: isRemoteDatabaseConfigured() ? "turso-remote" : "local-file",
+    url: getDatabaseUrl(),
+  };
 }

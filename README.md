@@ -1,8 +1,13 @@
-# Fabriq Flow ERP V1
+# Fabriq Flow ERP
 
 ## Estado del proyecto
 
-Version: `v1.0.0` (estable)
+Version estable base: `v1.0.0`
+
+Ramas activas:
+
+- `main`: V1 estable
+- `v2-dev`: evolucion tecnica preparada para despliegue con Turso + Vercel
 
 Incluye:
 
@@ -16,11 +21,11 @@ Incluye:
 
 Estado:
 
-Proyecto estable, listo para demostracion y evolucion futura (V2).
+Proyecto estable y listo para demostracion. La evolucion V2 vive separada en `v2-dev`.
 
 ---
 
-ERP funcional para un negocio de impresion 3D. Esta V1 permite gestionar clientes, materiales, productos, pedidos, fabricacion, inventario, impresoras, movimientos y facturacion con logica real de negocio sobre una base vacia lista para uso real desde cero.
+ERP funcional para un negocio de impresion 3D. La base del proyecto permite gestionar clientes, materiales, productos, pedidos, fabricacion, inventario, impresoras, movimientos y facturacion con logica real de negocio sobre una base vacia lista para uso real desde cero.
 
 La version actual queda cerrada como V1 estable:
 
@@ -52,25 +57,36 @@ Objetivos de esta V1:
 - Frontend: Next.js 16 App Router
 - Backend: Server Actions de Next.js
 - UI: React 19 + Tailwind CSS 4 + estilos propios
-- Base de datos: SQLite local mediante `node:sqlite`
+- Base de datos:
+  - desarrollo local: SQLite compatible via archivo local `data/fabriq-erp.db`
+  - despliegue: Turso mediante `@libsql/client`
 - Tests: Node test runner + TypeScript
 
 ### Principios de arquitectura
 
 - Una sola fuente de verdad de negocio en [`lib/erp-service.ts`](./lib/erp-service.ts)
 - Acciones de servidor en [`app/actions.ts`](./app/actions.ts) para disparar operaciones desde la UI
-- Persistencia local en [`lib/db.ts`](./lib/db.ts) con creacion y migracion automatica de la base
+- Persistencia centralizada en [`lib/db.ts`](./lib/db.ts) con creacion y migracion automatica del schema
 - Interfaz principal en [`app/page.tsx`](./app/page.tsx)
 - Componentes de tabla inline en [`app/components/editable-tables.tsx`](./app/components/editable-tables.tsx)
 - Sistema visual y UX en [`app/globals.css`](./app/globals.css) y [`app/components/form-ui.tsx`](./app/components/form-ui.tsx)
 
 ### Base de datos
 
-La base se crea automaticamente en:
+En local, la app usa:
 
 - `data/fabriq-erp.db`
 
-No hace falta instalar un servidor externo de base de datos.
+En despliegue, la V2 esta preparada para usar Turso por variables de entorno:
+
+- `TURSO_DATABASE_URL`
+- `TURSO_AUTH_TOKEN`
+
+Si la base remota esta vacia, la app crea el schema pero no inserta datos demo ni seeds.
+
+Documentacion de despliegue:
+
+- [`DEPLOYMENT.md`](./DEPLOYMENT.md)
 
 ---
 
