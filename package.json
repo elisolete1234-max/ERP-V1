@@ -7,9 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsc -p tsconfig.tests.json && node --test --test-isolation=none .test-dist/tests/**/*.test.js"
+    "test": "tsc -p tsconfig.tests.json && node --test --test-isolation=none .test-dist/tests/**/*.test.js",
+    "backup:db": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\backup-db.ps1",
+    "backup:register-task": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\register-backup-task.ps1"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.2",
     "next": "16.2.3",
     "react": "19.2.4",
     "react-dom": "19.2.4"

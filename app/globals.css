@@ -192,6 +192,47 @@ textarea.input {
   resize: vertical;
 }
 
+.table-input {
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.38rem 0.62rem;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+textarea.table-input {
+  min-height: 4rem;
+}
+
+.table-edit-stack {
+  display: grid;
+  gap: 0.38rem;
+  min-width: 0;
+}
+
+.table-edit-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(8rem, 1fr));
+  gap: 0.38rem;
+  min-width: 0;
+}
+
+.table-edit-grid-3 {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1.45fr) minmax(4.5rem, 0.55fr) minmax(6rem, 0.8fr);
+  gap: 0.38rem;
+  min-width: 0;
+}
+
+.table-cell-edit {
+  min-width: clamp(12rem, 18vw, 18rem);
+}
+
+.table-cell-edit--wide {
+  min-width: clamp(14rem, 22vw, 24rem);
+}
+
 input[type="checkbox"] {
   accent-color: var(--accent-strong);
 }
@@ -211,6 +252,62 @@ input[type="checkbox"] {
     box-shadow 140ms ease,
     opacity 140ms ease,
     background-color 140ms ease;
+}
+
+.icon-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  min-width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--muted-strong);
+  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.04);
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+
+.icon-action-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px rgba(15, 23, 42, 0.08);
+}
+
+.icon-action-button--soft {
+  border-color: rgba(37, 99, 235, 0.12);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.icon-action-button--dark {
+  border-color: rgba(17, 24, 39, 0.08);
+  background: linear-gradient(135deg, #111827, #1d4ed8);
+  color: white;
+}
+
+.icon-action-button--danger {
+  border-color: rgba(190, 24, 93, 0.14);
+  background: rgba(255, 241, 242, 0.96);
+  color: var(--danger);
+}
+
+.icon-action-button svg {
+  width: 0.88rem;
+  height: 0.88rem;
+  flex: none;
+}
+
+.table-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .button-primary {
@@ -310,7 +407,7 @@ summary:focus-visible {
 
 .table td {
   border-top: 1px solid rgba(15, 23, 42, 0.06);
-  padding: 1rem 0.9rem;
+  padding: 0.82rem 0.9rem;
   vertical-align: top;
   background: transparent;
 }
@@ -361,13 +458,13 @@ summary:focus-visible {
 }
 
 .table-scroll {
-  max-height: clamp(26rem, 58vh, 46rem);
+  max-height: clamp(24rem, 54vh, 40rem);
   overflow-y: auto;
   overflow-x: auto;
 }
 
 .list-scroll {
-  max-height: clamp(28rem, 62vh, 48rem);
+  max-height: clamp(24rem, 56vh, 40rem);
   overflow-y: auto;
   padding-right: 0.35rem;
 }

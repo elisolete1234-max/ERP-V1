@@ -12,8 +12,6 @@ import {
   restockFinishedProductAction,
   restockMaterialAction,
   retryOrderAction,
-  runDemoAction,
-  seedDataAction,
   updateOrderAction,
 } from "./actions";
 import {
@@ -22,6 +20,7 @@ import {
   InvoicesInlineTable,
   ManufacturingInlineTable,
   MaterialsInlineTable,
+  OrdersInlineBoard,
   PrintersInlineTable,
   ProductsInlineTable,
 } from "./components/editable-tables";
@@ -97,7 +96,7 @@ function toPlainData<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-type Snapshot = ReturnType<typeof getAppSnapshot>;
+type Snapshot = Awaited<ReturnType<typeof getAppSnapshot>>;
 type OrderView = Snapshot["orders"][number];
 
 function badgeClass(tone: "success" | "warn" | "danger" | "info" | "neutral") {
@@ -225,6 +224,7 @@ export default async function Home({
   const section = sectionKeys.includes(resolved.section as (typeof sectionKeys)[number])
     ? (resolved.section as (typeof sectionKeys)[number])
     : "dashboard";
+  const snapshot = toPlainData(await getAppSnapshot());
   const {
     customers,
     materials,
@@ -236,8 +236,7 @@ export default async function Home({
     printers,
     inventoryMovements,
     invoices,
-    demoRun,
-  } = toPlainData(getAppSnapshot());
+  } = snapshot;
 
   const orderFilter = resolved.orderStatus ?? "ALL";
   const manufacturingFilter = resolved.manufacturingStatus ?? "ALL";
@@ -356,18 +355,6 @@ export default async function Home({
               </Link>
             ))}
           </nav>
-          <div className="mt-5 space-y-3 rounded-[24px] border border-black/6 bg-[color:var(--surface-muted)] p-4">
-            <form action={seedDataAction}>
-              <SubmitButton className="w-full" pendingText="Cargando..." variant="secondary">
-                Cargar datos de ejemplo
-              </SubmitButton>
-            </form>
-            <form action={runDemoAction}>
-              <SubmitButton className="w-full" pendingText="Ejecutando demo..." variant="primary">
-                Ejecutar demo
-              </SubmitButton>
-            </form>
-          </div>
         </aside>
 
         <div className="space-y-6">
@@ -533,60 +520,6 @@ export default async function Home({
               </div>
             </div>
 
-            <div id="demo-results" className="panel scroll-mt-6 p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-xl font-semibold">Simulacion funcional</h3>
-                <p className="text-sm text-[color:var(--muted)]">
-                  {demoRun ? `Ultima ejecucion: ${dateLabel(demoRun.ejecutado_en)}` : "Aun no se ha ejecutado la demo"}
-                </p>
-              </div>
-              {demoRun?.resultados?.length ? (
-                <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                  {demoRun.resultados.map((result) => (
-                    <article key={result.id} className="panel-muted p-5">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-xs uppercase tracking-[0.25em] text-[color:var(--muted)]">{result.codigo}</p>
-                          <h4 className="mt-2 text-lg font-semibold">{result.titulo}</h4>
-                        </div>
-                        <StatusPill label={result.estado_final_pedido} tone={result.incidencias ? "warn" : "success"} />
-                      </div>
-                      <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
-                        <p><strong>Cliente:</strong> {result.cliente}</p>
-                        <p><strong>Pedido:</strong> {result.pedido_codigo}</p>
-                        <p><strong>Productos:</strong> {result.productos}</p>
-                        <p><strong>Inventario:</strong> {result.material}</p>
-                        <p><strong>Disponible inicial:</strong> {result.stock_inicial_g}</p>
-                        <p><strong>Validacion:</strong> {result.validacion_stock}</p>
-                        <p><strong>Orden fabricacion:</strong> {result.orden_fabricacion ?? "No creada"}</p>
-                        <p><strong>Consumo:</strong> {result.materiales_consumidos ?? "Sin consumo"}</p>
-                        <p><strong>Disponible final:</strong> {result.stock_final_g ?? "sin cambios"}</p>
-                        <p><strong>Coste material:</strong> {result.coste_material != null ? currency(result.coste_material) : "-"}</p>
-                        <p>
-                          <strong>Coste energia / impresora:</strong>{" "}
-                          {result.coste_electricidad != null ? currency(result.coste_electricidad) : "-"}
-                        </p>
-                        <p><strong>Coste total:</strong> {result.coste_total != null ? currency(result.coste_total) : "-"}</p>
-                        <p><strong>Beneficio:</strong> {result.beneficio != null ? currency(result.beneficio) : "-"}</p>
-                        <p><strong>Subtotal factura:</strong> {result.subtotal_factura != null ? currency(result.subtotal_factura) : "-"}</p>
-                        <p><strong>IVA:</strong> {result.iva_factura != null ? currency(result.iva_factura) : "-"}</p>
-                        <p><strong>Total factura:</strong> {result.total_factura != null ? currency(result.total_factura) : "-"}</p>
-                        <p><strong>Incidencias:</strong> {result.incidencias ?? "Ninguna"}</p>
-                      </div>
-                      <p className="mt-4 rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3 text-sm text-[color:var(--muted)]">
-                        {(result as { resumenFlujo?: string; resumen_flujo?: string }).resumenFlujo ??
-                          (result as { resumenFlujo?: string; resumen_flujo?: string }).resumen_flujo ??
-                          "cliente -> pedido -> stock -> fabricacion -> entrega -> factura"}
-                      </p>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-5 rounded-2xl border border-dashed border-black/10 bg-white/60 px-5 py-8 text-sm text-[color:var(--muted)]">
-                  Ejecuta la demo para ver los escenarios de stock terminado, bloqueo por materiales, reposicion y flujo mixto.
-                </div>
-              )}
-            </div>
           </Section>
 
           <Section active={section === "pedidos"} title="Pedidos" subtitle="Ventas y avance">
@@ -643,13 +576,13 @@ export default async function Home({
                   </div>
                 </div>
 
-                <div className="list-scroll mt-5 space-y-4">
+                <div className="list-scroll mt-5">
                   {filteredOrders.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[color:var(--muted)]">
                       No hay pedidos para este filtro.
                     </div>
                   ) : (
-                    filteredOrders.map((order) => {
+                    false ? filteredOrders.map((order) => {
                       const latestHistory = order.historial[0] ?? null;
                       return (
                         <article
@@ -687,6 +620,20 @@ export default async function Home({
                               </p>
                             </div>
                           </div>
+                          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                            <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Estado pago</p>
+                              <p className="mt-2 text-sm font-semibold">{order.estado_pago.toLowerCase()}</p>
+                            </div>
+                            <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Coste pedido</p>
+                              <p className="mt-2 text-sm font-semibold">{currency(order.coste_total_pedido)}</p>
+                            </div>
+                            <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Beneficio</p>
+                              <p className="mt-2 text-sm font-semibold">{currency(order.beneficio_total)}</p>
+                            </div>
+                          </div>
                           <div className="mt-4 space-y-3">
                             {order.lineas.map((line) => (
                               <div key={line.id} className="rounded-2xl border border-black/8 px-4 py-4">
@@ -700,7 +647,8 @@ export default async function Home({
                                     </p>
                                   </div>
                                   <div className="text-right text-sm">
-                                    <p>Coste total: {currency(line.coste_total + (line.coste_impresora_total ?? 0))}</p>
+                                    <p>Venta linea: {currency(line.precio_total_linea)}</p>
+                                    <p>Coste total: {currency(line.coste_total)}</p>
                                     <p className="text-[color:var(--muted)]">Beneficio: {currency(line.beneficio)}</p>
                                   </div>
                                 </div>
@@ -801,7 +749,21 @@ export default async function Home({
                           </details>
                         </article>
                       );
-                    })
+                    }) : (
+                      <OrdersInlineBoard
+                        orders={filteredOrders}
+                        customers={customers.map((customer) => ({
+                          id: customer.id,
+                          codigo: customer.codigo,
+                          nombre: customer.nombre,
+                        }))}
+                        products={products.map((product) => ({
+                          id: product.id,
+                          codigo: product.codigo,
+                          nombre: product.nombre,
+                        }))}
+                      />
+                    )
                   )}
                 </div>
               </div>
@@ -1074,6 +1036,11 @@ export default async function Home({
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <input name="costeElectricidad" type="number" min="0" step="0.01" placeholder="Coste electricidad" className="input" />
+                  <input name="costeMaquina" type="number" min="0" step="0.01" placeholder="Coste maquina" className="input" />
+                  <input name="costeManoObra" type="number" min="0" step="0.01" placeholder="Coste mano de obra" className="input" />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <input name="costePostprocesado" type="number" min="0" step="0.01" placeholder="Coste postprocesado" className="input" />
                   <input name="margen" type="number" step="0.01" placeholder="Margen" className="input" />
                   <input name="pvp" type="number" min="0.01" step="0.01" placeholder="PVP" className="input" />
                 </div>
@@ -1117,6 +1084,14 @@ export default async function Home({
                   <input name="color" placeholder="Color" className="input" />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
+                  <input name="tipoColor" placeholder="Tipo color" className="input" />
+                  <input name="nombreComercial" placeholder="Nombre comercial" className="input" />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <input name="colorBase" placeholder="Color base" className="input" />
+                  <input name="efecto" placeholder="Efecto" className="input" />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
                   <input name="precioKg" type="number" step="0.01" min="0" placeholder="Precio EUR/kg" className="input" />
                   <input name="proveedor" placeholder="Proveedor" className="input" />
                 </div>
@@ -1124,6 +1099,15 @@ export default async function Home({
                   <input name="stockActualG" type="number" min="0" placeholder="Stock actual (g)" className="input" />
                   <input name="stockMinimoG" type="number" min="0" placeholder="Stock minimo (g)" className="input" />
                 </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <input name="diametroMm" type="number" min="0" step="0.01" placeholder="Diametro mm" className="input" />
+                  <input name="pesoSpoolG" type="number" min="0" placeholder="Peso spool g" className="input" />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <input name="tempExtrusor" type="number" min="0" placeholder="Temp extrusor" className="input" />
+                  <input name="tempCama" type="number" min="0" placeholder="Temp cama" className="input" />
+                </div>
+                <textarea name="notas" rows={3} placeholder="Notas tecnicas" className="input" />
                 <SubmitButton pendingText="Creando...">Crear material</SubmitButton>
               </form>
 

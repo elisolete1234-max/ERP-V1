@@ -1,6 +1,6 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { db } from "../lib/db";
+import { row, rows } from "../lib/db";
 import {
   completeManufacturingOrder,
   confirmOrder,
@@ -13,39 +13,32 @@ import {
   generateInvoiceForOrder,
   resetDatabase,
   restockFinishedProduct,
-  runDemoSimulation,
   startManufacturingOrder,
   updateManufacturingOrderRecord,
   updateMaterialRecord,
+  updateProductRecord,
   updateOrderRecord,
   updatePrinterRecord,
+  updateInvoiceRecord,
 } from "../lib/erp-service";
 
-function row<T>(statement: string, ...params: unknown[]) {
-  return db.prepare(statement).get(...params) as T | undefined;
-}
-
-function rows<T>(statement: string, ...params: unknown[]) {
-  return db.prepare(statement).all(...params) as T[];
-}
-
-function ids() {
+async function ids() {
   return {
-    customerId: row<{ id: string }>(`SELECT id FROM customers LIMIT 1`)?.id ?? "",
-    materialId: row<{ id: string }>(`SELECT id FROM materials LIMIT 1`)?.id ?? "",
-    productId: row<{ id: string }>(`SELECT id FROM products LIMIT 1`)?.id ?? "",
+    customerId: (await row<{ id: string }>(`SELECT id FROM customers LIMIT 1`))?.id ?? "",
+    materialId: (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))?.id ?? "",
+    productId: (await row<{ id: string }>(`SELECT id FROM products LIMIT 1`))?.id ?? "",
   };
 }
 
-function setupSingleProductFixture(input?: {
+async function setupSingleProductFixture(input?: {
   materialStock?: number;
   productName?: string;
   grams?: number;
   hours?: number;
   electricity?: number;
 }) {
-  createCustomerRecord({ nombre: "Cliente Test" });
-  createMaterialRecord({
+  await createCustomerRecord({ nombre: "Cliente Test" });
+  await createMaterialRecord({
     nombre: "PLA Test",
     marca: "Marca",
     tipo: "PLA",
@@ -54,8 +47,8 @@ function setupSingleProductFixture(input?: {
     stockActualG: input?.materialStock ?? 1000,
     stockMinimoG: 100,
   });
-  const materialId = row<{ id: string }>(`SELECT id FROM materials LIMIT 1`)!.id;
-  createProductRecord({
+  const materialId = (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))!.id;
+  await createProductRecord({
     nombre: input?.productName ?? "Producto Test",
     gramosEstimados: input?.grams ?? 100,
     tiempoImpresionHoras: input?.hours ?? 2,
@@ -64,37 +57,50 @@ function setupSingleProductFixture(input?: {
     pvp: 30,
     materialId,
   });
-  createPrinterRecord({ nombre: "Impresora 1", costeHora: 2, horasUsoAcumuladas: 0, estado: "LIBRE" });
+  await createPrinterRecord({ nombre: "Impresora 1", costeHora: 2, horasUsoAcumuladas: 0, estado: "LIBRE" });
 
   return ids();
 }
 
-beforeEach(() => {
-  resetDatabase();
+beforeEach(async () => {
+  await resetDatabase();
 });
 
-test("usa stock terminado completo sin fabricar", () => {
-  const { customerId, productId } = setupSingleProductFixture();
-  restockFinishedProduct(productId, 5, "Carga inicial", "A1", 8);
-  const orderId = createOrderRecord({
+test("la base reseteada arranca sin datos de negocio", async () => {
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM customers`))!.total, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM materials`))!.total, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM products`))!.total, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM orders`))!.total, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM order_lines`))!.total, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM manufacturing_orders`))!.total, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM printers`))!.total, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM finished_product_inventory`))!.total, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM inventory_movements`))!.total, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices`))!.total, 0);
+});
+
+test("usa stock terminado completo sin fabricar", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  await restockFinishedProduct(productId, 5, "Carga inicial", "A1", 8);
+  const orderId = await createOrderRecord({
     clienteId: customerId,
     lines: [{ productId, quantity: 3 }],
   });
 
-  const confirmation = confirmOrder(orderId);
-  const order = row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId)!;
-  const line = row<{ cantidad_desde_stock: number; cantidad_a_fabricar: number }>(
+  const confirmation = await confirmOrder(orderId);
+  const order = (await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId))!;
+  const line = (await row<{ cantidad_desde_stock: number; cantidad_a_fabricar: number }>(
     `SELECT cantidad_desde_stock, cantidad_a_fabricar FROM order_lines WHERE pedido_id = ?`,
     orderId,
-  )!;
-  const manufacturingCount = row<{ total: number }>(
+  ))!;
+  const manufacturingCount = (await row<{ total: number }>(
     `SELECT COUNT(*) AS total FROM manufacturing_orders WHERE pedido_id = ?`,
     orderId,
-  )!;
-  const stock = row<{ cantidad_disponible: number }>(
+  ))!;
+  const stock = (await row<{ cantidad_disponible: number }>(
     `SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`,
     productId,
-  )!;
+  ))!;
 
   assert.equal(confirmation.ok, true);
   assert.equal(confirmation.fromStockUnits, 3);
@@ -106,51 +112,51 @@ test("usa stock terminado completo sin fabricar", () => {
   assert.equal(stock.cantidad_disponible, 2);
 });
 
-test("reconfirmar un pedido no duplica salidas netas de stock terminado", () => {
-  const { customerId, productId } = setupSingleProductFixture();
-  restockFinishedProduct(productId, 2, "Carga inicial", "A1", 8);
-  const orderId = createOrderRecord({
+test("reconfirmar un pedido no duplica salidas netas de stock terminado", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  await restockFinishedProduct(productId, 2, "Carga inicial", "A1", 8);
+  const orderId = await createOrderRecord({
     clienteId: customerId,
     lines: [{ productId, quantity: 4 }],
   });
 
-  confirmOrder(orderId);
-  confirmOrder(orderId);
+  await confirmOrder(orderId);
+  await confirmOrder(orderId);
 
-  const stock = row<{ cantidad_disponible: number }>(
+  const stock = (await row<{ cantidad_disponible: number }>(
     `SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`,
     productId,
-  )!;
-  const manufacturingCount = row<{ total: number }>(
+  ))!;
+  const manufacturingCount = (await row<{ total: number }>(
     `SELECT COUNT(*) AS total FROM manufacturing_orders WHERE pedido_id = ?`,
     orderId,
-  )!;
+  ))!;
 
   assert.equal(stock.cantidad_disponible, 0);
   assert.equal(manufacturingCount.total, 1);
 });
 
-test("flujo mixto usa stock terminado y fabrica el resto", () => {
-  const { customerId, productId, materialId } = setupSingleProductFixture({ materialStock: 1000, grams: 120, hours: 3, electricity: 2 });
-  restockFinishedProduct(productId, 1, "Carga inicial", "A1", 9);
-  const orderId = createOrderRecord({
+test("flujo mixto usa stock terminado y fabrica el resto", async () => {
+  const { customerId, productId, materialId } = await setupSingleProductFixture({ materialStock: 1000, grams: 120, hours: 3, electricity: 2 });
+  await restockFinishedProduct(productId, 1, "Carga inicial", "A1", 9);
+  const orderId = await createOrderRecord({
     clienteId: customerId,
     lines: [{ productId, quantity: 3 }],
   });
 
-  const confirmation = confirmOrder(orderId);
-  const mo = row<{ id: string; cantidad: number }>(
+  const confirmation = await confirmOrder(orderId);
+  const mo = (await row<{ id: string; cantidad: number }>(
     `SELECT id, cantidad FROM manufacturing_orders WHERE pedido_id = ?`,
     orderId,
-  )!;
-  startManufacturingOrder(mo.id);
-  completeManufacturingOrder(mo.id);
-  const order = row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId)!;
-  const material = row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId)!;
-  const inventory = row<{ cantidad_disponible: number }>(
+  ))!;
+  await startManufacturingOrder(mo.id);
+  await completeManufacturingOrder(mo.id);
+  const order = (await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId))!;
+  const material = (await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId))!;
+  const inventory = (await row<{ cantidad_disponible: number }>(
     `SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`,
     productId,
-  )!;
+  ))!;
 
   assert.equal(confirmation.fromStockUnits, 1);
   assert.equal(confirmation.toManufactureUnits, 2);
@@ -160,16 +166,16 @@ test("flujo mixto usa stock terminado y fabrica el resto", () => {
   assert.equal(inventory.cantidad_disponible, 0);
 });
 
-test("bloquea el pedido si faltan materiales y no consume stock", () => {
-  const { customerId, productId, materialId } = setupSingleProductFixture({ materialStock: 50, grams: 100 });
-  const orderId = createOrderRecord({
+test("bloquea el pedido si faltan materiales y no consume stock", async () => {
+  const { customerId, productId, materialId } = await setupSingleProductFixture({ materialStock: 50, grams: 100 });
+  const orderId = await createOrderRecord({
     clienteId: customerId,
     lines: [{ productId, quantity: 2 }],
   });
 
-  const confirmation = confirmOrder(orderId);
-  const order = row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId)!;
-  const material = row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId)!;
+  const confirmation = await confirmOrder(orderId);
+  const order = (await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId))!;
+  const material = (await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId))!;
 
   assert.equal(confirmation.ok, false);
   assert.ok(confirmation.incidents.length > 0);
@@ -177,23 +183,23 @@ test("bloquea el pedido si faltan materiales y no consume stock", () => {
   assert.equal(material.stock_actual_g, 50);
 });
 
-test("fabricacion completa consume materiales y registra movimientos", () => {
-  const { customerId, productId, materialId } = setupSingleProductFixture({ materialStock: 1000, grams: 200, hours: 4, electricity: 1 });
-  const orderId = createOrderRecord({
+test("fabricacion completa consume materiales y registra movimientos", async () => {
+  const { customerId, productId, materialId } = await setupSingleProductFixture({ materialStock: 1000, grams: 200, hours: 4, electricity: 1 });
+  const orderId = await createOrderRecord({
     clienteId: customerId,
     lines: [{ productId, quantity: 2 }],
   });
 
-  confirmOrder(orderId);
-  const mo = row<{ id: string }>(`SELECT id FROM manufacturing_orders WHERE pedido_id = ?`, orderId)!;
-  startManufacturingOrder(mo.id);
-  const result = completeManufacturingOrder(mo.id);
-  const material = row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId)!;
-  const stockMovement = row<{ total: number }>(
+  await confirmOrder(orderId);
+  const mo = (await row<{ id: string }>(`SELECT id FROM manufacturing_orders WHERE pedido_id = ?`, orderId))!;
+  await startManufacturingOrder(mo.id);
+  const result = await completeManufacturingOrder(mo.id);
+  const material = (await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId))!;
+  const stockMovement = (await row<{ total: number }>(
     `SELECT COUNT(*) AS total FROM stock_movements WHERE material_id = ? AND tipo = 'SALIDA'`,
     materialId,
-  )!;
-  const inventoryMovements = row<{ total: number }>(
+  ))!;
+  const inventoryMovements = await row<{ total: number }>(
     `SELECT COUNT(*) AS total FROM inventory_movements`,
   );
 
@@ -203,15 +209,15 @@ test("fabricacion completa consume materiales y registra movimientos", () => {
   assert.ok((inventoryMovements?.total ?? 0) >= 2);
 });
 
-test("no permite movimientos con cantidad cero ni stock negativo", () => {
-  const { productId } = setupSingleProductFixture();
-  assert.throws(() => restockFinishedProduct(productId, 0, "Invalido"), /mayor que cero|cantidad/i);
-  assert.throws(() => restockFinishedProduct(productId, 1, "Invalido", "A1", -1), /coste unitario/i);
+test("no permite movimientos con cantidad cero ni stock negativo", async () => {
+  const { productId } = await setupSingleProductFixture();
+  await assert.rejects(() => restockFinishedProduct(productId, 0, "Invalido"), /mayor que cero|cantidad/i);
+  await assert.rejects(() => restockFinishedProduct(productId, 1, "Invalido", "A1", -1), /coste unitario/i);
 });
 
-test("no permite modificar stock actual del material sin movimiento", () => {
-  const { materialId } = setupSingleProductFixture();
-  assert.throws(
+test("no permite modificar stock actual del material sin movimiento", async () => {
+  const { materialId } = await setupSingleProductFixture();
+  await assert.rejects(
     () =>
       updateMaterialRecord({
         id: materialId,
@@ -227,39 +233,211 @@ test("no permite modificar stock actual del material sin movimiento", () => {
   );
 });
 
-test("solo permite una orden activa por impresora y asigna impresora correcta", () => {
-  createCustomerRecord({ nombre: "Cliente Test" });
-  createMaterialRecord({ nombre: "PLA Test", marca: "Marca", tipo: "PLA", color: "Negro", precioKg: 20, stockActualG: 5000, stockMinimoG: 100 });
-  const materialId = row<{ id: string }>(`SELECT id FROM materials LIMIT 1`)!.id;
-  createProductRecord({ nombre: "Producto A", gramosEstimados: 100, tiempoImpresionHoras: 2, costeElectricidad: 1, margen: 5, pvp: 20, materialId });
-  createProductRecord({ nombre: "Producto B", gramosEstimados: 100, tiempoImpresionHoras: 2, costeElectricidad: 1, margen: 5, pvp: 20, materialId });
-  createPrinterRecord({ nombre: "Impresora lenta", costeHora: 2, horasUsoAcumuladas: 10, estado: "MANTENIMIENTO" });
-  createPrinterRecord({ nombre: "Impresora fresca", costeHora: 2, horasUsoAcumuladas: 1, estado: "LIBRE" });
-  const customerId = row<{ id: string }>(`SELECT id FROM customers LIMIT 1`)!.id;
-  const products = rows<{ id: string }>(`SELECT id FROM products ORDER BY nombre ASC`);
+test("editar material conserva campos opcionales vacios y guarda el detalle V2", async () => {
+  const { materialId } = await setupSingleProductFixture();
 
-  const order1 = createOrderRecord({ clienteId: customerId, lines: [{ productId: products[0].id, quantity: 1 }] });
-  const order2 = createOrderRecord({ clienteId: customerId, lines: [{ productId: products[1].id, quantity: 1 }] });
-  confirmOrder(order1);
-  confirmOrder(order2);
-  const orders = rows<{ id: string }>(`SELECT id FROM manufacturing_orders ORDER BY codigo ASC`);
+  await updateMaterialRecord({
+    id: materialId,
+    nombre: "PLA Studio",
+    marca: "ColorLab",
+    tipo: "PLA",
+    color: "Blanco",
+    tipoColor: "Gradient",
+    efecto: "Silk",
+    colorBase: "Blanco",
+    nombreComercial: "Pearl Flow",
+    diametroMm: undefined,
+    pesoSpoolG: 1000,
+    tempExtrusor: 210,
+    tempCama: undefined,
+    precioKg: 21.5,
+    stockActualG: 1000,
+    stockMinimoG: 120,
+    proveedor: "Proveedor X",
+    notas: "Perfil verificado",
+  });
 
-  startManufacturingOrder(orders[0].id);
-  const assigned = row<{ impresora_nombre: string }>(
+  const material = (await row<{
+    nombre: string;
+    marca: string;
+    tipo_color: string | null;
+    efecto: string | null;
+    color_base: string | null;
+    nombre_comercial: string | null;
+    diametro_mm: number | null;
+    peso_spool_g: number | null;
+    temp_extrusor: number | null;
+    temp_cama: number | null;
+  }>(
+    `SELECT nombre, marca, tipo_color, efecto, color_base, nombre_comercial, diametro_mm, peso_spool_g, temp_extrusor, temp_cama
+     FROM materials
+     WHERE id = ?`,
+    materialId,
+  ))!;
+
+  assert.equal(material.nombre, "PLA Studio");
+  assert.equal(material.marca, "ColorLab");
+  assert.equal(material.tipo_color, "Gradient");
+  assert.equal(material.efecto, "Silk");
+  assert.equal(material.color_base, "Blanco");
+  assert.equal(material.nombre_comercial, "Pearl Flow");
+  assert.equal(material.diametro_mm, null);
+  assert.equal(material.peso_spool_g, 1000);
+  assert.equal(material.temp_extrusor, 210);
+  assert.equal(material.temp_cama, null);
+});
+
+test("editar producto actualiza la receta V2 sin romper el producto", async () => {
+  const { productId, materialId } = await setupSingleProductFixture();
+
+  await updateProductRecord({
+    id: productId,
+    nombre: "Producto receta",
+    descripcion: "Version revisada",
+    enlaceModelo: "https://example.com/modelo",
+    gramosEstimados: 125,
+    tiempoImpresionHoras: 2.5,
+    costeElectricidad: 1.2,
+    costeMaquina: 2.1,
+    costeManoObra: 0.8,
+    costePostprocesado: 0.6,
+    margen: 12,
+    pvp: 34,
+    materialId,
+    activo: true,
+  });
+
+  const product = (await row<{
+    nombre: string;
+    coste_maquina: number;
+    coste_mano_obra: number;
+    coste_postprocesado: number;
+    gramos_estimados: number;
+  }>(
+    `SELECT nombre, coste_maquina, coste_mano_obra, coste_postprocesado, gramos_estimados
+     FROM products
+     WHERE id = ?`,
+    productId,
+  ))!;
+
+  assert.equal(product.nombre, "Producto receta");
+  assert.equal(product.coste_maquina, 2.1);
+  assert.equal(product.coste_mano_obra, 0.8);
+  assert.equal(product.coste_postprocesado, 0.6);
+  assert.equal(product.gramos_estimados, 125);
+});
+
+test("crear material con stock inicial genera movimiento y deja el cache consistente", async () => {
+  await createMaterialRecord({
+    nombre: "PETG Azul",
+    marca: "Marca",
+    tipo: "PETG",
+    color: "Azul",
+    precioKg: 22,
+    stockActualG: 750,
+    stockMinimoG: 100,
+  });
+
+  const material = (await row<{ id: string; stock_actual_g: number }>(`SELECT id, stock_actual_g FROM materials LIMIT 1`))!;
+  const movement = (await row<{ tipo: string; cantidad_g: number }>(
+    `SELECT tipo, cantidad_g FROM stock_movements WHERE material_id = ?`,
+    material.id,
+  ))!;
+
+  assert.equal(material.stock_actual_g, 750);
+  assert.equal(movement.tipo, "ENTRADA");
+  assert.equal(movement.cantidad_g, 750);
+});
+
+test("permite crear registros base con los datos minimos necesarios", async () => {
+  await createCustomerRecord({ nombre: "Cliente minimo" });
+  await createMaterialRecord({ nombre: "Material minimo" });
+
+  const customer = (await row<{ id: string }>(`SELECT id FROM customers LIMIT 1`))!;
+  const material = (await row<{
+    id: string;
+    marca: string;
+    tipo: string;
+    color: string;
+    precio_kg: number;
+    stock_minimo_g: number;
+  }>(`SELECT id, marca, tipo, color, precio_kg, stock_minimo_g FROM materials LIMIT 1`))!;
+
+  await createProductRecord({
+    nombre: "Producto minimo",
+    materialId: material.id,
+  });
+  await createPrinterRecord({ nombre: "Impresora minima" });
+
+  const product = (await row<{
+    nombre: string;
+    gramos_estimados: number;
+    tiempo_impresion_horas: number;
+    coste_electricidad: number;
+    pvp: number;
+  }>(`SELECT nombre, gramos_estimados, tiempo_impresion_horas, coste_electricidad, pvp FROM products LIMIT 1`))!;
+  const printer = (await row<{
+    nombre: string;
+    coste_hora: number;
+    horas_uso_acumuladas: number;
+    estado: string;
+  }>(`SELECT nombre, coste_hora, horas_uso_acumuladas, estado FROM printers LIMIT 1`))!;
+
+  const orderId = await createOrderRecord({
+    clienteId: customer.id,
+    lines: [{ productId: (await row<{ id: string }>(`SELECT id FROM products LIMIT 1`))!.id, quantity: 1 }],
+  });
+
+  assert.equal(material.marca, "Sin marca");
+  assert.equal(material.tipo, "Sin tipo");
+  assert.equal(material.color, "Sin color");
+  assert.equal(material.precio_kg, 0);
+  assert.equal(material.stock_minimo_g, 0);
+  assert.equal(product.nombre, "Producto minimo");
+  assert.equal(product.gramos_estimados, 1);
+  assert.equal(product.tiempo_impresion_horas, 0.1);
+  assert.equal(product.coste_electricidad, 0);
+  assert.equal(product.pvp, 0);
+  assert.equal(printer.nombre, "Impresora minima");
+  assert.equal(printer.coste_hora, 0);
+  assert.equal(printer.horas_uso_acumuladas, 0);
+  assert.equal(printer.estado, "LIBRE");
+  assert.ok(orderId.length > 0);
+});
+
+test("solo permite una orden activa por impresora y asigna impresora correcta", async () => {
+  await createCustomerRecord({ nombre: "Cliente Test" });
+  await createMaterialRecord({ nombre: "PLA Test", marca: "Marca", tipo: "PLA", color: "Negro", precioKg: 20, stockActualG: 5000, stockMinimoG: 100 });
+  const materialId = (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))!.id;
+  await createProductRecord({ nombre: "Producto A", gramosEstimados: 100, tiempoImpresionHoras: 2, costeElectricidad: 1, margen: 5, pvp: 20, materialId });
+  await createProductRecord({ nombre: "Producto B", gramosEstimados: 100, tiempoImpresionHoras: 2, costeElectricidad: 1, margen: 5, pvp: 20, materialId });
+  await createPrinterRecord({ nombre: "Impresora lenta", costeHora: 2, horasUsoAcumuladas: 10, estado: "MANTENIMIENTO" });
+  await createPrinterRecord({ nombre: "Impresora fresca", costeHora: 2, horasUsoAcumuladas: 1, estado: "LIBRE" });
+  const customerId = (await row<{ id: string }>(`SELECT id FROM customers LIMIT 1`))!.id;
+  const products = await rows<{ id: string }>(`SELECT id FROM products ORDER BY nombre ASC`);
+
+  const order1 = await createOrderRecord({ clienteId: customerId, lines: [{ productId: products[0].id, quantity: 1 }] });
+  const order2 = await createOrderRecord({ clienteId: customerId, lines: [{ productId: products[1].id, quantity: 1 }] });
+  await confirmOrder(order1);
+  await confirmOrder(order2);
+  const orders = await rows<{ id: string }>(`SELECT id FROM manufacturing_orders ORDER BY codigo ASC`);
+
+  await startManufacturingOrder(orders[0].id);
+  const assigned = (await row<{ impresora_nombre: string }>(
     `SELECT pr.nombre AS impresora_nombre
      FROM manufacturing_orders mo JOIN printers pr ON pr.id = mo.impresora_id
      WHERE mo.id = ?`,
     orders[0].id,
-  )!;
+  ))!;
 
   assert.equal(assigned.impresora_nombre, "Impresora fresca");
-  assert.throws(() => startManufacturingOrder(orders[1].id), /orden activa|impresoras libres/i);
+  await assert.rejects(() => startManufacturingOrder(orders[1].id), /orden activa|impresoras libres/i);
 });
 
-test("no permite marcar impresoras manualmente en estados incoherentes", () => {
-  const { customerId, productId } = setupSingleProductFixture();
-  const printerId = row<{ id: string }>(`SELECT id FROM printers LIMIT 1`)!.id;
-  assert.throws(
+test("no permite marcar impresoras manualmente en estados incoherentes", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const printerId = (await row<{ id: string }>(`SELECT id FROM printers LIMIT 1`))!.id;
+  await assert.rejects(
     () =>
       updatePrinterRecord({
         id: printerId,
@@ -271,15 +449,15 @@ test("no permite marcar impresoras manualmente en estados incoherentes", () => {
     /exactamente una orden activa/i,
   );
 
-  const orderId = createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
-  confirmOrder(orderId);
-  const manufacturingId = row<{ id: string }>(
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
     `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
     orderId,
-  )!.id;
-  startManufacturingOrder(manufacturingId);
+  ))!.id;
+  await startManufacturingOrder(manufacturingId);
 
-  assert.throws(
+  await assert.rejects(
     () =>
       updatePrinterRecord({
         id: printerId,
@@ -292,18 +470,18 @@ test("no permite marcar impresoras manualmente en estados incoherentes", () => {
   );
 });
 
-test("acumula horas y coste por impresora al completar fabricacion", () => {
-  const { customerId, productId } = setupSingleProductFixture({ materialStock: 1000, grams: 100, hours: 3, electricity: 1 });
-  const orderId = createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 2 }] });
-  confirmOrder(orderId);
-  const mo = row<{ id: string }>(`SELECT id FROM manufacturing_orders WHERE pedido_id = ?`, orderId)!;
-  startManufacturingOrder(mo.id);
-  const result = completeManufacturingOrder(mo.id);
-  const printer = row<{ horas_uso_acumuladas: number; estado: string }>(`SELECT horas_uso_acumuladas, estado FROM printers LIMIT 1`)!;
-  const line = row<{ coste_impresora_total: number; coste_total: number }>(
+test("acumula horas y coste por impresora al completar fabricacion", async () => {
+  const { customerId, productId } = await setupSingleProductFixture({ materialStock: 1000, grams: 100, hours: 3, electricity: 1 });
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 2 }] });
+  await confirmOrder(orderId);
+  const mo = (await row<{ id: string }>(`SELECT id FROM manufacturing_orders WHERE pedido_id = ?`, orderId))!;
+  await startManufacturingOrder(mo.id);
+  const result = await completeManufacturingOrder(mo.id);
+  const printer = (await row<{ horas_uso_acumuladas: number; estado: string }>(`SELECT horas_uso_acumuladas, estado FROM printers LIMIT 1`))!;
+  const line = (await row<{ coste_impresora_total: number; coste_total: number }>(
     `SELECT coste_impresora_total, coste_total FROM order_lines WHERE pedido_id = ?`,
     orderId,
-  )!;
+  ))!;
 
   assert.equal(result.totalHours, 6);
   assert.equal(result.printerCost, 12);
@@ -313,21 +491,21 @@ test("acumula horas y coste por impresora al completar fabricacion", () => {
   assert.ok(line.coste_total >= 12);
 });
 
-test("no permite completar fabricacion sin haber iniciado y asignado impresora", () => {
-  const { customerId, productId } = setupSingleProductFixture();
-  const orderId = createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
-  confirmOrder(orderId);
-  const mo = row<{ id: string }>(`SELECT id FROM manufacturing_orders WHERE pedido_id = ?`, orderId)!;
-  assert.throws(() => completeManufacturingOrder(mo.id), /no ha sido iniciada|impresora/i);
+test("no permite completar fabricacion sin haber iniciado y asignado impresora", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const mo = (await row<{ id: string }>(`SELECT id FROM manufacturing_orders WHERE pedido_id = ?`, orderId))!;
+  await assert.rejects(() => completeManufacturingOrder(mo.id), /no ha sido iniciada|impresora/i);
 });
 
-test("no permite forzar estados manuales de fabricacion ni editar pedidos cerrados logicamente", () => {
-  const { customerId, productId } = setupSingleProductFixture();
-  const orderId = createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
-  confirmOrder(orderId);
-  const mo = row<{ id: string }>(`SELECT id FROM manufacturing_orders WHERE pedido_id = ?`, orderId)!;
+test("no permite forzar estados manuales de fabricacion ni editar pedidos cerrados logicamente", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const mo = (await row<{ id: string }>(`SELECT id FROM manufacturing_orders WHERE pedido_id = ?`, orderId))!;
 
-  assert.throws(
+  await assert.rejects(
     () =>
       updateManufacturingOrderRecord({
         id: mo.id,
@@ -337,41 +515,94 @@ test("no permite forzar estados manuales de fabricacion ni editar pedidos cerrad
     /acciones dedicadas/i,
   );
 
-  updateOrderRecord({
+  await updateOrderRecord({
     id: orderId,
     clienteId: customerId,
     estado: "FACTURADO",
     lines: [{ productId, quantity: 1 }],
   });
 
-  assert.equal(row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId)!.estado, "BORRADOR");
+  assert.equal((await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId))!.estado, "BORRADOR");
 });
 
-test("estados del pedido transicionan correctamente y la factura solo se genera cuando procede", () => {
-  const { customerId, productId } = setupSingleProductFixture();
-  const orderId = createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
-  confirmOrder(orderId);
-  const mo = row<{ id: string }>(`SELECT id FROM manufacturing_orders WHERE pedido_id = ?`, orderId)!;
+test("estados del pedido transicionan correctamente y la factura solo se genera cuando procede", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const mo = (await row<{ id: string }>(`SELECT id FROM manufacturing_orders WHERE pedido_id = ?`, orderId))!;
 
-  assert.throws(() => generateInvoiceForOrder(orderId), /no se puede facturar/i);
+  await assert.rejects(() => generateInvoiceForOrder(orderId), /no se puede facturar/i);
 
-  startManufacturingOrder(mo.id);
-  assert.equal(row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId)!.estado, "EN_PRODUCCION");
-  completeManufacturingOrder(mo.id);
-  assert.equal(row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId)!.estado, "LISTO");
-  deliverOrder(orderId);
-  assert.equal(row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId)!.estado, "ENTREGADO");
-  generateInvoiceForOrder(orderId);
-  assert.equal(row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId)!.estado, "FACTURADO");
-  assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices WHERE pedido_id = ?`, orderId)!.total, 1);
-  generateInvoiceForOrder(orderId);
-  assert.equal(row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices WHERE pedido_id = ?`, orderId)!.total, 1);
+  await startManufacturingOrder(mo.id);
+  assert.equal((await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId))!.estado, "EN_PRODUCCION");
+  await completeManufacturingOrder(mo.id);
+  assert.equal((await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId))!.estado, "LISTO");
+  await deliverOrder(orderId);
+  assert.equal((await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId))!.estado, "ENTREGADO");
+  await generateInvoiceForOrder(orderId);
+  assert.equal((await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId))!.estado, "FACTURADO");
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices WHERE pedido_id = ?`, orderId))!.total, 1);
+  await generateInvoiceForOrder(orderId);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices WHERE pedido_id = ?`, orderId))!.total, 1);
 });
 
-test("la demo completa genera escenarios y trazabilidad", () => {
-  runDemoSimulation();
-  const scenarios = row<{ total: number }>(`SELECT COUNT(*) AS total FROM demo_scenario_results`)!.total;
-  const movements = row<{ total: number }>(`SELECT COUNT(*) AS total FROM inventory_movements`)!.total;
-  assert.ok(scenarios >= 4);
-  assert.ok(movements > 0);
+test("la factura sincroniza el estado de pago del pedido", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoiceId = (await row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, orderId))!.id;
+  assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM orders WHERE id = ?`, orderId))!.estado_pago, "PENDIENTE");
+
+  await updateInvoiceRecord({ id: invoiceId, estadoPago: "PAGADA" });
+
+  assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM invoices WHERE id = ?`, invoiceId))!.estado_pago, "PAGADA");
+  assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM orders WHERE id = ?`, orderId))!.estado_pago, "PAGADA");
+});
+
+test("el inventario terminado refleja stock reservado y disponible", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  await restockFinishedProduct(productId, 5, "Carga inicial", "A1", 8);
+  const orderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 3 }],
+  });
+
+  await confirmOrder(orderId);
+
+  const inventory = (await row<{
+    cantidad_disponible: number;
+    unidades_stock: number;
+    unidades_reservadas: number;
+    unidades_disponibles: number;
+  }>(
+    `SELECT cantidad_disponible, unidades_stock, unidades_reservadas, unidades_disponibles
+     FROM finished_product_inventory
+     WHERE product_id = ?`,
+    productId,
+  ))!;
+
+  assert.equal(inventory.cantidad_disponible, 2);
+  assert.equal(inventory.unidades_disponibles, 2);
+  assert.equal(inventory.unidades_reservadas, 3);
+  assert.equal(inventory.unidades_stock, 5);
+
+  await deliverOrder(orderId);
+  const afterDelivery = (await row<{ unidades_reservadas: number; unidades_stock: number }>(
+    `SELECT unidades_reservadas, unidades_stock
+     FROM finished_product_inventory
+     WHERE product_id = ?`,
+    productId,
+  ))!;
+  assert.equal(afterDelivery.unidades_reservadas, 0);
+  assert.equal(afterDelivery.unidades_stock, 2);
 });

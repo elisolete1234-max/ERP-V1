@@ -34,9 +34,13 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # local database
 /data/*.db
+/backups/*
+!/backups/.gitkeep
+/backup.config.json
 
 # vercel
 .vercel
