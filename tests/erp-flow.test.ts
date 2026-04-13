@@ -349,6 +349,62 @@ test("crear material con stock inicial genera movimiento y deja el cache consist
   assert.equal(movement.cantidad_g, 750);
 });
 
+test("permite crear registros base con los datos minimos necesarios", async () => {
+  await createCustomerRecord({ nombre: "Cliente minimo" });
+  await createMaterialRecord({ nombre: "Material minimo" });
+
+  const customer = (await row<{ id: string }>(`SELECT id FROM customers LIMIT 1`))!;
+  const material = (await row<{
+    id: string;
+    marca: string;
+    tipo: string;
+    color: string;
+    precio_kg: number;
+    stock_minimo_g: number;
+  }>(`SELECT id, marca, tipo, color, precio_kg, stock_minimo_g FROM materials LIMIT 1`))!;
+
+  await createProductRecord({
+    nombre: "Producto minimo",
+    materialId: material.id,
+  });
+  await createPrinterRecord({ nombre: "Impresora minima" });
+
+  const product = (await row<{
+    nombre: string;
+    gramos_estimados: number;
+    tiempo_impresion_horas: number;
+    coste_electricidad: number;
+    pvp: number;
+  }>(`SELECT nombre, gramos_estimados, tiempo_impresion_horas, coste_electricidad, pvp FROM products LIMIT 1`))!;
+  const printer = (await row<{
+    nombre: string;
+    coste_hora: number;
+    horas_uso_acumuladas: number;
+    estado: string;
+  }>(`SELECT nombre, coste_hora, horas_uso_acumuladas, estado FROM printers LIMIT 1`))!;
+
+  const orderId = await createOrderRecord({
+    clienteId: customer.id,
+    lines: [{ productId: (await row<{ id: string }>(`SELECT id FROM products LIMIT 1`))!.id, quantity: 1 }],
+  });
+
+  assert.equal(material.marca, "Sin marca");
+  assert.equal(material.tipo, "Sin tipo");
+  assert.equal(material.color, "Sin color");
+  assert.equal(material.precio_kg, 0);
+  assert.equal(material.stock_minimo_g, 0);
+  assert.equal(product.nombre, "Producto minimo");
+  assert.equal(product.gramos_estimados, 1);
+  assert.equal(product.tiempo_impresion_horas, 0.1);
+  assert.equal(product.coste_electricidad, 0);
+  assert.equal(product.pvp, 0);
+  assert.equal(printer.nombre, "Impresora minima");
+  assert.equal(printer.coste_hora, 0);
+  assert.equal(printer.horas_uso_acumuladas, 0);
+  assert.equal(printer.estado, "LIBRE");
+  assert.ok(orderId.length > 0);
+});
+
 test("solo permite una orden activa por impresora y asigna impresora correcta", async () => {
   await createCustomerRecord({ nombre: "Cliente Test" });
   await createMaterialRecord({ nombre: "PLA Test", marca: "Marca", tipo: "PLA", color: "Negro", precioKg: 20, stockActualG: 5000, stockMinimoG: 100 });

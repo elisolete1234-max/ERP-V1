@@ -17,7 +17,7 @@ type ColumnInfo = {
 
 type DbExecutor = {
   execute: (statement: string, params?: InArgs) => Promise<ResultSet>;
-  executeMultiple: (sql: string) => Promise<void>;
+  executeScript: (sql: string) => Promise<void>;
 };
 
 const globalDb = globalThis as GlobalDb;
@@ -30,12 +30,35 @@ function getProjectDatabaseFile() {
 }
 
 function isRemoteDatabaseConfigured() {
-  return Boolean(process.env.TURSO_DATABASE_URL);
+  return Boolean(process.env.TURSO_DATABASE_URL?.trim());
+}
+
+function getRemoteDatabaseConfig() {
+  const url = process.env.TURSO_DATABASE_URL?.trim();
+  const authToken = process.env.TURSO_AUTH_TOKEN?.trim();
+
+  if (!url) {
+    if (process.env.VERCEL) {
+      throw new Error("Falta TURSO_DATABASE_URL en Vercel. Debe tener formato libsql://<database>-<org>.turso.io");
+    }
+    return null;
+  }
+
+  if (!/^libsql:\/\//i.test(url)) {
+    throw new Error("TURSO_DATABASE_URL no es valido. Debe empezar por libsql://");
+  }
+
+  if (!authToken) {
+    throw new Error("Falta TURSO_AUTH_TOKEN. Debes configurarlo en Vercel para conectar con Turso.");
+  }
+
+  return { url, authToken };
 }
 
 function getDatabaseUrl() {
-  if (process.env.TURSO_DATABASE_URL) {
-    return process.env.TURSO_DATABASE_URL;
+  const remoteConfig = getRemoteDatabaseConfig();
+  if (remoteConfig) {
+    return remoteConfig.url;
   }
 
   if (process.env.VERCEL) {
@@ -46,8 +69,9 @@ function getDatabaseUrl() {
 }
 
 function createDatabaseClient() {
-  const url = getDatabaseUrl();
-  const authToken = process.env.TURSO_AUTH_TOKEN;
+  const remoteConfig = getRemoteDatabaseConfig();
+  const url = remoteConfig?.url ?? getDatabaseUrl();
+  const authToken = remoteConfig?.authToken;
 
   return createClient({
     url,
@@ -66,9 +90,20 @@ function getActiveExecutor(): DbExecutor {
   return (
     transactionStorage.getStore() ?? {
       execute: (statement: string, params?: InArgs) => db.execute(statement, params),
-      executeMultiple: (sql: string) => db.executeMultiple(sql),
+      executeScript: async (sql: string) => {
+        for (const statement of splitSqlScript(sql)) {
+          await db.execute(statement);
+        }
+      },
     }
   );
+}
+
+function splitSqlScript(sql: string) {
+  return sql
+    .split(/;\s*(?:\r?\n|$)/g)
+    .map((statement) => statement.trim())
+    .filter(Boolean);
 }
 
 function normalizeArgs(params: unknown[]): InArgs | undefined {
@@ -477,6 +512,9 @@ export async function ensureDatabaseReady() {
     globalDb.fabriqDbInit = createSchema()
       .catch((error) => {
         globalDb.fabriqDbInit = undefined;
+        if (isRemoteDatabaseConfigured() && error instanceof Error) {
+          throw new Error(`No se pudo conectar o inicializar Turso: ${error.message}`);
+        }
         throw error;
       })
       .finally(() => {
@@ -514,13 +552,17 @@ export async function exec(sql: string) {
   if (!globalDb.fabriqDbBootstrapping) {
     await ensureDatabaseReady();
   }
-  return getActiveExecutor().executeMultiple(sql);
+  return getActiveExecutor().executeScript(sql);
 }
 
 function createTransactionExecutor(transactionHandle: Transaction): DbExecutor {
   return {
     execute: (statement: string, params?: InArgs) => transactionHandle.execute({ sql: statement, args: params }),
-    executeMultiple: (sql: string) => transactionHandle.executeMultiple(sql),
+    executeScript: async (sql: string) => {
+      for (const statement of splitSqlScript(sql)) {
+        await transactionHandle.execute(statement);
+      }
+    },
   };
 }
 

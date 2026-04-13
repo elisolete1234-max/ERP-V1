@@ -947,9 +947,9 @@ export async function updateCustomerRecord(input: {
 
 export async function createMaterialRecord(input: {
   nombre: string;
-  marca: string;
-  tipo: string;
-  color: string;
+  marca?: string;
+  tipo?: string;
+  color?: string;
   tipoColor?: string;
   efecto?: string;
   colorBase?: string;
@@ -958,19 +958,27 @@ export async function createMaterialRecord(input: {
   pesoSpoolG?: number;
   tempExtrusor?: number;
   tempCama?: number;
-  precioKg: number;
-  stockActualG: number;
-  stockMinimoG: number;
+  precioKg?: number;
+  stockActualG?: number;
+  stockMinimoG?: number;
   proveedor?: string;
   notas?: string;
 }) {
-  if (!input.nombre.trim() || !input.marca.trim() || !input.tipo.trim() || !input.color.trim()) {
-    throw new Error("Material incompleto. Nombre, marca, tipo y color son obligatorios.");
+  const nombre = input.nombre.trim();
+  const marca = input.marca?.trim() || "Sin marca";
+  const tipo = input.tipo?.trim() || "Sin tipo";
+  const color = input.color?.trim() || "Sin color";
+  const precioKg = roundMoney(input.precioKg ?? 0);
+  const stockActualG = Math.max(0, Math.round(input.stockActualG ?? 0));
+  const stockMinimoG = Math.max(0, Math.round(input.stockMinimoG ?? 0));
+
+  if (!nombre) {
+    throw new Error("El material necesita al menos un nombre.");
   }
   if (
-    input.precioKg < 0 ||
-    input.stockActualG < 0 ||
-    input.stockMinimoG < 0 ||
+    precioKg < 0 ||
+    stockActualG < 0 ||
+    stockMinimoG < 0 ||
     (input.diametroMm ?? 0) < 0 ||
     (input.pesoSpoolG ?? 0) < 0 ||
     (input.tempExtrusor ?? 0) < 0 ||
@@ -987,10 +995,10 @@ export async function createMaterialRecord(input: {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       materialId,
       await nextCode("materials", "MAT-"),
-      input.nombre.trim(),
-      input.marca.trim(),
-      input.tipo.trim(),
-      input.color.trim(),
+      nombre,
+      marca,
+      tipo,
+      color,
       input.tipoColor?.trim() || null,
       input.efecto?.trim() || null,
       input.colorBase?.trim() || null,
@@ -999,19 +1007,19 @@ export async function createMaterialRecord(input: {
       input.pesoSpoolG != null ? Math.round(input.pesoSpoolG) : null,
       input.tempExtrusor != null ? Math.round(input.tempExtrusor) : null,
       input.tempCama != null ? Math.round(input.tempCama) : null,
-      roundMoney(input.precioKg),
+      precioKg,
       0,
-      Math.round(input.stockMinimoG),
+      stockMinimoG,
       input.proveedor?.trim() || null,
       input.notas?.trim() || null,
       nowIso(),
     );
 
-    if (Math.round(input.stockActualG) > 0) {
+    if (stockActualG > 0) {
       await applyMaterialInventoryMovement({
         materialId,
         tipo: "ENTRADA",
-        cantidadG: Math.round(input.stockActualG),
+        cantidadG: stockActualG,
         motivo: "Stock inicial del material",
         referencia: "ALTA_MATERIAL",
       });
@@ -1022,9 +1030,9 @@ export async function createMaterialRecord(input: {
 export async function updateMaterialRecord(input: {
   id: string;
   nombre: string;
-  marca: string;
-  tipo: string;
-  color: string;
+  marca?: string;
+  tipo?: string;
+  color?: string;
   tipoColor?: string;
   efecto?: string;
   colorBase?: string;
@@ -1033,18 +1041,25 @@ export async function updateMaterialRecord(input: {
   pesoSpoolG?: number;
   tempExtrusor?: number;
   tempCama?: number;
-  precioKg: number;
-  stockActualG: number;
-  stockMinimoG: number;
+  precioKg?: number;
+  stockActualG?: number;
+  stockMinimoG?: number;
   proveedor?: string;
   notas?: string;
 }) {
-  if (!input.id || !input.nombre.trim() || !input.marca.trim() || !input.tipo.trim() || !input.color.trim()) {
+  const nombre = input.nombre.trim();
+  const marca = input.marca?.trim() || "Sin marca";
+  const tipo = input.tipo?.trim() || "Sin tipo";
+  const color = input.color?.trim() || "Sin color";
+  const precioKg = roundMoney(input.precioKg ?? 0);
+  const stockMinimoG = Math.max(0, Math.round(input.stockMinimoG ?? 0));
+
+  if (!input.id || !nombre) {
     throw new Error("Material incompleto.");
   }
   if (
-    input.precioKg < 0 ||
-    input.stockMinimoG < 0 ||
+    precioKg < 0 ||
+    stockMinimoG < 0 ||
     (input.diametroMm ?? 0) < 0 ||
     (input.pesoSpoolG ?? 0) < 0 ||
     (input.tempExtrusor ?? 0) < 0 ||
@@ -1057,7 +1072,8 @@ export async function updateMaterialRecord(input: {
   if (!current) {
     throw new Error("El material no existe.");
   }
-  if (Math.round(input.stockActualG) !== current.stock_actual_g) {
+  const stockActualG = input.stockActualG != null ? Math.round(input.stockActualG) : current.stock_actual_g;
+  if (stockActualG !== current.stock_actual_g) {
     throw new Error("El stock actual solo se modifica mediante movimientos de inventario.");
   }
 
@@ -1065,10 +1081,10 @@ export async function updateMaterialRecord(input: {
     `UPDATE materials
      SET nombre = ?, marca = ?, tipo = ?, color = ?, tipo_color = ?, efecto = ?, color_base = ?, nombre_comercial = ?, diametro_mm = ?, peso_spool_g = ?, temp_extrusor = ?, temp_cama = ?, precio_kg = ?, stock_minimo_g = ?, proveedor = ?, notas = ?, fecha_actualizacion = ?
      WHERE id = ?`,
-    input.nombre.trim(),
-    input.marca.trim(),
-    input.tipo.trim(),
-    input.color.trim(),
+    nombre,
+    marca,
+    tipo,
+    color,
     input.tipoColor?.trim() || null,
     input.efecto?.trim() || null,
     input.colorBase?.trim() || null,
@@ -1077,8 +1093,8 @@ export async function updateMaterialRecord(input: {
     input.pesoSpoolG != null ? Math.round(input.pesoSpoolG) : null,
     input.tempExtrusor != null ? Math.round(input.tempExtrusor) : null,
     input.tempCama != null ? Math.round(input.tempCama) : null,
-    roundMoney(input.precioKg),
-    Math.round(input.stockMinimoG),
+    precioKg,
+    stockMinimoG,
     input.proveedor?.trim() || null,
     input.notas?.trim() || null,
     nowIso(),
@@ -1090,25 +1106,34 @@ export async function createProductRecord(input: {
   nombre: string;
   descripcion?: string;
   enlaceModelo?: string;
-  gramosEstimados: number;
-  tiempoImpresionHoras: number;
-  costeElectricidad: number;
+  gramosEstimados?: number;
+  tiempoImpresionHoras?: number;
+  costeElectricidad?: number;
   costeMaquina?: number;
   costeManoObra?: number;
   costePostprocesado?: number;
-  margen: number;
-  pvp: number;
+  margen?: number;
+  pvp?: number;
   materialId: string;
   activo?: boolean;
 }) {
+  const nombre = input.nombre.trim();
+  const gramosEstimados = Math.max(1, Math.round(input.gramosEstimados ?? 1));
+  const tiempoImpresionHoras = roundMoney(input.tiempoImpresionHoras ?? 0.1);
+  const costeElectricidad = roundMoney(input.costeElectricidad ?? 0);
+  const margen = roundMoney(input.margen ?? 0);
+  const pvp = roundMoney(input.pvp ?? 0);
+
+  if (!nombre) {
+    throw new Error("El producto necesita al menos un nombre.");
+  }
   if (!input.materialId) {
     throw new Error("No se puede crear un producto sin material principal.");
   }
-  requirePositiveInteger(input.gramosEstimados, "Los gramos estimados deben ser positivos.");
   if (
-    input.tiempoImpresionHoras <= 0 ||
-    input.pvp <= 0 ||
-    input.costeElectricidad < 0 ||
+    tiempoImpresionHoras < 0 ||
+    pvp < 0 ||
+    costeElectricidad < 0 ||
     (input.costeMaquina ?? 0) < 0 ||
     (input.costeManoObra ?? 0) < 0 ||
     (input.costePostprocesado ?? 0) < 0
@@ -1129,17 +1154,17 @@ export async function createProductRecord(input: {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       productId,
       await nextCode("products", "PRO-"),
-      input.nombre.trim(),
+      nombre,
       input.descripcion?.trim() || null,
       input.enlaceModelo?.trim() || null,
-      Math.round(input.gramosEstimados),
-      roundMoney(input.tiempoImpresionHoras),
-      roundMoney(input.costeElectricidad),
+      gramosEstimados,
+      tiempoImpresionHoras,
+      costeElectricidad,
       roundMoney(input.costeMaquina ?? 0),
       roundMoney(input.costeManoObra ?? 0),
       roundMoney(input.costePostprocesado ?? 0),
-      roundMoney(input.margen),
-      roundMoney(input.pvp),
+      margen,
+      pvp,
       input.materialId,
       input.activo === false ? 0 : 1,
     );
@@ -1148,7 +1173,7 @@ export async function createProductRecord(input: {
       `UPDATE finished_product_inventory
        SET precio_venta = ?, fecha_actualizacion = ?
        WHERE product_id = ?`,
-      roundMoney(input.pvp),
+      pvp,
       nowIso(),
       productId,
     );
@@ -1160,25 +1185,31 @@ export async function updateProductRecord(input: {
   nombre: string;
   descripcion?: string;
   enlaceModelo?: string;
-  gramosEstimados: number;
-  tiempoImpresionHoras: number;
-  costeElectricidad: number;
+  gramosEstimados?: number;
+  tiempoImpresionHoras?: number;
+  costeElectricidad?: number;
   costeMaquina?: number;
   costeManoObra?: number;
   costePostprocesado?: number;
-  margen: number;
-  pvp: number;
+  margen?: number;
+  pvp?: number;
   materialId: string;
   activo?: boolean;
 }) {
-  if (!input.id || !input.materialId || !input.nombre.trim()) {
+  const nombre = input.nombre.trim();
+  const gramosEstimados = Math.max(1, Math.round(input.gramosEstimados ?? 1));
+  const tiempoImpresionHoras = roundMoney(input.tiempoImpresionHoras ?? 0.1);
+  const costeElectricidad = roundMoney(input.costeElectricidad ?? 0);
+  const margen = roundMoney(input.margen ?? 0);
+  const pvp = roundMoney(input.pvp ?? 0);
+
+  if (!input.id || !input.materialId || !nombre) {
     throw new Error("Producto incompleto.");
   }
-  requirePositiveInteger(input.gramosEstimados, "Los gramos estimados deben ser positivos.");
   if (
-    input.tiempoImpresionHoras <= 0 ||
-    input.pvp <= 0 ||
-    input.costeElectricidad < 0 ||
+    tiempoImpresionHoras < 0 ||
+    pvp < 0 ||
+    costeElectricidad < 0 ||
     (input.costeMaquina ?? 0) < 0 ||
     (input.costeManoObra ?? 0) < 0 ||
     (input.costePostprocesado ?? 0) < 0
@@ -1196,17 +1227,17 @@ export async function updateProductRecord(input: {
       `UPDATE products
        SET nombre = ?, descripcion = ?, enlace_modelo = ?, gramos_estimados = ?, tiempo_impresion_horas = ?, coste_electricidad = ?, coste_maquina = ?, coste_mano_obra = ?, coste_postprocesado = ?, margen = ?, pvp = ?, material_id = ?, activo = ?
        WHERE id = ?`,
-      input.nombre.trim(),
+      nombre,
       input.descripcion?.trim() || null,
       input.enlaceModelo?.trim() || null,
-      Math.round(input.gramosEstimados),
-      roundMoney(input.tiempoImpresionHoras),
-      roundMoney(input.costeElectricidad),
+      gramosEstimados,
+      tiempoImpresionHoras,
+      costeElectricidad,
       roundMoney(input.costeMaquina ?? 0),
       roundMoney(input.costeManoObra ?? 0),
       roundMoney(input.costePostprocesado ?? 0),
-      roundMoney(input.margen),
-      roundMoney(input.pvp),
+      margen,
+      pvp,
       input.materialId,
       input.activo === false ? 0 : 1,
       input.id,
@@ -1216,7 +1247,7 @@ export async function updateProductRecord(input: {
       `UPDATE finished_product_inventory
        SET precio_venta = ?, fecha_actualizacion = ?
        WHERE product_id = ?`,
-      roundMoney(input.pvp),
+      pvp,
       nowIso(),
       input.id,
     );
@@ -1386,13 +1417,13 @@ export async function createPrinterRecord(input: {
   nombre: string;
   estado?: PrinterState;
   horasUsoAcumuladas?: number;
-  costeHora: number;
+  costeHora?: number;
   ubicacion?: string;
 }) {
   if (!input.nombre.trim()) {
     throw new Error("La impresora necesita un nombre.");
   }
-  if ((input.horasUsoAcumuladas ?? 0) < 0 || input.costeHora < 0) {
+  if ((input.horasUsoAcumuladas ?? 0) < 0 || (input.costeHora ?? 0) < 0) {
     throw new Error("No se permiten horas ni costes negativos.");
   }
 
@@ -1405,7 +1436,7 @@ export async function createPrinterRecord(input: {
     input.nombre.trim(),
     input.estado ?? "LIBRE",
     roundMoney(input.horasUsoAcumuladas ?? 0),
-    roundMoney(input.costeHora),
+    roundMoney(input.costeHora ?? 0),
     input.ubicacion?.trim() || null,
     nowIso(),
   );
@@ -1415,14 +1446,16 @@ export async function updatePrinterRecord(input: {
   id: string;
   nombre: string;
   estado: PrinterState;
-  horasUsoAcumuladas: number;
-  costeHora: number;
+  horasUsoAcumuladas?: number;
+  costeHora?: number;
   ubicacion?: string;
 }) {
   if (!input.id || !input.nombre.trim()) {
     throw new Error("La impresora necesita ID y nombre.");
   }
-  if (input.horasUsoAcumuladas < 0 || input.costeHora < 0) {
+  const horasUsoAcumuladas = roundMoney(input.horasUsoAcumuladas ?? 0);
+  const costeHora = roundMoney(input.costeHora ?? 0);
+  if (horasUsoAcumuladas < 0 || costeHora < 0) {
     throw new Error("No se permiten horas ni costes negativos.");
   }
 
@@ -1443,8 +1476,8 @@ export async function updatePrinterRecord(input: {
      WHERE id = ?`,
     input.nombre.trim(),
     input.estado,
-    roundMoney(input.horasUsoAcumuladas),
-    roundMoney(input.costeHora),
+    horasUsoAcumuladas,
+    costeHora,
     input.ubicacion?.trim() || null,
     nowIso(),
     input.id,
