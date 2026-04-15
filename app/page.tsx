@@ -93,7 +93,12 @@ function dateLabel(value: string) {
 }
 
 function toPlainData<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
+  try {
+    return structuredClone(value);
+  } catch {
+    const serialized = JSON.stringify(value);
+    return (serialized ? JSON.parse(serialized) : value) as T;
+  }
 }
 
 type Snapshot = Awaited<ReturnType<typeof getAppSnapshot>>;

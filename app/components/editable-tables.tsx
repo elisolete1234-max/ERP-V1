@@ -933,13 +933,23 @@ export function ProductsInlineTable({
   return (
     <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Producto</th><th>Material</th><th>Costes</th><th>PVP</th></tr>
+        <tr>
+          <th>Acciones</th>
+          <th>ID</th>
+          <th>Producto</th>
+          <th>Material</th>
+          <th>Costes</th>
+          <th>PVP</th>
+        </tr>
       </thead>
       <tbody>
         {products.map((product) => {
           const editing = editingId === product.id;
           const formId = `product-form-${product.id}`;
-          const availableMaterials = materials.filter((material) => material.activo || material.id === product.material_id);
+          const availableMaterials = materials.filter(
+            (material) => material.activo || material.id === product.material_id,
+          );
+
           return (
             <tr key={product.id}>
               <td>
@@ -953,67 +963,271 @@ export function ProductsInlineTable({
                   formId={formId}
                 />
               </td>
+
               <td>{product.codigo}</td>
+
               <td>
                 {editing ? (
                   <div className="table-edit-stack table-cell-edit--wide">
-                    <input form={formId} name="nombre" defaultValue={product.nombre} className={tableInputClass} />
-                    <textarea form={formId} name="descripcion" defaultValue={product.descripcion ?? ""} rows={2} className={tableTextareaClass} />
-                    <input form={formId} name="enlaceModelo" defaultValue={product.enlace_modelo ?? ""} className={tableInputClass} />
-                    <label className="flex items-center gap-2 text-sm">
-                      <input form={formId} type="checkbox" name="activo" defaultChecked={product.activo} />
-                      Activo
-                    </label>
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                        Datos básicos
+                      </p>
+
+                      <div className="table-edit-stack">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Nombre del producto
+                          </label>
+                          <input
+                            form={formId}
+                            name="nombre"
+                            defaultValue={product.nombre}
+                            className={tableInputClass}
+                            placeholder="Ej: Figura decorativa"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Descripción
+                          </label>
+                          <textarea
+                            form={formId}
+                            name="descripcion"
+                            defaultValue={product.descripcion ?? ""}
+                            rows={2}
+                            className={tableTextareaClass}
+                            placeholder="Descripción breve del producto"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Enlace del modelo
+                          </label>
+                          <input
+                            form={formId}
+                            name="enlaceModelo"
+                            defaultValue={product.enlace_modelo ?? ""}
+                            className={tableInputClass}
+                            placeholder="https://..."
+                          />
+                        </div>
+
+                        <label className="mt-1 flex items-center gap-2 text-sm font-medium text-[color:var(--muted-strong)]">
+                          <input
+                            form={formId}
+                            type="checkbox"
+                            name="activo"
+                            defaultChecked={product.activo}
+                          />
+                          Producto activo
+                        </label>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div>
-                    <div>{product.nombre}</div>
-                    <div className="text-xs text-[color:var(--muted)]">{product.gramos_estimados} g - {product.tiempo_impresion_horas} h</div>
+                    <div className="font-medium">{product.nombre}</div>
+                    <div className="text-xs text-[color:var(--muted)]">
+                      {product.gramos_estimados} g · {product.tiempo_impresion_horas} h
+                    </div>
+                    <div className="mt-2">
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          badgeClasses(product.activo ? "success" : "neutral")
+                        }`}
+                      >
+                        {product.activo ? "Activo" : "Inactivo"}
+                      </span>
+                    </div>
                   </div>
                 )}
               </td>
+
               <td>
                 {editing ? (
-                  <select form={formId} name="materialId" defaultValue={product.material_id} className={tableInputClass}>
-                    {availableMaterials.map((material) => (
-                      <option key={material.id} value={material.id}>
-                        {material.codigo} - {material.nombre} - {material.color}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                      Material base
+                    </p>
+                    <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                      Material
+                    </label>
+                    <select
+                      form={formId}
+                      name="materialId"
+                      defaultValue={product.material_id}
+                      className={tableInputClass}
+                    >
+                      {availableMaterials.map((material) => (
+                        <option key={material.id} value={material.id}>
+                          {material.codigo} - {material.nombre} - {material.color}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 ) : (
                   product.material_nombre
                 )}
               </td>
+
               <td>
                 {editing ? (
                   <div className="table-edit-stack table-cell-edit">
-                    <div className="table-edit-grid-2">
-                      <input form={formId} name="gramosEstimados" type="number" min="1" defaultValue={product.gramos_estimados} className={tableInputClass} placeholder="Gramos" />
-                      <input form={formId} name="tiempoImpresionHoras" type="number" min="0.1" step="0.1" defaultValue={product.tiempo_impresion_horas} className={tableInputClass} placeholder="Tiempo impresion" />
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                        Producción
+                      </p>
+
+                      <div className="table-edit-grid-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Gramos estimados
+                          </label>
+                          <input
+                            form={formId}
+                            name="gramosEstimados"
+                            type="number"
+                            min="1"
+                            defaultValue={product.gramos_estimados}
+                            className={tableInputClass}
+                            placeholder="120"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Tiempo impresión (h)
+                          </label>
+                          <input
+                            form={formId}
+                            name="tiempoImpresionHoras"
+                            type="number"
+                            min="0.1"
+                            step="0.1"
+                            defaultValue={product.tiempo_impresion_horas}
+                            className={tableInputClass}
+                            placeholder="3.5"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-3 table-edit-grid-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Coste electricidad
+                          </label>
+                          <input
+                            form={formId}
+                            name="costeElectricidad"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            defaultValue={product.coste_electricidad}
+                            className={tableInputClass}
+                            placeholder="0.50"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Coste máquina
+                          </label>
+                          <input
+                            form={formId}
+                            name="costeMaquina"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            defaultValue={product.coste_maquina}
+                            className={tableInputClass}
+                            placeholder="1.20"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-3 table-edit-grid-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Coste mano de obra
+                          </label>
+                          <input
+                            form={formId}
+                            name="costeManoObra"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            defaultValue={product.coste_mano_obra}
+                            className={tableInputClass}
+                            placeholder="2.00"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Coste postprocesado
+                          </label>
+                          <input
+                            form={formId}
+                            name="costePostprocesado"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            defaultValue={product.coste_postprocesado}
+                            className={tableInputClass}
+                            placeholder="1.00"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-3">
+                        <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                          Margen
+                        </label>
+                        <input
+                          form={formId}
+                          name="margen"
+                          type="number"
+                          step="0.01"
+                          defaultValue={product.margen}
+                          className={tableInputClass}
+                          placeholder="2.20"
+                        />
+                      </div>
                     </div>
-                    <div className="table-edit-grid-2">
-                      <input form={formId} name="costeElectricidad" type="number" min="0" step="0.01" defaultValue={product.coste_electricidad} className={tableInputClass} placeholder="Coste electricidad" />
-                      <input form={formId} name="costeMaquina" type="number" min="0" step="0.01" defaultValue={product.coste_maquina} className={tableInputClass} placeholder="Coste maquina" />
-                    </div>
-                    <div className="table-edit-grid-2">
-                      <input form={formId} name="costeManoObra" type="number" min="0" step="0.01" defaultValue={product.coste_mano_obra} className={tableInputClass} placeholder="Coste mano de obra" />
-                      <input form={formId} name="costePostprocesado" type="number" min="0" step="0.01" defaultValue={product.coste_postprocesado} className={tableInputClass} placeholder="Coste postprocesado" />
-                    </div>
-                    <input form={formId} name="margen" type="number" step="0.01" defaultValue={product.margen} className={tableInputClass} placeholder="Margen" />
                   </div>
                 ) : (
                   <div>
                     <div>Receta: {formatCurrency(product.coste_total_producto)}</div>
                     <div className="text-xs text-[color:var(--muted)]">
-                      Material {formatCurrency(product.coste_material_estimado)} · Maquina {formatCurrency(product.coste_maquina)}
+                      Material {formatCurrency(product.coste_material_estimado)} · Máquina {formatCurrency(product.coste_maquina)}
                     </div>
                   </div>
                 )}
               </td>
+
               <td>
                 {editing ? (
-                  <input form={formId} name="pvp" type="number" min="0.01" step="0.01" defaultValue={product.pvp} className={tableInputClass} />
+                  <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                      Venta
+                    </p>
+                    <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                      PVP
+                    </label>
+                    <input
+                      form={formId}
+                      name="pvp"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      defaultValue={product.pvp}
+                      className={tableInputClass}
+                      placeholder="15.00"
+                    />
+                  </div>
                 ) : (
                   formatCurrency(product.pvp)
                 )}
