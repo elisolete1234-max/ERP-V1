@@ -250,14 +250,19 @@ export default async function Home({
       ? manufacturingOrders
       : manufacturingOrders.filter((order) => order.estado === manufacturingFilter);
   const filteredMaterials =
-    materialFilter === "LOW" ? materials.filter((material) => material.stock_actual_g <= material.stock_minimo_g) : materials;
+    materialFilter === "ACTIVE"
+      ? materials.filter((material) => material.activo)
+      : materialFilter === "INACTIVE"
+        ? materials.filter((material) => !material.activo)
+        : materials;
   const filteredPrinters = printerFilter === "ALL" ? printers : printers.filter((printer) => printer.estado === printerFilter);
   const filteredInventoryMovements =
     movementFilter === "ALL"
       ? inventoryMovements
       : inventoryMovements.filter((movement) => movement.inventario_tipo === movementFilter);
 
-  const lowStockMaterials = materials.filter((material) => material.stock_actual_g <= material.stock_minimo_g);
+  const activeMaterials = materials.filter((material) => material.activo);
+  const lowStockMaterials = activeMaterials.filter((material) => material.stock_actual_g <= material.stock_minimo_g);
   const finishedUnits = finishedInventory.reduce((sum, item) => sum + item.cantidad_disponible, 0);
   const finishedStockValue = finishedInventory.reduce(
     (sum, item) => sum + item.cantidad_disponible * item.coste_unitario,
@@ -265,7 +270,7 @@ export default async function Home({
   );
   const openOrders = orders.filter((order) => order.estado !== "FACTURADO").length;
   const pendingManufacturing = manufacturingOrders.filter((order) => order.estado !== "COMPLETADA").length;
-  const pendingInvoices = invoices.filter((invoice) => invoice.estado_pago === "PENDIENTE").length;
+  const pendingInvoices = invoices.filter((invoice) => invoice.estado_pago !== "PAGADA").length;
   const readyToDeliver = orders.filter((order) => order.estado === "LISTO").length;
   const readyToInvoice = orders.filter((order) => order.estado === "ENTREGADO").length;
   const busyPrinters = printers.filter((printer) => printer.estado === "IMPRIMIENDO").length;
@@ -826,7 +831,7 @@ export default async function Home({
                   </div>
                   <select name="materialId" className="input" defaultValue="">
                     <option value="">Material</option>
-                    {materials.map((material) => (
+                    {activeMaterials.map((material) => (
                       <option key={material.id} value={material.id}>
                         {material.codigo} · {material.nombre} · {material.color}
                       </option>
@@ -1024,7 +1029,7 @@ export default async function Home({
                 <input name="enlaceModelo" placeholder="Enlace del modelo" className="input" />
                 <select name="materialId" className="input" defaultValue="">
                   <option value="">Material principal</option>
-                  {materials.map((material) => (
+                  {activeMaterials.map((material) => (
                     <option key={material.id} value={material.id}>
                       {material.codigo} · {material.nombre} · {material.color}
                     </option>
@@ -1059,6 +1064,7 @@ export default async function Home({
                       codigo: material.codigo,
                       nombre: material.nombre,
                       color: material.color,
+                      activo: material.activo,
                     }))}
                   />
                 </div>
@@ -1116,17 +1122,23 @@ export default async function Home({
                   <div>
                     <h3 className="text-xl font-semibold">Stock y alertas</h3>
                     <p className="mt-1 text-sm text-[color:var(--muted)]">
-                      Filtra materiales bajo minimo para detectar antes los cuellos de botella.
+                      Gestiona altas y bajas sin perder historico. Los materiales inactivos dejan de aparecer en formularios normales.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {["ALL", "LOW"].map((status) => (
+                    {["ALL", "ACTIVE", "INACTIVE"].map((status) => (
                       <FilterLink
                         key={status}
                         href={`/?section=materiales&materialFilter=${status}`}
-                        label={status === "ALL" ? "todos" : "stock bajo"}
+                        label={status === "ALL" ? "todos" : status === "ACTIVE" ? "activos" : "inactivos"}
                         active={materialFilter === status}
-                        count={status === "ALL" ? materials.length : lowStockMaterials.length}
+                        count={
+                          status === "ALL"
+                            ? materials.length
+                            : status === "ACTIVE"
+                              ? activeMaterials.length
+                              : materials.filter((material) => !material.activo).length
+                        }
                       />
                     ))}
                   </div>

@@ -9,6 +9,7 @@ type LineInput = {
 
 type PrinterState = "LIBRE" | "IMPRIMIENDO" | "MANTENIMIENTO";
 type InventoryMovementType = "ENTRADA" | "SALIDA" | "AJUSTE";
+type PaymentMethod = "EFECTIVO" | "TRANSFERENCIA" | "TARJETA" | "BIZUM" | "PAYPAL" | "OTRO";
 
 export const DEFAULT_VAT_RATE = 21;
 
@@ -253,6 +254,59 @@ async function registerOrderHistory(pedidoId: string, estado: string, nota: stri
   );
 }
 
+function normalizePaymentMethod(method: string): PaymentMethod {
+  const normalized = method.trim().toUpperCase() as PaymentMethod;
+  if (!["EFECTIVO", "TRANSFERENCIA", "TARJETA", "BIZUM", "PAYPAL", "OTRO"].includes(normalized)) {
+    throw new Error("Metodo de pago no valido.");
+  }
+  return normalized;
+}
+
+async function syncInvoicePaymentSummary(invoiceId: string) {
+  const invoice = await row<{
+    id: string;
+    pedido_id: string;
+    total: number;
+  }>(`SELECT id, pedido_id, total FROM invoices WHERE id = ?`, invoiceId);
+
+  if (!invoice) {
+    throw new Error("La factura no existe.");
+  }
+
+  const totals = await row<{ total_pagado: number }>(
+    `SELECT COALESCE(SUM(importe), 0) AS total_pagado FROM invoice_payments WHERE factura_id = ?`,
+    invoiceId,
+  );
+
+  const totalPagado = roundMoney(totals?.total_pagado ?? 0);
+  const importePendiente = roundMoney(Math.max(invoice.total - totalPagado, 0));
+  const estadoPago =
+    totalPagado <= 0 ? "PENDIENTE" : totalPagado < invoice.total ? "PARCIAL" : "PAGADA";
+
+  await run(
+    `UPDATE invoices
+     SET total_pagado = ?, importe_pendiente = ?, estado_pago = ?
+     WHERE id = ?`,
+    totalPagado,
+    importePendiente,
+    estadoPago,
+    invoiceId,
+  );
+  await run(
+    `UPDATE orders
+     SET estado_pago = ?
+     WHERE id = ?`,
+    estadoPago,
+    invoice.pedido_id,
+  );
+
+  return {
+    totalPagado,
+    importePendiente,
+    estadoPago,
+  };
+}
+
 async function registerInventoryMovement(input: {
   inventarioTipo: "MATERIAL" | "PRODUCTO_TERMINADO";
   itemId: string;
@@ -288,7 +342,8 @@ async function getMaterialInventoryOrThrow(materialId: string) {
     id: string;
     codigo: string;
     stock_actual_g: number;
-  }>(`SELECT id, codigo, stock_actual_g FROM materials WHERE id = ?`, materialId);
+    activo: number;
+  }>(`SELECT id, codigo, stock_actual_g, activo FROM materials WHERE id = ?`, materialId);
 
   if (!material) {
     throw new Error("El material no existe.");
@@ -307,6 +362,24 @@ async function getMaterialInventoryOrThrow(materialId: string) {
   }
 
   return { ...material, stock_actual_g: computedStock };
+}
+
+async function getMaterialStatusOrThrow(materialId: string) {
+  const material = await row<{
+    id: string;
+    codigo: string;
+    nombre: string;
+    activo: number;
+  }>(`SELECT id, codigo, nombre, activo FROM materials WHERE id = ?`, materialId);
+
+  if (!material) {
+    throw new Error("El material no existe.");
+  }
+
+  return {
+    ...material,
+    activo: Boolean(material.activo),
+  };
 }
 
 async function applyMaterialInventoryMovement(input: {
@@ -580,7 +653,7 @@ export async function getAppSnapshot() {
     fecha_creacion: string;
   }>(`SELECT * FROM customers ORDER BY fecha_creacion DESC`);
 
-  const materials = await rows<{
+  const materialsBase = await rows<{
     id: string;
     codigo: string;
     nombre: string;
@@ -600,8 +673,13 @@ export async function getAppSnapshot() {
     stock_minimo_g: number;
     proveedor: string | null;
     notas: string | null;
+    activo: number;
     fecha_actualizacion: string;
   }>(`SELECT * FROM materials ORDER BY nombre ASC`);
+  const materials = materialsBase.map((material) => ({
+    ...material,
+    activo: Boolean(material.activo),
+  }));
 
   const productsBase = await rows<{
     id: string;
@@ -785,7 +863,7 @@ export async function getAppSnapshot() {
      ORDER BY sm.fecha DESC`,
   );
 
-  const invoices = await rows<{
+  const invoicesBase = await rows<{
     id: string;
     codigo: string;
     pedido_id: string;
@@ -794,6 +872,8 @@ export async function getAppSnapshot() {
     subtotal: number;
     iva: number;
     total: number;
+    total_pagado: number;
+    importe_pendiente: number;
     estado_pago: string;
     pedido_codigo: string;
     cliente_nombre: string;
@@ -806,6 +886,24 @@ export async function getAppSnapshot() {
      JOIN orders o ON o.id = i.pedido_id
      JOIN customers c ON c.id = i.cliente_id
      ORDER BY i.fecha DESC`,
+  );
+
+  const invoices = await Promise.all(
+    invoicesBase.map(async (invoice) => ({
+      ...invoice,
+      pagos: await rows<{
+        id: string;
+        codigo: string;
+        factura_id: string;
+        fecha_pago: string;
+        metodo_pago: string;
+        importe: number;
+        notas: string | null;
+      }>(
+        `SELECT * FROM invoice_payments WHERE factura_id = ? ORDER BY fecha_pago DESC, codigo DESC`,
+        invoice.id,
+      ),
+    })),
   );
 
   const finishedInventory = await rows<{
@@ -885,6 +983,7 @@ export async function resetDatabase() {
     await run("DELETE FROM demo_scenario_results");
     await run("DELETE FROM demo_runs");
     await run("DELETE FROM inventory_movements");
+    await run("DELETE FROM invoice_payments");
     await run("DELETE FROM order_status_history");
     await run("DELETE FROM invoices");
     await run("DELETE FROM stock_movements");
@@ -991,8 +1090,8 @@ export async function createMaterialRecord(input: {
   await transaction(async () => {
     await run(
       `INSERT INTO materials
-        (id, codigo, nombre, marca, tipo, color, tipo_color, efecto, color_base, nombre_comercial, diametro_mm, peso_spool_g, temp_extrusor, temp_cama, precio_kg, stock_actual_g, stock_minimo_g, proveedor, notas, fecha_actualizacion)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, codigo, nombre, marca, tipo, color, tipo_color, efecto, color_base, nombre_comercial, diametro_mm, peso_spool_g, temp_extrusor, temp_cama, precio_kg, stock_actual_g, stock_minimo_g, proveedor, notas, activo, fecha_actualizacion)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       materialId,
       await nextCode("materials", "MAT-"),
       nombre,
@@ -1012,6 +1111,7 @@ export async function createMaterialRecord(input: {
       stockMinimoG,
       input.proveedor?.trim() || null,
       input.notas?.trim() || null,
+      1,
       nowIso(),
     );
 
@@ -1068,7 +1168,10 @@ export async function updateMaterialRecord(input: {
     throw new Error("No se permiten importes ni stock minimo negativos.");
   }
 
-  const current = await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, input.id);
+  const current = await row<{ stock_actual_g: number; activo: number }>(
+    `SELECT stock_actual_g, activo FROM materials WHERE id = ?`,
+    input.id,
+  );
   if (!current) {
     throw new Error("El material no existe.");
   }
@@ -1100,6 +1203,54 @@ export async function updateMaterialRecord(input: {
     nowIso(),
     input.id,
   );
+}
+
+export async function setMaterialActiveState(materialId: string, active: boolean) {
+  const material = await getMaterialStatusOrThrow(materialId);
+
+  if (material.activo === active) {
+    return;
+  }
+
+  await run(
+    `UPDATE materials
+     SET activo = ?, fecha_actualizacion = ?
+     WHERE id = ?`,
+    active ? 1 : 0,
+    nowIso(),
+    materialId,
+  );
+}
+
+export async function deleteMaterialRecord(materialId: string) {
+  const material = await getMaterialStatusOrThrow(materialId);
+
+  if (material.activo) {
+    throw new Error("Primero debes dar de baja el material antes de eliminarlo definitivamente.");
+  }
+
+  const productCount = (await row<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM products WHERE material_id = ?`,
+    materialId,
+  ))?.total ?? 0;
+  const movementCount = (await row<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM stock_movements WHERE material_id = ?`,
+    materialId,
+  ))?.total ?? 0;
+
+  const blockingReasons: string[] = [];
+  if (productCount > 0) {
+    blockingReasons.push(`tiene ${productCount} producto(s) asociado(s)`);
+  }
+  if (movementCount > 0) {
+    blockingReasons.push(`tiene ${movementCount} movimiento(s) de stock`);
+  }
+
+  if (blockingReasons.length > 0) {
+    throw new Error(`No se puede eliminar el material porque ${blockingReasons.join(" y ")}.`);
+  }
+
+  await run(`DELETE FROM materials WHERE id = ?`, materialId);
 }
 
 export async function createProductRecord(input: {
@@ -1141,9 +1292,15 @@ export async function createProductRecord(input: {
     throw new Error("Revisa el producto: tiempo, PVP y costes deben ser validos.");
   }
 
-  const material = await row(`SELECT id FROM materials WHERE id = ?`, input.materialId);
+  const material = await row<{ id: string; activo: number }>(
+    `SELECT id, activo FROM materials WHERE id = ?`,
+    input.materialId,
+  );
   if (!material) {
     throw new Error("El material principal no existe.");
+  }
+  if (!material.activo) {
+    throw new Error("No se puede crear un producto nuevo con un material inactivo.");
   }
 
   const productId = randomUUID();
@@ -1217,9 +1374,23 @@ export async function updateProductRecord(input: {
     throw new Error("Revisa el producto: tiempo, PVP y costes deben ser validos.");
   }
 
-  const material = await row(`SELECT id FROM materials WHERE id = ?`, input.materialId);
+  const currentProduct = await row<{ material_id: string }>(
+    `SELECT material_id FROM products WHERE id = ?`,
+    input.id,
+  );
+  if (!currentProduct) {
+    throw new Error("El producto no existe.");
+  }
+
+  const material = await row<{ id: string; activo: number }>(
+    `SELECT id, activo FROM materials WHERE id = ?`,
+    input.materialId,
+  );
   if (!material) {
     throw new Error("El material principal no existe.");
+  }
+  if (!material.activo && currentProduct.material_id !== input.materialId) {
+    throw new Error("No se puede asignar un material inactivo a nuevos usos.");
   }
 
   await transaction(async () => {
@@ -1398,18 +1569,111 @@ export async function updateInvoiceRecord(input: {
   if (!input.id) {
     throw new Error("La factura necesita ID.");
   }
-  if (!["PENDIENTE", "PAGADA"].includes(input.estadoPago)) {
+  if (!["PENDIENTE", "PARCIAL", "PAGADA"].includes(input.estadoPago)) {
     throw new Error("Estado de pago no valido.");
   }
 
-  const invoice = await row<{ pedido_id: string }>(`SELECT pedido_id FROM invoices WHERE id = ?`, input.id);
+  const invoice = await row<{
+    id: string;
+    total: number;
+    total_pagado: number;
+    importe_pendiente: number;
+  }>(`SELECT id, total, total_pagado, importe_pendiente FROM invoices WHERE id = ?`, input.id);
   if (!invoice) {
     throw new Error("La factura no existe.");
   }
 
+  if (input.estadoPago === "PENDIENTE") {
+    const paymentCount = await row<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM invoice_payments WHERE factura_id = ?`,
+      input.id,
+    );
+    if ((paymentCount?.total ?? 0) > 0) {
+      throw new Error("No se puede forzar una factura a pendiente si ya tiene pagos registrados.");
+    }
+    await syncInvoicePaymentSummary(input.id);
+    return;
+  }
+
+  if (input.estadoPago === "PARCIAL") {
+    throw new Error("El estado parcial se calcula automaticamente a partir de los pagos.");
+  }
+
+  if (invoice.importe_pendiente <= 0) {
+    await syncInvoicePaymentSummary(input.id);
+    return;
+  }
+
   await transaction(async () => {
-    await run(`UPDATE invoices SET estado_pago = ? WHERE id = ?`, input.estadoPago, input.id);
-    await run(`UPDATE orders SET estado_pago = ? WHERE id = ?`, input.estadoPago, invoice.pedido_id);
+    await run(
+      `INSERT INTO invoice_payments
+        (id, codigo, factura_id, fecha_pago, metodo_pago, importe, notas)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      randomUUID(),
+      await nextCode("invoice_payments", "PAG-"),
+      input.id,
+      nowIso(),
+      "OTRO",
+      invoice.importe_pendiente,
+      "Regularizacion manual desde edicion de factura",
+    );
+    await syncInvoicePaymentSummary(input.id);
+  });
+}
+
+export async function createInvoicePaymentRecord(input: {
+  facturaId: string;
+  fechaPago?: string;
+  metodoPago: string;
+  importe: number;
+  notas?: string;
+}) {
+  if (!input.facturaId) {
+    throw new Error("Debes indicar la factura.");
+  }
+  if (!Number.isFinite(input.importe) || input.importe <= 0) {
+    throw new Error("El importe del pago debe ser mayor que cero.");
+  }
+
+  const invoice = await row<{
+    id: string;
+    total: number;
+    total_pagado: number;
+    importe_pendiente: number;
+  }>(
+    `SELECT id, total, total_pagado, importe_pendiente FROM invoices WHERE id = ?`,
+    input.facturaId,
+  );
+
+  if (!invoice) {
+    throw new Error("La factura no existe.");
+  }
+
+  const metodoPago = normalizePaymentMethod(input.metodoPago);
+  const fechaPago = input.fechaPago?.trim() ? new Date(input.fechaPago) : new Date();
+  if (Number.isNaN(fechaPago.getTime())) {
+    throw new Error("La fecha de pago no es valida.");
+  }
+
+  const importe = roundMoney(input.importe);
+  if (roundMoney(invoice.total_pagado + importe) > roundMoney(invoice.total)) {
+    throw new Error("El pago supera el importe pendiente de la factura.");
+  }
+
+  await transaction(async () => {
+    await run(
+      `INSERT INTO invoice_payments
+        (id, codigo, factura_id, fecha_pago, metodo_pago, importe, notas)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      randomUUID(),
+      await nextCode("invoice_payments", "PAG-"),
+      input.facturaId,
+      fechaPago.toISOString(),
+      metodoPago,
+      importe,
+      input.notas?.trim() || null,
+    );
+    await syncInvoicePaymentSummary(input.facturaId);
   });
 }
 
@@ -2179,6 +2443,11 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
 
 export async function restockMaterial(materialId: string, quantityG: number, reason: string) {
   const parsedQuantity = requirePositiveInteger(quantityG, "La reposicion debe ser mayor que cero.");
+  const material = await getMaterialStatusOrThrow(materialId);
+
+  if (!material.activo) {
+    throw new Error("El material esta inactivo. Reactivalo antes de registrar una reposicion.");
+  }
 
   await transaction(async () => {
     await applyMaterialInventoryMovement({
@@ -2242,8 +2511,8 @@ export async function generateInvoiceForOrder(orderId: string) {
     const codigo = await nextCode("invoices", "FAC-");
     await run(
       `INSERT INTO invoices
-        (id, codigo, pedido_id, cliente_id, fecha, subtotal, iva, total, estado_pago)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, codigo, pedido_id, cliente_id, fecha, subtotal, iva, total, total_pagado, importe_pendiente, estado_pago)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       randomUUID(),
       codigo,
       order.id,
@@ -2251,6 +2520,8 @@ export async function generateInvoiceForOrder(orderId: string) {
       nowIso(),
       order.subtotal,
       order.iva,
+      order.total,
+      0,
       order.total,
       "PENDIENTE",
     );

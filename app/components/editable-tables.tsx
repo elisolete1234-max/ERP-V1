@@ -4,13 +4,15 @@ import { useState } from "react";
 import {
   completeManufacturingAction,
   confirmOrderAction,
+  deleteMaterialAction,
   deliverOrderAction,
   generateInvoiceAction,
+  registerInvoicePaymentAction,
   startManufacturingAction,
   retryOrderAction,
+  toggleMaterialActiveAction,
   updateFinishedInventoryAction,
   updateCustomerAction,
-  updateInvoiceAction,
   updateManufacturingAction,
   updateMaterialAction,
   updateOrderAction,
@@ -49,6 +51,7 @@ type Material = {
   stock_minimo_g: number;
   proveedor: string | null;
   notas: string | null;
+  activo: boolean;
   fecha_actualizacion: string;
 };
 
@@ -103,9 +106,20 @@ type Invoice = {
   subtotal: number;
   iva: number;
   total: number;
+  total_pagado: number;
+  importe_pendiente: number;
   estado_pago: string;
   pedido_codigo: string;
   cliente_nombre: string;
+  pagos: Array<{
+    id: string;
+    codigo: string;
+    factura_id: string;
+    fecha_pago: string;
+    metodo_pago: string;
+    importe: number;
+    notas: string | null;
+  }>;
 };
 
 type FinishedInventory = {
@@ -141,6 +155,7 @@ type MaterialOption = {
   codigo: string;
   nombre: string;
   color: string;
+  activo: boolean;
 };
 
 type ProductOption = {
@@ -230,6 +245,12 @@ function orderTone(status: string) {
   return "warn";
 }
 
+function paymentTone(status: string) {
+  if (status === "PAGADA") return "success";
+  if (status === "PARCIAL") return "info";
+  return "warn";
+}
+
 function rowHighlight(level?: "danger" | "warn" | "attention" | null) {
   if (level === "danger") return "row-danger";
   if (level === "warn") return "row-warn";
@@ -308,6 +329,51 @@ function InvoiceIcon() {
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
       <path d="M6 3.5h8v13l-2-1.2-2 1.2-2-1.2-2 1.2v-13Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
       <path d="M7.7 7h4.6M7.7 10h4.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M2.8 10s2.6-4.2 7.2-4.2 7.2 4.2 7.2 4.2-2.6 4.2-7.2 4.2S2.8 10 2.8 10Z" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="10" cy="10" r="2.2" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function PaymentIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M4 5.5h12v9H4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M4 8.2h12M10 10v3.2M8.5 11.4h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ArchiveIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M4.2 5.4h11.6v2.5H4.2zM5.4 7.9h9.2v6.7H5.4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M8 10h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function RestoreIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M5.2 8.2A5.5 5.5 0 1 1 10 15.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M5.1 4.8v3.7h3.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M5.8 6.4h8.4l-.7 8.5H6.5l-.7-8.5ZM7.5 4.7h5M4.8 4.7h10.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8.5 8.6v3.6M11.5 8.6v3.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }
@@ -687,27 +753,60 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
         {materials.map((material) => {
           const editing = editingId === material.id;
           const formId = `material-form-${material.id}`;
+          const stockTone =
+            material.stock_actual_g === 0
+              ? "danger"
+              : material.stock_actual_g <= material.stock_minimo_g
+                ? "warn"
+                : null;
           return (
             <tr
               key={material.id}
               className={rowHighlight(
-                material.stock_actual_g === 0
-                  ? "danger"
-                  : material.stock_actual_g <= material.stock_minimo_g
-                    ? "warn"
-                    : null,
+                !material.activo
+                  ? "attention"
+                  : stockTone,
               )}
             >
               <td>
                 <form id={formId} action={updateMaterialAction}>
                   <input type="hidden" name="id" value={material.id} />
                 </form>
-                <ActionButtons
-                  editing={editing}
-                  onEdit={() => setEditingId(material.id)}
-                  onCancel={() => setEditingId(null)}
-                  formId={formId}
-                />
+                <div className="table-action-group">
+                  <ActionButtons
+                    editing={editing}
+                    onEdit={() => setEditingId(material.id)}
+                    onCancel={() => setEditingId(null)}
+                    formId={formId}
+                  />
+                  {!editing ? (
+                    <form action={toggleMaterialActiveAction}>
+                      <input type="hidden" name="id" value={material.id} />
+                      <input type="hidden" name="active" value={material.activo ? "false" : "true"} />
+                      <SubmitButton
+                        variant={material.activo ? "icon-soft" : "icon-dark"}
+                        pendingText={<SpinnerIcon />}
+                        title={material.activo ? "Dar de baja" : "Reactivar"}
+                        aria-label={material.activo ? "Dar de baja" : "Reactivar"}
+                      >
+                        {material.activo ? <ArchiveIcon /> : <RestoreIcon />}
+                      </SubmitButton>
+                    </form>
+                  ) : null}
+                  {!editing && !material.activo ? (
+                    <form action={deleteMaterialAction}>
+                      <input type="hidden" name="id" value={material.id} />
+                      <SubmitButton
+                        variant="icon-danger"
+                        pendingText={<SpinnerIcon />}
+                        title="Eliminar definitivamente"
+                        aria-label="Eliminar definitivamente"
+                      >
+                        <TrashIcon />
+                      </SubmitButton>
+                    </form>
+                  ) : null}
+                </div>
               </td>
               <td>{material.codigo}</td>
               <td>
@@ -763,6 +862,11 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
                           .join(" · ")}
                       </div>
                     ) : null}
+                    <div className="mt-2">
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(material.activo ? "success" : "neutral")}`}>
+                        {material.activo ? "Activo" : "Inactivo"}
+                      </span>
+                    </div>
                   </div>
                 )}
               </td>
@@ -790,15 +894,24 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
                 )}
               </td>
               <td>
-                <span
-                  className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                    material.stock_actual_g <= material.stock_minimo_g
-                      ? badgeClasses("warn")
-                      : badgeClasses("success")
-                  }`}
-                >
-                  {material.stock_actual_g <= material.stock_minimo_g ? "Bajo minimo" : "OK"}
-                </span>
+                <div className="flex flex-wrap gap-2">
+                  <span
+                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      stockTone === "danger"
+                        ? badgeClasses("danger")
+                        : stockTone === "warn"
+                          ? badgeClasses("warn")
+                          : badgeClasses("success")
+                    }`}
+                  >
+                    {stockTone === "danger" ? "Sin stock" : stockTone === "warn" ? "Bajo minimo" : "OK"}
+                  </span>
+                  {!material.activo ? (
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("neutral")}`}>
+                      Baja aplicada
+                    </span>
+                  ) : null}
+                </div>
               </td>
             </tr>
           );
@@ -826,6 +939,7 @@ export function ProductsInlineTable({
         {products.map((product) => {
           const editing = editingId === product.id;
           const formId = `product-form-${product.id}`;
+          const availableMaterials = materials.filter((material) => material.activo || material.id === product.material_id);
           return (
             <tr key={product.id}>
               <td>
@@ -861,7 +975,7 @@ export function ProductsInlineTable({
               <td>
                 {editing ? (
                   <select form={formId} name="materialId" defaultValue={product.material_id} className={tableInputClass}>
-                    {materials.map((material) => (
+                    {availableMaterials.map((material) => (
                       <option key={material.id} value={material.id}>
                         {material.codigo} - {material.nombre} - {material.color}
                       </option>
@@ -1036,50 +1150,214 @@ export function InvoicesInlineTable({
 }: {
   invoices: Invoice[];
 }) {
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [paymentId, setPaymentId] = useState<string | null>(null);
 
   return (
     <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>Factura</th><th>Pedido</th><th>Cliente</th><th>Subtotal</th><th>IVA</th><th>Total</th><th>Pago</th></tr>
+        <tr>
+          <th>Acciones</th>
+          <th>Factura</th>
+          <th>Pedido</th>
+          <th>Cliente</th>
+          <th>Subtotal</th>
+          <th>IVA</th>
+          <th>Total</th>
+          <th>Pagado</th>
+          <th>Pendiente</th>
+          <th>Pago</th>
+        </tr>
       </thead>
       <tbody>
         {invoices.map((invoice) => {
-          const editing = editingId === invoice.id;
-          const formId = `invoice-form-${invoice.id}`;
-          return (
-            <tr key={invoice.id} className={rowHighlight(invoice.estado_pago === "PENDIENTE" ? "attention" : null)}>
-              <td>
-                <form id={formId} action={updateInvoiceAction}>
-                  <input type="hidden" name="id" value={invoice.id} />
-                </form>
-                <ActionButtons
-                  editing={editing}
-                  onEdit={() => setEditingId(invoice.id)}
-                  onCancel={() => setEditingId(null)}
-                  formId={formId}
-                />
-              </td>
-              <td>{invoice.codigo}</td>
-              <td>{invoice.pedido_codigo}</td>
-              <td>{invoice.cliente_nombre}</td>
-              <td>{formatCurrency(invoice.subtotal)}</td>
-              <td>{formatCurrency(invoice.iva)}</td>
-              <td>{formatCurrency(invoice.total)}</td>
-              <td>
-                {editing ? (
-                  <select form={formId} name="estadoPago" defaultValue={invoice.estado_pago} className={tableInputClass}>
-                    <option value="PENDIENTE">pendiente</option>
-                    <option value="PAGADA">pagada</option>
-                  </select>
-                ) : (
-                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(invoice.estado_pago === "PAGADA" ? "success" : "warn")}`}>
+          const expanded = detailId === invoice.id;
+          const registeringPayment = paymentId === invoice.id;
+          const pendingAmount = Math.max(invoice.importe_pendiente, 0);
+          const canRegisterPayment = pendingAmount > 0;
+          const highlight =
+            invoice.estado_pago === "PENDIENTE"
+              ? "warn"
+              : invoice.estado_pago === "PARCIAL"
+                ? "attention"
+                : null;
+
+          return [
+              <tr key={`invoice-${invoice.id}`} className={rowHighlight(highlight)}>
+                <td>
+                  <div className="table-action-group">
+                    <button
+                      type="button"
+                      title={expanded ? "Ocultar detalle" : "Ver detalle"}
+                      aria-label={expanded ? "Ocultar detalle" : "Ver detalle"}
+                      className="icon-action-button icon-action-button--soft"
+                      onClick={() => {
+                        const nextOpen = detailId === invoice.id ? null : invoice.id;
+                        setDetailId(nextOpen);
+                        if (nextOpen === null) {
+                          setPaymentId((current) => (current === invoice.id ? null : current));
+                        }
+                      }}
+                    >
+                      <EyeIcon />
+                    </button>
+                    <button
+                      type="button"
+                      title={canRegisterPayment ? "Registrar pago" : "Factura pagada"}
+                      aria-label={canRegisterPayment ? "Registrar pago" : "Factura pagada"}
+                      disabled={!canRegisterPayment}
+                      className={`icon-action-button ${
+                        canRegisterPayment ? "icon-action-button--dark" : "icon-action-button"
+                      }`}
+                      onClick={() => {
+                        if (!canRegisterPayment) return;
+                        const nextOpen = paymentId === invoice.id ? null : invoice.id;
+                        setDetailId(invoice.id);
+                        setPaymentId(nextOpen);
+                      }}
+                    >
+                      <PaymentIcon />
+                    </button>
+                  </div>
+                </td>
+                <td>{invoice.codigo}</td>
+                <td>{invoice.pedido_codigo}</td>
+                <td>{invoice.cliente_nombre}</td>
+                <td>{formatCurrency(invoice.subtotal)}</td>
+                <td>{formatCurrency(invoice.iva)}</td>
+                <td>{formatCurrency(invoice.total)}</td>
+                <td>{formatCurrency(invoice.total_pagado)}</td>
+                <td>{formatCurrency(invoice.importe_pendiente)}</td>
+                <td>
+                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>
                     {invoice.estado_pago.toLowerCase()}
                   </span>
-                )}
-              </td>
-            </tr>
-          );
+                </td>
+              </tr>,
+              expanded ? (
+                <tr key={`invoice-detail-${invoice.id}`} className={rowHighlight(highlight)}>
+                  <td colSpan={10} className="bg-[color:var(--surface-strong)]">
+                    <div className="grid gap-4 px-2 py-4 xl:grid-cols-[1.1fr_0.9fr]">
+                      <div className="panel-muted p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="eyebrow">Trazabilidad de cobro</p>
+                            <h4 className="mt-2 text-base font-semibold text-slate-900">Historial de pagos</h4>
+                          </div>
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>
+                            {invoice.estado_pago.toLowerCase()}
+                          </span>
+                        </div>
+                        <div className="mt-4 space-y-3">
+                          {invoice.pagos.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-black/10 bg-white/75 px-4 py-4 text-sm text-[color:var(--muted)]">
+                              Esta factura aun no tiene pagos registrados.
+                            </div>
+                          ) : (
+                            invoice.pagos.map((payment) => (
+                              <article key={payment.id} className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                  <div>
+                                    <p className="text-sm font-semibold text-slate-900">
+                                      {payment.codigo} · {payment.metodo_pago.toLowerCase()}
+                                    </p>
+                                    <p className="mt-1 text-xs text-[color:var(--muted)]">{formatDate(payment.fecha_pago)}</p>
+                                  </div>
+                                  <p className="text-sm font-semibold text-slate-900">{formatCurrency(payment.importe)}</p>
+                                </div>
+                                {payment.notas ? (
+                                  <p className="mt-2 text-sm text-[color:var(--muted)]">{payment.notas}</p>
+                                ) : null}
+                              </article>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="panel-muted p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="eyebrow">Registrar pago</p>
+                            <h4 className="mt-2 text-base font-semibold text-slate-900">Cobro sobre {invoice.codigo}</h4>
+                          </div>
+                          <div className="text-right text-xs text-[color:var(--muted)]">
+                            <div>Total: {formatCurrency(invoice.total)}</div>
+                            <div>Pendiente: {formatCurrency(invoice.importe_pendiente)}</div>
+                          </div>
+                        </div>
+
+                        {registeringPayment && canRegisterPayment ? (
+                          <form action={registerInvoicePaymentAction} className="mt-4 space-y-3">
+                            <input type="hidden" name="facturaId" value={invoice.id} />
+                            <div className="table-edit-grid-2">
+                              <input
+                                name="importe"
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                max={pendingAmount.toFixed(2)}
+                                defaultValue={pendingAmount.toFixed(2)}
+                                placeholder="Importe"
+                                className={tableInputClass}
+                              />
+                              <select name="metodoPago" defaultValue="TRANSFERENCIA" className={tableInputClass}>
+                                <option value="EFECTIVO">efectivo</option>
+                                <option value="TRANSFERENCIA">transferencia</option>
+                                <option value="TARJETA">tarjeta</option>
+                                <option value="BIZUM">bizum</option>
+                                <option value="PAYPAL">paypal</option>
+                                <option value="OTRO">otro</option>
+                              </select>
+                            </div>
+                            <input
+                              name="fechaPago"
+                              type="date"
+                              defaultValue={new Date().toISOString().slice(0, 10)}
+                              className={tableInputClass}
+                            />
+                            <textarea
+                              name="notas"
+                              rows={2}
+                              placeholder="Notas del pago"
+                              className={tableTextareaClass}
+                            />
+                            <div className="table-action-group">
+                              <SubmitButton variant="chip-dark" pendingText="Guardando...">
+                                Registrar pago
+                              </SubmitButton>
+                              <button
+                                type="button"
+                                onClick={() => setPaymentId(null)}
+                                className="button-secondary"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </form>
+                        ) : (
+                          <div className="mt-4 space-y-3">
+                            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3 text-sm text-[color:var(--muted)]">
+                              {canRegisterPayment
+                                ? "Abre el formulario para registrar un pago parcial o completar el cobro."
+                                : "La factura ya esta totalmente pagada."}
+                            </div>
+                            {canRegisterPayment ? (
+                              <button
+                                type="button"
+                                onClick={() => setPaymentId(invoice.id)}
+                                className="button-secondary"
+                              >
+                                Registrar pago
+                              </button>
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              ) : null,
+            ];
         })}
       </tbody>
     </table>
