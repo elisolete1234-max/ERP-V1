@@ -374,6 +374,10 @@ export default async function Home({
   const activeMaterialFilterSegments: string[] = [
     materialFilter === "ACTIVE" ? "estado: activos" : materialFilter === "INACTIVE" ? "estado: inactivos" : null,
   ].filter((segment): segment is string => Boolean(segment));
+  const hasActivePrinterFilters = printerFilter !== "ALL";
+  const activePrinterFilterSegments: string[] = [
+    hasActivePrinterFilters ? `estado: ${printerStatusLabels[printerFilter]}` : null,
+  ].filter((segment): segment is string => Boolean(segment));
   const activeInvoiceFilterSegments: string[] = [
     hasInvoiceStatusFilter ? `estado: ${invoiceStatusFilterLabel(invoiceFilter)}` : null,
     invoiceDateStart ? `desde: ${invoiceDateStart}` : null,
@@ -1196,6 +1200,13 @@ export default async function Home({
                     ))}
                   </div>
                 </div>
+                <FilterSummary
+                  totalItems={filteredPrinters.length}
+                  hasFilters={hasActivePrinterFilters}
+                  filters={activePrinterFilterSegments}
+                  itemLabel="impresoras"
+                  allItemsText="Mostrando todas las impresoras"
+                />
                 <div className="table-wrap table-scroll">
                   <PrintersInlineTable printers={filteredPrinters} />
                 </div>
