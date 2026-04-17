@@ -366,6 +366,10 @@ export default async function Home({
   const rangedPendingInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PENDIENTE").length;
   const rangedPartialInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PARCIAL").length;
   const rangedPaidInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PAGADA").length;
+  const hasActiveOrderFilters = orderFilter !== "ALL";
+  const activeOrderFilterSegments: string[] = [
+    hasActiveOrderFilters ? `estado: ${orderStatusLabels[orderFilter]}` : null,
+  ].filter((segment): segment is string => Boolean(segment));
   const activeInvoiceFilterSegments: string[] = [
     hasInvoiceStatusFilter ? `estado: ${invoiceStatusFilterLabel(invoiceFilter)}` : null,
     invoiceDateStart ? `desde: ${invoiceDateStart}` : null,
@@ -681,6 +685,13 @@ export default async function Home({
                   </div>
                 </div>
 
+                <FilterSummary
+                  totalItems={filteredOrders.length}
+                  hasFilters={hasActiveOrderFilters}
+                  filters={activeOrderFilterSegments}
+                  itemLabel="pedidos"
+                  allItemsText="Mostrando todos los pedidos"
+                />
                 <div className="list-scroll mt-5">
                   {filteredOrders.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[color:var(--muted)]">

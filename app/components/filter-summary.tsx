@@ -2,14 +2,18 @@ export function FilterSummary({
   totalItems,
   hasFilters,
   filters,
+  itemLabel = "facturas",
+  allItemsText = "Mostrando todas las facturas",
 }: {
   totalItems: number;
   hasFilters: boolean;
   filters: string[];
+  itemLabel?: string;
+  allItemsText?: string;
 }) {
   const summaryText = hasFilters
-    ? `Mostrando: ${totalItems} facturas · ${filters.join(" · ")}`
-    : "Mostrando todas las facturas";
+    ? `Mostrando: ${totalItems} ${itemLabel} · ${filters.join(" · ")}`
+    : allItemsText;
 
   return (
     <div className="mb-4">
