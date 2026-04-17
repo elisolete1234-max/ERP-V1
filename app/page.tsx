@@ -370,6 +370,10 @@ export default async function Home({
   const activeOrderFilterSegments: string[] = [
     hasActiveOrderFilters ? `estado: ${orderStatusLabels[orderFilter]}` : null,
   ].filter((segment): segment is string => Boolean(segment));
+  const hasActiveMaterialFilters = materialFilter !== "ALL";
+  const activeMaterialFilterSegments: string[] = [
+    materialFilter === "ACTIVE" ? "estado: activos" : materialFilter === "INACTIVE" ? "estado: inactivos" : null,
+  ].filter((segment): segment is string => Boolean(segment));
   const activeInvoiceFilterSegments: string[] = [
     hasInvoiceStatusFilter ? `estado: ${invoiceStatusFilterLabel(invoiceFilter)}` : null,
     invoiceDateStart ? `desde: ${invoiceDateStart}` : null,
@@ -1327,6 +1331,13 @@ export default async function Home({
                     ))}
                   </div>
                 </div>
+                <FilterSummary
+                  totalItems={filteredMaterials.length}
+                  hasFilters={hasActiveMaterialFilters}
+                  filters={activeMaterialFilterSegments}
+                  itemLabel="materiales"
+                  allItemsText="Mostrando todos los materiales"
+                />
                 <div className="table-wrap table-scroll">
                   <MaterialsInlineTable materials={filteredMaterials} />
                 </div>
