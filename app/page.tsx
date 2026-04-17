@@ -25,6 +25,7 @@ import {
   ProductsInlineTable,
 } from "./components/editable-tables";
 import { SubmitButton } from "./components/form-ui";
+import { FilterSummary } from "./components/filter-summary";
 import { getAppSnapshot } from "@/lib/erp-service";
 
 const sectionKeys = [
@@ -365,14 +366,11 @@ export default async function Home({
   const rangedPendingInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PENDIENTE").length;
   const rangedPartialInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PARCIAL").length;
   const rangedPaidInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PAGADA").length;
-  const activeInvoiceFilterSegments = [
+  const activeInvoiceFilterSegments: string[] = [
     hasInvoiceStatusFilter ? `estado: ${invoiceStatusFilterLabel(invoiceFilter)}` : null,
     invoiceDateStart ? `desde: ${invoiceDateStart}` : null,
     invoiceDateEnd ? `hasta: ${invoiceDateEnd}` : null,
-  ].filter(Boolean);
-  const invoiceFilterSummaryText = hasActiveInvoiceFilters
-    ? `Mostrando: ${rangedInvoiceCount} facturas · ${activeInvoiceFilterSegments.join(" · ")}`
-    : "Mostrando todas las facturas";
+  ].filter((segment): segment is string => Boolean(segment));
   const readyToDeliver = orders.filter((order) => order.estado === "LISTO").length;
   const readyToInvoice = orders.filter((order) => order.estado === "ENTREGADO").length;
   const busyPrinters = printers.filter((printer) => printer.estado === "IMPRIMIENDO").length;
@@ -1129,17 +1127,11 @@ export default async function Home({
                   ? ` En el rango actual hay ${dateFilteredInvoices.length} facturas y ${filteredPaymentsCount} pagos.`
                   : ` Ahora mismo ves ${dateFilteredInvoices.length} facturas y ${filteredPaymentsCount} pagos.`}
               </p>
-              <div className="mb-4">
-                <span
-                  className={`inline-flex rounded-full border px-3.5 py-1.5 text-xs font-semibold ${
-                    hasActiveInvoiceFilters
-                      ? "border-sky-200 bg-sky-50 text-sky-700"
-                      : "border-black/10 bg-white text-[color:var(--muted)]"
-                  }`}
-                >
-                  {invoiceFilterSummaryText}
-                </span>
-              </div>
+              <FilterSummary
+                totalItems={rangedInvoiceCount}
+                hasFilters={hasActiveInvoiceFilters}
+                filters={activeInvoiceFilterSegments}
+              />
               <div className="table-wrap table-scroll">
                 <InvoicesInlineTable invoices={dateFilteredInvoices} />
               </div>
