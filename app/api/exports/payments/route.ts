@@ -4,7 +4,9 @@ import { getInvoicePaymentsExportRows } from "@/lib/erp-service";
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const invoiceStatus = searchParams.get("invoiceStatus") ?? undefined;
-  const rows = await getInvoicePaymentsExportRows(invoiceStatus);
+  const fromDate = searchParams.get("fecha_inicio") ?? undefined;
+  const toDate = searchParams.get("fecha_fin") ?? undefined;
+  const rows = await getInvoicePaymentsExportRows(invoiceStatus, fromDate, toDate);
   const csv = serializeCsv(rows, {
     columns: [
       { header: "codigo_pago", value: (row) => row.codigoPago },

@@ -99,6 +99,35 @@ function dateLabel(value: string) {
   return new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
+function toDateInputValue(value?: string) {
+  return value?.trim() ?? "";
+}
+
+function buildDateRangeStart(value?: string) {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function buildDateRangeEnd(value?: string) {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  const parsed = new Date(`${value}T23:59:59.999`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function invoiceStatusFilterLabel(status: string) {
+  if (status === "PENDIENTE") return "pendientes";
+  if (status === "PARCIAL") return "parciales";
+  if (status === "PAGADA") return "pagadas";
+  return "todas";
+}
+
 function toPlainData<T>(value: T): T {
   try {
     return structuredClone(value);
@@ -229,6 +258,8 @@ export default async function Home({
     printerStatus?: string;
     movementInventory?: string;
     invoiceStatus?: string;
+    fecha_inicio?: string;
+    fecha_fin?: string;
     message?: string;
     tone?: string;
   }>;
@@ -257,6 +288,13 @@ export default async function Home({
   const printerFilter = resolved.printerStatus ?? "ALL";
   const movementFilter = resolved.movementInventory ?? "ALL";
   const invoiceFilter = resolved.invoiceStatus ?? "ALL";
+  const invoiceDateStart = toDateInputValue(resolved.fecha_inicio);
+  const invoiceDateEnd = toDateInputValue(resolved.fecha_fin);
+  const invoiceStartDate = buildDateRangeStart(invoiceDateStart);
+  const invoiceEndDate = buildDateRangeEnd(invoiceDateEnd);
+  const hasInvoiceStatusFilter = invoiceFilter !== "ALL";
+  const hasInvoiceDateFilter = Boolean(invoiceDateStart || invoiceDateEnd);
+  const hasActiveInvoiceFilters = hasInvoiceStatusFilter || hasInvoiceDateFilter;
 
   const filteredOrders = orderFilter === "ALL" ? orders : orders.filter((order) => order.estado === orderFilter);
   const filteredManufacturing =
@@ -278,6 +316,19 @@ export default async function Home({
     invoiceFilter === "ALL"
       ? invoices
       : invoices.filter((invoice) => invoice.estado_pago === invoiceFilter);
+  const dateFilteredInvoices = filteredInvoices.filter((invoice) => {
+    const invoiceDate = new Date(invoice.fecha);
+    if (Number.isNaN(invoiceDate.getTime())) {
+      return false;
+    }
+    if (invoiceStartDate && invoiceDate < invoiceStartDate) {
+      return false;
+    }
+    if (invoiceEndDate && invoiceDate > invoiceEndDate) {
+      return false;
+    }
+    return true;
+  });
 
   const activeMaterials = materials.filter((material) => material.activo);
   const lowStockMaterials = activeMaterials.filter((material) => material.stock_actual_g <= material.stock_minimo_g);
@@ -289,12 +340,39 @@ export default async function Home({
   const openOrders = orders.filter((order) => order.estado !== "FACTURADO").length;
   const pendingManufacturing = manufacturingOrders.filter((order) => order.estado !== "COMPLETADA").length;
   const pendingInvoices = invoices.filter((invoice) => invoice.estado_pago !== "PAGADA").length;
-  const pendingInvoicesOnly = invoices.filter((invoice) => invoice.estado_pago === "PENDIENTE").length;
-  const partialInvoices = invoices.filter((invoice) => invoice.estado_pago === "PARCIAL").length;
-  const paidInvoices = invoices.filter((invoice) => invoice.estado_pago === "PAGADA").length;
-  const totalInvoiced = invoices.reduce((sum, invoice) => sum + invoice.total, 0);
-  const totalCollected = invoices.reduce((sum, invoice) => sum + invoice.total_pagado, 0);
-  const totalOutstanding = invoices.reduce((sum, invoice) => sum + invoice.importe_pendiente, 0);
+  const filteredPaymentsCount = dateFilteredInvoices.reduce((sum, invoice) => {
+    return (
+      sum +
+      invoice.pagos.filter((payment) => {
+        const paymentDate = new Date(payment.fecha_pago);
+        if (Number.isNaN(paymentDate.getTime())) {
+          return false;
+        }
+        if (invoiceStartDate && paymentDate < invoiceStartDate) {
+          return false;
+        }
+        if (invoiceEndDate && paymentDate > invoiceEndDate) {
+          return false;
+        }
+        return true;
+      }).length
+    );
+  }, 0);
+  const rangedTotalInvoiced = dateFilteredInvoices.reduce((sum, invoice) => sum + invoice.total, 0);
+  const rangedTotalCollected = dateFilteredInvoices.reduce((sum, invoice) => sum + invoice.total_pagado, 0);
+  const rangedTotalOutstanding = dateFilteredInvoices.reduce((sum, invoice) => sum + invoice.importe_pendiente, 0);
+  const rangedInvoiceCount = dateFilteredInvoices.length;
+  const rangedPendingInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PENDIENTE").length;
+  const rangedPartialInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PARCIAL").length;
+  const rangedPaidInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PAGADA").length;
+  const activeInvoiceFilterSegments = [
+    hasInvoiceStatusFilter ? `estado: ${invoiceStatusFilterLabel(invoiceFilter)}` : null,
+    invoiceDateStart ? `desde: ${invoiceDateStart}` : null,
+    invoiceDateEnd ? `hasta: ${invoiceDateEnd}` : null,
+  ].filter(Boolean);
+  const invoiceFilterSummaryText = hasActiveInvoiceFilters
+    ? `Mostrando: ${rangedInvoiceCount} facturas · ${activeInvoiceFilterSegments.join(" · ")}`
+    : "Mostrando todas las facturas";
   const readyToDeliver = orders.filter((order) => order.estado === "LISTO").length;
   const readyToInvoice = orders.filter((order) => order.estado === "ENTREGADO").length;
   const busyPrinters = printers.filter((printer) => printer.estado === "IMPRIMIENDO").length;
@@ -975,12 +1053,12 @@ export default async function Home({
           <Section active={section === "facturas"} title="Facturas" subtitle="Cobro">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
               {[
-                { label: "Total facturado", value: currency(totalInvoiced), detail: `${invoices.length} facturas` },
-                { label: "Total cobrado", value: currency(totalCollected), detail: `${paidInvoices} pagadas` },
-                { label: "Total pendiente", value: currency(totalOutstanding), detail: `${pendingInvoices} con saldo` },
-                { label: "Pendientes", value: pendingInvoicesOnly, detail: "sin cobros" },
-                { label: "Parciales", value: partialInvoices, detail: "con cobro parcial" },
-                { label: "Pagadas", value: paidInvoices, detail: "cobro completo" },
+                { label: "Facturado en rango", value: currency(rangedTotalInvoiced), detail: `${rangedInvoiceCount} facturas visibles` },
+                { label: "Cobrado en rango", value: currency(rangedTotalCollected), detail: `${rangedPaidInvoices} pagadas visibles` },
+                { label: "Pendiente en rango", value: currency(rangedTotalOutstanding), detail: `${rangedInvoiceCount} facturas filtradas` },
+                { label: "Facturas en rango", value: rangedInvoiceCount, detail: "segun filtros activos" },
+                { label: "Pendientes", value: rangedPendingInvoices, detail: "sin cobros en vista" },
+                { label: "Parciales / pagadas", value: `${rangedPartialInvoices}/${rangedPaidInvoices}`, detail: "visibles ahora" },
               ].map((metric) => (
                 <article key={String(metric.label)} className="metric-card p-5">
                   <p className="text-sm text-[color:var(--muted)]">{metric.label}</p>
@@ -1000,13 +1078,13 @@ export default async function Home({
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <a
-                    href={`/api/exports/invoices?invoiceStatus=${encodeURIComponent(invoiceFilter)}`}
+                    href={`/api/exports/invoices?invoiceStatus=${encodeURIComponent(invoiceFilter)}&fecha_inicio=${encodeURIComponent(invoiceDateStart)}&fecha_fin=${encodeURIComponent(invoiceDateEnd)}`}
                     className="button-secondary"
                   >
                     Exportar facturas CSV
                   </a>
                   <a
-                    href={`/api/exports/payments?invoiceStatus=${encodeURIComponent(invoiceFilter)}`}
+                    href={`/api/exports/payments?invoiceStatus=${encodeURIComponent(invoiceFilter)}&fecha_inicio=${encodeURIComponent(invoiceDateStart)}&fecha_fin=${encodeURIComponent(invoiceDateEnd)}`}
                     className="button-secondary"
                   >
                     Exportar pagos CSV
@@ -1014,7 +1092,7 @@ export default async function Home({
                   {Object.keys(invoicePaymentLabels).map((status) => (
                     <FilterLink
                       key={status}
-                      href={`/?section=facturas&invoiceStatus=${status}`}
+                      href={`/?section=facturas&invoiceStatus=${status}&fecha_inicio=${encodeURIComponent(invoiceDateStart)}&fecha_fin=${encodeURIComponent(invoiceDateEnd)}`}
                       label={invoicePaymentLabels[status]}
                       active={invoiceFilter === status}
                       count={
@@ -1027,11 +1105,43 @@ export default async function Home({
                   <StatusPill label={`${pendingInvoices} pendientes`} tone={pendingInvoices > 0 ? "warn" : "success"} />
                 </div>
               </div>
+              <form className="mb-4 grid gap-3 rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] p-4 md:grid-cols-[1fr_1fr_auto_auto]" method="get">
+                <input type="hidden" name="section" value="facturas" />
+                <input type="hidden" name="invoiceStatus" value={invoiceFilter} />
+                <label className="space-y-1 text-sm text-[color:var(--muted-strong)]">
+                  <span>Fecha desde</span>
+                  <input type="date" name="fecha_inicio" defaultValue={invoiceDateStart} className="input" />
+                </label>
+                <label className="space-y-1 text-sm text-[color:var(--muted-strong)]">
+                  <span>Fecha hasta</span>
+                  <input type="date" name="fecha_fin" defaultValue={invoiceDateEnd} className="input" />
+                </label>
+                <button type="submit" className="button-secondary self-end">
+                  Aplicar fechas
+                </button>
+                <a href={`/?section=facturas&invoiceStatus=${encodeURIComponent(invoiceFilter)}`} className="button-secondary self-end">
+                  Limpiar fechas
+                </a>
+              </form>
               <p className="mb-4 text-sm text-[color:var(--muted)]">
-                Las exportaciones descargan CSV compatibles con Excel y Sheets usando el estado visible como filtro actual.
+                Las exportaciones descargan CSV compatibles con Excel y Sheets usando los filtros visibles: estado, fecha de factura y fecha de pago asociada.
+                {invoiceDateStart || invoiceDateEnd
+                  ? ` En el rango actual hay ${dateFilteredInvoices.length} facturas y ${filteredPaymentsCount} pagos.`
+                  : ` Ahora mismo ves ${dateFilteredInvoices.length} facturas y ${filteredPaymentsCount} pagos.`}
               </p>
+              <div className="mb-4">
+                <span
+                  className={`inline-flex rounded-full border px-3.5 py-1.5 text-xs font-semibold ${
+                    hasActiveInvoiceFilters
+                      ? "border-sky-200 bg-sky-50 text-sky-700"
+                      : "border-black/10 bg-white text-[color:var(--muted)]"
+                  }`}
+                >
+                  {invoiceFilterSummaryText}
+                </span>
+              </div>
               <div className="table-wrap table-scroll">
-                <InvoicesInlineTable invoices={filteredInvoices} />
+                <InvoicesInlineTable invoices={dateFilteredInvoices} />
               </div>
             </div>
           </Section>

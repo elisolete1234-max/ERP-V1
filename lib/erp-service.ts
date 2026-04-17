@@ -275,6 +275,19 @@ function normalizeInvoiceStatusFilter(status?: string | null): InvoicePaymentSta
   throw new Error("Filtro de estado de factura no valido.");
 }
 
+function normalizeDateFilter(value?: string | null) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    throw new Error("Filtro de fecha no valido.");
+  }
+
+  return normalized;
+}
+
 async function syncInvoicePaymentSummary(invoiceId: string) {
   const invoice = await row<{
     id: string;
@@ -991,8 +1004,10 @@ export async function getAppSnapshot() {
   };
 }
 
-export async function getInvoicesExportRows(status?: string) {
+export async function getInvoicesExportRows(status?: string, fromDate?: string, toDate?: string) {
   const statusFilter = normalizeInvoiceStatusFilter(status);
+  const startDate = normalizeDateFilter(fromDate);
+  const endDate = normalizeDateFilter(toDate);
   return await rows<{
     codigoFactura: string;
     codigoPedido: string;
@@ -1020,14 +1035,22 @@ export async function getInvoicesExportRows(status?: string) {
      JOIN orders o ON o.id = i.pedido_id
      JOIN customers c ON c.id = i.cliente_id
      WHERE (? IS NULL OR i.estado_pago = ?)
+       AND (? IS NULL OR substr(i.fecha, 1, 10) >= ?)
+       AND (? IS NULL OR substr(i.fecha, 1, 10) <= ?)
      ORDER BY i.fecha DESC, i.codigo DESC`,
     statusFilter ?? null,
     statusFilter ?? null,
+    startDate ?? null,
+    startDate ?? null,
+    endDate ?? null,
+    endDate ?? null,
   );
 }
 
-export async function getInvoicePaymentsExportRows(status?: string) {
+export async function getInvoicePaymentsExportRows(status?: string, fromDate?: string, toDate?: string) {
   const statusFilter = normalizeInvoiceStatusFilter(status);
+  const startDate = normalizeDateFilter(fromDate);
+  const endDate = normalizeDateFilter(toDate);
   return await rows<{
     codigoPago: string;
     codigoFactura: string;
@@ -1052,9 +1075,15 @@ export async function getInvoicePaymentsExportRows(status?: string) {
      JOIN orders o ON o.id = i.pedido_id
      JOIN customers c ON c.id = i.cliente_id
      WHERE (? IS NULL OR i.estado_pago = ?)
+       AND (? IS NULL OR substr(p.fecha_pago, 1, 10) >= ?)
+       AND (? IS NULL OR substr(p.fecha_pago, 1, 10) <= ?)
      ORDER BY p.fecha_pago DESC, p.codigo DESC`,
     statusFilter ?? null,
     statusFilter ?? null,
+    startDate ?? null,
+    startDate ?? null,
+    endDate ?? null,
+    endDate ?? null,
   );
 }
 

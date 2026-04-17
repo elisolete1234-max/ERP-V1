@@ -1,7 +1,7 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { buildCsvFilename, formatCsvDateTime, formatCsvMoney, serializeCsv } from "../lib/csv";
-import { row, rows } from "../lib/db";
+import { row, rows, run } from "../lib/db";
 import {
   completeManufacturingOrder,
   confirmOrder,
@@ -14,6 +14,8 @@ import {
   deliverOrder,
   deleteMaterialRecord,
   generateInvoiceForOrder,
+  getInvoicePaymentsExportRows,
+  getInvoicesExportRows,
   resetDatabase,
   restockFinishedProduct,
   setMaterialActiveState,
@@ -750,6 +752,42 @@ test("bloquea registrar pagos cuando la factura ya esta totalmente pagada", asyn
     () => createInvoicePaymentRecord({ facturaId: invoice.id, metodoPago: "TARJETA", importe: 1 }),
     /ya esta pagada/i,
   );
+});
+
+test("las exportaciones de facturas y pagos respetan rango de fechas y estado", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, orderId))!;
+
+  await run(`UPDATE invoices SET fecha = ? WHERE id = ?`, "2026-04-10T09:00:00.000Z", invoice.id);
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "TRANSFERENCIA",
+    importe: 10,
+    fechaPago: "2026-04-12",
+    notas: "Pago dentro de rango",
+  });
+
+  const invoicesInRange = await getInvoicesExportRows("PARCIAL", "2026-04-01", "2026-04-30");
+  const invoicesOutOfRange = await getInvoicesExportRows("PARCIAL", "2026-05-01", "2026-05-31");
+  const paymentsInRange = await getInvoicePaymentsExportRows("PARCIAL", "2026-04-01", "2026-04-30");
+  const paymentsOutOfRange = await getInvoicePaymentsExportRows("PARCIAL", "2026-05-01", "2026-05-31");
+
+  assert.equal(invoicesInRange.length, 1);
+  assert.equal(invoicesOutOfRange.length, 0);
+  assert.equal(paymentsInRange.length, 1);
+  assert.equal(paymentsOutOfRange.length, 0);
 });
 
 test("el inventario terminado refleja stock reservado y disponible", async () => {
