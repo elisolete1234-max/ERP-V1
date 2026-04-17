@@ -251,6 +251,10 @@ function paymentTone(status: string) {
   return "warn";
 }
 
+function paymentMethodLabel(method: string) {
+  return method.toLowerCase().replaceAll("_", " ");
+}
+
 function rowHighlight(level?: "danger" | "warn" | "attention" | null) {
   if (level === "danger") return "row-danger";
   if (level === "warn") return "row-warn";
@@ -1389,6 +1393,7 @@ export function InvoicesInlineTable({
           const registeringPayment = paymentId === invoice.id;
           const pendingAmount = Math.max(invoice.importe_pendiente, 0);
           const canRegisterPayment = pendingAmount > 0;
+          const paymentCount = invoice.pagos.length;
           const highlight =
             invoice.estado_pago === "PENDIENTE"
               ? "warn"
@@ -1462,6 +1467,24 @@ export function InvoicesInlineTable({
                             {invoice.estado_pago.toLowerCase()}
                           </span>
                         </div>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Total</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.total)}</p>
+                          </div>
+                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Cobrado</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.total_pagado)}</p>
+                          </div>
+                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Pendiente</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.importe_pendiente)}</p>
+                          </div>
+                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Pagos</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{paymentCount}</p>
+                          </div>
+                        </div>
                         <div className="mt-4 space-y-3">
                           {invoice.pagos.length === 0 ? (
                             <div className="rounded-2xl border border-dashed border-black/10 bg-white/75 px-4 py-4 text-sm text-[color:var(--muted)]">
@@ -1496,6 +1519,7 @@ export function InvoicesInlineTable({
                           </div>
                           <div className="text-right text-xs text-[color:var(--muted)]">
                             <div>Total: {formatCurrency(invoice.total)}</div>
+                            <div>Cobrado: {formatCurrency(invoice.total_pagado)}</div>
                             <div>Pendiente: {formatCurrency(invoice.importe_pendiente)}</div>
                           </div>
                         </div>
@@ -1503,6 +1527,12 @@ export function InvoicesInlineTable({
                         {registeringPayment && canRegisterPayment ? (
                           <form action={registerInvoicePaymentAction} className="mt-4 space-y-3">
                             <input type="hidden" name="facturaId" value={invoice.id} />
+                            <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
+                              Introduce un importe entre 0,01 EUR y {formatCurrency(pendingAmount)}. Si completas el pendiente, la factura pasara a pagada automaticamente.
+                              <div className="mt-1 text-xs text-sky-700">
+                                Metodos admitidos: {["EFECTIVO", "TRANSFERENCIA", "TARJETA", "BIZUM", "PAYPAL", "OTRO"].map(paymentMethodLabel).join(", ")}.
+                              </div>
+                            </div>
                             <div className="table-edit-grid-2">
                               <input
                                 name="importe"
@@ -1513,6 +1543,7 @@ export function InvoicesInlineTable({
                                 defaultValue={pendingAmount.toFixed(2)}
                                 placeholder="Importe"
                                 className={tableInputClass}
+                                required
                               />
                               <select name="metodoPago" defaultValue="TRANSFERENCIA" className={tableInputClass}>
                                 <option value="EFECTIVO">efectivo</option>
@@ -1528,6 +1559,7 @@ export function InvoicesInlineTable({
                               type="date"
                               defaultValue={new Date().toISOString().slice(0, 10)}
                               className={tableInputClass}
+                              required
                             />
                             <textarea
                               name="notas"

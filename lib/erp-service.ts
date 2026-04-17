@@ -10,6 +10,8 @@ type LineInput = {
 type PrinterState = "LIBRE" | "IMPRIMIENDO" | "MANTENIMIENTO";
 type InventoryMovementType = "ENTRADA" | "SALIDA" | "AJUSTE";
 type PaymentMethod = "EFECTIVO" | "TRANSFERENCIA" | "TARJETA" | "BIZUM" | "PAYPAL" | "OTRO";
+const PAYMENT_METHODS: PaymentMethod[] = ["EFECTIVO", "TRANSFERENCIA", "TARJETA", "BIZUM", "PAYPAL", "OTRO"];
+type InvoicePaymentStatus = "PENDIENTE" | "PARCIAL" | "PAGADA";
 
 export const DEFAULT_VAT_RATE = 21;
 
@@ -256,10 +258,21 @@ async function registerOrderHistory(pedidoId: string, estado: string, nota: stri
 
 function normalizePaymentMethod(method: string): PaymentMethod {
   const normalized = method.trim().toUpperCase() as PaymentMethod;
-  if (!["EFECTIVO", "TRANSFERENCIA", "TARJETA", "BIZUM", "PAYPAL", "OTRO"].includes(normalized)) {
+  if (!PAYMENT_METHODS.includes(normalized)) {
     throw new Error("Metodo de pago no valido.");
   }
   return normalized;
+}
+
+function normalizeInvoiceStatusFilter(status?: string | null): InvoicePaymentStatus | undefined {
+  const normalized = status?.trim().toUpperCase();
+  if (!normalized || normalized === "ALL") {
+    return undefined;
+  }
+  if (normalized === "PENDIENTE" || normalized === "PARCIAL" || normalized === "PAGADA") {
+    return normalized;
+  }
+  throw new Error("Filtro de estado de factura no valido.");
 }
 
 async function syncInvoicePaymentSummary(invoiceId: string) {
@@ -320,7 +333,7 @@ async function registerInventoryMovement(input: {
     throw new Error("No se permiten movimientos de inventario con cantidad 0 o negativa.");
   }
 
-  run(
+  await run(
     `INSERT INTO inventory_movements
       (id, codigo, inventario_tipo, item_id, item_codigo, tipo, fecha, cantidad, motivo, referencia)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -635,12 +648,12 @@ async function restoreOrderInventoryAllocations(orderId: string, orderCode: stri
 export async function getAppSnapshot() {
   const materialIds = await rows<{ id: string }>(`SELECT id FROM materials`);
   for (const item of materialIds) {
-    syncMaterialStockCache(item.id);
+    await syncMaterialStockCache(item.id);
   }
 
   const inventoryProducts = await rows<{ product_id: string }>(`SELECT product_id FROM finished_product_inventory`);
   for (const item of inventoryProducts) {
-    syncFinishedInventoryMetrics(item.product_id);
+    await syncFinishedInventoryMetrics(item.product_id);
   }
 
   const customers = await rows<{
@@ -976,6 +989,73 @@ export async function getAppSnapshot() {
     inventoryMovements,
     invoices,
   };
+}
+
+export async function getInvoicesExportRows(status?: string) {
+  const statusFilter = normalizeInvoiceStatusFilter(status);
+  return await rows<{
+    codigoFactura: string;
+    codigoPedido: string;
+    cliente: string;
+    fechaFactura: string;
+    subtotal: number;
+    iva: number;
+    total: number;
+    totalPagado: number;
+    importePendiente: number;
+    estadoPago: string;
+  }>(
+    `SELECT
+       i.codigo AS codigoFactura,
+       o.codigo AS codigoPedido,
+       c.nombre AS cliente,
+       i.fecha AS fechaFactura,
+       i.subtotal AS subtotal,
+       i.iva AS iva,
+       i.total AS total,
+       i.total_pagado AS totalPagado,
+       i.importe_pendiente AS importePendiente,
+       i.estado_pago AS estadoPago
+     FROM invoices i
+     JOIN orders o ON o.id = i.pedido_id
+     JOIN customers c ON c.id = i.cliente_id
+     WHERE (? IS NULL OR i.estado_pago = ?)
+     ORDER BY i.fecha DESC, i.codigo DESC`,
+    statusFilter ?? null,
+    statusFilter ?? null,
+  );
+}
+
+export async function getInvoicePaymentsExportRows(status?: string) {
+  const statusFilter = normalizeInvoiceStatusFilter(status);
+  return await rows<{
+    codigoPago: string;
+    codigoFactura: string;
+    codigoPedido: string;
+    cliente: string;
+    fechaPago: string;
+    metodoPago: string;
+    importe: number;
+    notas: string | null;
+  }>(
+    `SELECT
+       p.codigo AS codigoPago,
+       i.codigo AS codigoFactura,
+       o.codigo AS codigoPedido,
+       c.nombre AS cliente,
+       p.fecha_pago AS fechaPago,
+       p.metodo_pago AS metodoPago,
+       p.importe AS importe,
+       p.notas AS notas
+     FROM invoice_payments p
+     JOIN invoices i ON i.id = p.factura_id
+     JOIN orders o ON o.id = i.pedido_id
+     JOIN customers c ON c.id = i.cliente_id
+     WHERE (? IS NULL OR i.estado_pago = ?)
+     ORDER BY p.fecha_pago DESC, p.codigo DESC`,
+    statusFilter ?? null,
+    statusFilter ?? null,
+  );
 }
 
 export async function resetDatabase() {
@@ -1635,27 +1715,40 @@ export async function createInvoicePaymentRecord(input: {
     throw new Error("El importe del pago debe ser mayor que cero.");
   }
 
+  await syncInvoicePaymentSummary(input.facturaId);
+
   const invoice = await row<{
     id: string;
     total: number;
     total_pagado: number;
     importe_pendiente: number;
+    estado_pago: string;
   }>(
-    `SELECT id, total, total_pagado, importe_pendiente FROM invoices WHERE id = ?`,
+    `SELECT id, total, total_pagado, importe_pendiente, estado_pago FROM invoices WHERE id = ?`,
     input.facturaId,
   );
 
   if (!invoice) {
     throw new Error("La factura no existe.");
   }
+  if (invoice.estado_pago === "PAGADA" || invoice.importe_pendiente <= 0) {
+    throw new Error("La factura ya esta pagada y no admite mas pagos.");
+  }
 
   const metodoPago = normalizePaymentMethod(input.metodoPago);
-  const fechaPago = input.fechaPago?.trim() ? new Date(input.fechaPago) : new Date();
+  const rawDate = input.fechaPago?.trim();
+  const fechaPago = rawDate ? new Date(rawDate) : new Date();
   if (Number.isNaN(fechaPago.getTime())) {
     throw new Error("La fecha de pago no es valida.");
   }
 
   const importe = roundMoney(input.importe);
+  if (importe <= 0) {
+    throw new Error("El importe del pago debe ser mayor que cero.");
+  }
+  if (importe > roundMoney(invoice.importe_pendiente)) {
+    throw new Error("El pago supera el importe pendiente de la factura.");
+  }
   if (roundMoney(invoice.total_pagado + importe) > roundMoney(invoice.total)) {
     throw new Error("El pago supera el importe pendiente de la factura.");
   }

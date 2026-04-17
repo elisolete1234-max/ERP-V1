@@ -84,6 +84,13 @@ const movementInventoryLabels: Record<string, string> = {
   PRODUCTO_TERMINADO: "productos terminados",
 };
 
+const invoicePaymentLabels: Record<string, string> = {
+  ALL: "todas",
+  PENDIENTE: "pendientes",
+  PARCIAL: "parciales",
+  PAGADA: "pagadas",
+};
+
 function currency(value: number) {
   return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(value);
 }
@@ -221,6 +228,7 @@ export default async function Home({
     materialFilter?: string;
     printerStatus?: string;
     movementInventory?: string;
+    invoiceStatus?: string;
     message?: string;
     tone?: string;
   }>;
@@ -248,6 +256,7 @@ export default async function Home({
   const materialFilter = resolved.materialFilter ?? "ALL";
   const printerFilter = resolved.printerStatus ?? "ALL";
   const movementFilter = resolved.movementInventory ?? "ALL";
+  const invoiceFilter = resolved.invoiceStatus ?? "ALL";
 
   const filteredOrders = orderFilter === "ALL" ? orders : orders.filter((order) => order.estado === orderFilter);
   const filteredManufacturing =
@@ -265,6 +274,10 @@ export default async function Home({
     movementFilter === "ALL"
       ? inventoryMovements
       : inventoryMovements.filter((movement) => movement.inventario_tipo === movementFilter);
+  const filteredInvoices =
+    invoiceFilter === "ALL"
+      ? invoices
+      : invoices.filter((invoice) => invoice.estado_pago === invoiceFilter);
 
   const activeMaterials = materials.filter((material) => material.activo);
   const lowStockMaterials = activeMaterials.filter((material) => material.stock_actual_g <= material.stock_minimo_g);
@@ -276,6 +289,12 @@ export default async function Home({
   const openOrders = orders.filter((order) => order.estado !== "FACTURADO").length;
   const pendingManufacturing = manufacturingOrders.filter((order) => order.estado !== "COMPLETADA").length;
   const pendingInvoices = invoices.filter((invoice) => invoice.estado_pago !== "PAGADA").length;
+  const pendingInvoicesOnly = invoices.filter((invoice) => invoice.estado_pago === "PENDIENTE").length;
+  const partialInvoices = invoices.filter((invoice) => invoice.estado_pago === "PARCIAL").length;
+  const paidInvoices = invoices.filter((invoice) => invoice.estado_pago === "PAGADA").length;
+  const totalInvoiced = invoices.reduce((sum, invoice) => sum + invoice.total, 0);
+  const totalCollected = invoices.reduce((sum, invoice) => sum + invoice.total_pagado, 0);
+  const totalOutstanding = invoices.reduce((sum, invoice) => sum + invoice.importe_pendiente, 0);
   const readyToDeliver = orders.filter((order) => order.estado === "LISTO").length;
   const readyToInvoice = orders.filter((order) => order.estado === "ENTREGADO").length;
   const busyPrinters = printers.filter((printer) => printer.estado === "IMPRIMIENDO").length;
@@ -954,6 +973,23 @@ export default async function Home({
           </Section>
 
           <Section active={section === "facturas"} title="Facturas" subtitle="Cobro">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+              {[
+                { label: "Total facturado", value: currency(totalInvoiced), detail: `${invoices.length} facturas` },
+                { label: "Total cobrado", value: currency(totalCollected), detail: `${paidInvoices} pagadas` },
+                { label: "Total pendiente", value: currency(totalOutstanding), detail: `${pendingInvoices} con saldo` },
+                { label: "Pendientes", value: pendingInvoicesOnly, detail: "sin cobros" },
+                { label: "Parciales", value: partialInvoices, detail: "con cobro parcial" },
+                { label: "Pagadas", value: paidInvoices, detail: "cobro completo" },
+              ].map((metric) => (
+                <article key={String(metric.label)} className="metric-card p-5">
+                  <p className="text-sm text-[color:var(--muted)]">{metric.label}</p>
+                  <p className="mt-4 text-3xl font-semibold tracking-[-0.05em]">{metric.value}</p>
+                  <p className="mt-2 text-sm text-[color:var(--muted)]">{metric.detail}</p>
+                </article>
+              ))}
+            </div>
+
             <div className="panel p-6">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -962,10 +998,40 @@ export default async function Home({
                     Solo se puede facturar cuando el pedido ya esta entregado.
                   </p>
                 </div>
-                <StatusPill label={`${pendingInvoices} pendientes`} tone={pendingInvoices > 0 ? "warn" : "success"} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <a
+                    href={`/api/exports/invoices?invoiceStatus=${encodeURIComponent(invoiceFilter)}`}
+                    className="button-secondary"
+                  >
+                    Exportar facturas CSV
+                  </a>
+                  <a
+                    href={`/api/exports/payments?invoiceStatus=${encodeURIComponent(invoiceFilter)}`}
+                    className="button-secondary"
+                  >
+                    Exportar pagos CSV
+                  </a>
+                  {Object.keys(invoicePaymentLabels).map((status) => (
+                    <FilterLink
+                      key={status}
+                      href={`/?section=facturas&invoiceStatus=${status}`}
+                      label={invoicePaymentLabels[status]}
+                      active={invoiceFilter === status}
+                      count={
+                        status === "ALL"
+                          ? invoices.length
+                          : invoices.filter((invoice) => invoice.estado_pago === status).length
+                      }
+                    />
+                  ))}
+                  <StatusPill label={`${pendingInvoices} pendientes`} tone={pendingInvoices > 0 ? "warn" : "success"} />
+                </div>
               </div>
+              <p className="mb-4 text-sm text-[color:var(--muted)]">
+                Las exportaciones descargan CSV compatibles con Excel y Sheets usando el estado visible como filtro actual.
+              </p>
               <div className="table-wrap table-scroll">
-                <InvoicesInlineTable invoices={invoices} />
+                <InvoicesInlineTable invoices={filteredInvoices} />
               </div>
             </div>
           </Section>

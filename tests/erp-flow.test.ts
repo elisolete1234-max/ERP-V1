@@ -1,5 +1,6 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { buildCsvFilename, formatCsvDateTime, formatCsvMoney, serializeCsv } from "../lib/csv";
 import { row, rows } from "../lib/db";
 import {
   completeManufacturingOrder,
@@ -23,6 +24,12 @@ import {
   updateOrderRecord,
   updatePrinterRecord,
 } from "../lib/erp-service";
+
+type CsvFixtureRow = {
+  codigo: string;
+  cliente: string;
+  notas: string;
+};
 
 async function ids() {
   return {
@@ -79,6 +86,36 @@ test("la base reseteada arranca sin datos de negocio", async () => {
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM finished_product_inventory`))!.total, 0);
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM inventory_movements`))!.total, 0);
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices`))!.total, 0);
+});
+
+test("serializeCsv escapa comillas, delimitadores y preserva encabezados", () => {
+  const csv = serializeCsv(
+    [
+      {
+        codigo: 'FAC-"001"',
+        cliente: "Mateo; Studio",
+        notas: "Linea 1\nLinea 2",
+      },
+    ],
+    {
+      columns: [
+        { header: "codigo_factura", value: (row: CsvFixtureRow) => row.codigo },
+        { header: "cliente", value: (row: CsvFixtureRow) => row.cliente },
+        { header: "notas", value: (row: CsvFixtureRow) => row.notas },
+      ],
+    },
+  );
+
+  assert.equal(
+    csv,
+    'codigo_factura;cliente;notas\r\n"FAC-""001""";"Mateo; Studio";Linea 1 Linea 2',
+  );
+});
+
+test("helpers CSV formatean importes, fechas y nombres de archivo de forma estable", () => {
+  assert.equal(formatCsvMoney(1234.5), "1234,50");
+  assert.equal(formatCsvDateTime("2026-04-17T08:05:00"), "2026-04-17 08:05");
+  assert.equal(buildCsvFilename("facturas", new Date("2026-04-17T08:05:00")), "facturas-20260417-0805.csv");
 });
 
 test("usa stock terminado completo sin fabricar", async () => {
@@ -675,6 +712,43 @@ test("bloquea pagos invalidos o superiores al pendiente", async () => {
   await assert.rejects(
     () => createInvoicePaymentRecord({ facturaId: invoice.id, metodoPago: "TARJETA", importe: invoice.total + 1 }),
     /supera el importe pendiente/i,
+  );
+  await assert.rejects(
+    () => createInvoicePaymentRecord({ facturaId: invoice.id, metodoPago: "CRIPTO", importe: 5 }),
+    /metodo de pago no valido/i,
+  );
+  await assert.rejects(
+    () => createInvoicePaymentRecord({ facturaId: invoice.id, metodoPago: "TARJETA", importe: 5, fechaPago: "fecha-invalida" }),
+    /fecha de pago no es valida/i,
+  );
+});
+
+test("bloquea registrar pagos cuando la factura ya esta totalmente pagada", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{ id: string; total: number }>(`SELECT id, total FROM invoices WHERE pedido_id = ?`, orderId))!;
+
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "TRANSFERENCIA",
+    importe: invoice.total,
+    notas: "Pago completo",
+  });
+
+  await assert.rejects(
+    () => createInvoicePaymentRecord({ facturaId: invoice.id, metodoPago: "TARJETA", importe: 1 }),
+    /ya esta pagada/i,
   );
 });
 
