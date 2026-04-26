@@ -431,8 +431,8 @@ export default async function Home({
       <div className="mx-auto grid max-w-[1500px] gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="panel self-start p-5 xl:sticky xl:top-5">
           <div className="hero-panel p-5 text-white">
-            <p className="text-xs uppercase tracking-[0.34em] text-white/70">Mini ERP 3D</p>
-            <h1 className="mt-3 text-[2rem] font-semibold tracking-[-0.06em]">Fabriq Flow</h1>
+            <p className="text-xs uppercase tracking-[0.34em] text-white/70">Version V3</p>
+            <h1 className="mt-3 text-[2rem] font-semibold tracking-[-0.06em]">ERP V3</h1>
             <p className="mt-3 text-sm leading-6 text-white/80">
               Operativa diaria de pedidos, produccion, inventario, impresoras y facturacion.
             </p>
@@ -450,7 +450,7 @@ export default async function Home({
           <div className="mt-5 rounded-[22px] border border-black/6 bg-[color:var(--surface-muted)] px-4 py-4">
             <p className="eyebrow">Jornada</p>
             <p className="mt-2 text-sm font-medium text-slate-800">{todayLabelText}</p>
-            <p className="mt-1 text-sm text-[color:var(--muted)]">ERP operativa, stock sincronizado y trazabilidad activa.</p>
+            <p className="mt-1 text-sm text-[color:var(--muted)]">ERP V3 operativa, stock sincronizado y trazabilidad activa.</p>
           </div>
           <nav className="mt-5 space-y-2">
             {sectionKeys.map((key) => (
@@ -482,12 +482,12 @@ export default async function Home({
           <div className="panel overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-5 px-6 py-5">
               <div>
-                <p className="eyebrow">Panel de control</p>
+                <p className="eyebrow">Panel de control V3</p>
                 <h2 className="mt-3 text-[clamp(2rem,3vw,2.8rem)] font-semibold tracking-[-0.07em] text-slate-950">
-                  Opera el taller con una vista clara y accionable
+                  Opera el taller con ERP V3 y una vista clara y accionable
                 </h2>
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-[color:var(--muted)]">
-                  Pedidos, stock, fabricacion, impresoras y facturas en una misma interfaz, con foco en velocidad y lectura rapida.
+                  Pedidos, stock, fabricacion, impresoras y facturas en una misma interfaz V3, con foco en velocidad y lectura rapida.
                 </p>
               </div>
               <div className="grid min-w-[260px] flex-1 gap-3 sm:grid-cols-2 xl:max-w-md">

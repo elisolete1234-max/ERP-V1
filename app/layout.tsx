@@ -16,8 +16,8 @@ const appMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Fabriq Flow ERP",
-  description: "ERP para impresion 3D con pedidos, produccion, inventario, impresoras y facturacion",
+  title: "ERP V3",
+  description: "ERP V3 para impresion 3D con pedidos, produccion, inventario, impresoras y facturacion",
 };
 
 export default function RootLayout({
