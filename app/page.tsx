@@ -25,6 +25,7 @@ import {
   ProductsInlineTable,
 } from "./components/editable-tables";
 import { SubmitButton } from "./components/form-ui";
+import { FilterSummary } from "./components/filter-summary";
 import { getAppSnapshot } from "@/lib/erp-service";
 
 const sectionKeys = [
@@ -84,6 +85,13 @@ const movementInventoryLabels: Record<string, string> = {
   PRODUCTO_TERMINADO: "productos terminados",
 };
 
+const invoicePaymentLabels: Record<string, string> = {
+  ALL: "todas",
+  PENDIENTE: "pendientes",
+  PARCIAL: "parciales",
+  PAGADA: "pagadas",
+};
+
 function currency(value: number) {
   return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(value);
 }
@@ -92,8 +100,42 @@ function dateLabel(value: string) {
   return new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
+function toDateInputValue(value?: string) {
+  return value?.trim() ?? "";
+}
+
+function buildDateRangeStart(value?: string) {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function buildDateRangeEnd(value?: string) {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  const parsed = new Date(`${value}T23:59:59.999`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function invoiceStatusFilterLabel(status: string) {
+  if (status === "PENDIENTE") return "pendientes";
+  if (status === "PARCIAL") return "parciales";
+  if (status === "PAGADA") return "pagadas";
+  return "todas";
+}
+
 function toPlainData<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
+  try {
+    return structuredClone(value);
+  } catch {
+    const serialized = JSON.stringify(value);
+    return (serialized ? JSON.parse(serialized) : value) as T;
+  }
 }
 
 type Snapshot = Awaited<ReturnType<typeof getAppSnapshot>>;
@@ -216,6 +258,9 @@ export default async function Home({
     materialFilter?: string;
     printerStatus?: string;
     movementInventory?: string;
+    invoiceStatus?: string;
+    fecha_inicio?: string;
+    fecha_fin?: string;
     message?: string;
     tone?: string;
   }>;
@@ -243,6 +288,14 @@ export default async function Home({
   const materialFilter = resolved.materialFilter ?? "ALL";
   const printerFilter = resolved.printerStatus ?? "ALL";
   const movementFilter = resolved.movementInventory ?? "ALL";
+  const invoiceFilter = resolved.invoiceStatus ?? "ALL";
+  const invoiceDateStart = toDateInputValue(resolved.fecha_inicio);
+  const invoiceDateEnd = toDateInputValue(resolved.fecha_fin);
+  const invoiceStartDate = buildDateRangeStart(invoiceDateStart);
+  const invoiceEndDate = buildDateRangeEnd(invoiceDateEnd);
+  const hasInvoiceStatusFilter = invoiceFilter !== "ALL";
+  const hasInvoiceDateFilter = Boolean(invoiceDateStart || invoiceDateEnd);
+  const hasActiveInvoiceFilters = hasInvoiceStatusFilter || hasInvoiceDateFilter;
 
   const filteredOrders = orderFilter === "ALL" ? orders : orders.filter((order) => order.estado === orderFilter);
   const filteredManufacturing =
@@ -250,14 +303,36 @@ export default async function Home({
       ? manufacturingOrders
       : manufacturingOrders.filter((order) => order.estado === manufacturingFilter);
   const filteredMaterials =
-    materialFilter === "LOW" ? materials.filter((material) => material.stock_actual_g <= material.stock_minimo_g) : materials;
+    materialFilter === "ACTIVE"
+      ? materials.filter((material) => material.activo)
+      : materialFilter === "INACTIVE"
+        ? materials.filter((material) => !material.activo)
+        : materials;
   const filteredPrinters = printerFilter === "ALL" ? printers : printers.filter((printer) => printer.estado === printerFilter);
   const filteredInventoryMovements =
     movementFilter === "ALL"
       ? inventoryMovements
       : inventoryMovements.filter((movement) => movement.inventario_tipo === movementFilter);
+  const filteredInvoices =
+    invoiceFilter === "ALL"
+      ? invoices
+      : invoices.filter((invoice) => invoice.estado_pago === invoiceFilter);
+  const dateFilteredInvoices = filteredInvoices.filter((invoice) => {
+    const invoiceDate = new Date(invoice.fecha);
+    if (Number.isNaN(invoiceDate.getTime())) {
+      return false;
+    }
+    if (invoiceStartDate && invoiceDate < invoiceStartDate) {
+      return false;
+    }
+    if (invoiceEndDate && invoiceDate > invoiceEndDate) {
+      return false;
+    }
+    return true;
+  });
 
-  const lowStockMaterials = materials.filter((material) => material.stock_actual_g <= material.stock_minimo_g);
+  const activeMaterials = materials.filter((material) => material.activo);
+  const lowStockMaterials = activeMaterials.filter((material) => material.stock_actual_g <= material.stock_minimo_g);
   const finishedUnits = finishedInventory.reduce((sum, item) => sum + item.cantidad_disponible, 0);
   const finishedStockValue = finishedInventory.reduce(
     (sum, item) => sum + item.cantidad_disponible * item.coste_unitario,
@@ -265,7 +340,53 @@ export default async function Home({
   );
   const openOrders = orders.filter((order) => order.estado !== "FACTURADO").length;
   const pendingManufacturing = manufacturingOrders.filter((order) => order.estado !== "COMPLETADA").length;
-  const pendingInvoices = invoices.filter((invoice) => invoice.estado_pago === "PENDIENTE").length;
+  const pendingInvoices = invoices.filter((invoice) => invoice.estado_pago !== "PAGADA").length;
+  const filteredPaymentsCount = dateFilteredInvoices.reduce((sum, invoice) => {
+    return (
+      sum +
+      invoice.pagos.filter((payment) => {
+        const paymentDate = new Date(payment.fecha_pago);
+        if (Number.isNaN(paymentDate.getTime())) {
+          return false;
+        }
+        if (invoiceStartDate && paymentDate < invoiceStartDate) {
+          return false;
+        }
+        if (invoiceEndDate && paymentDate > invoiceEndDate) {
+          return false;
+        }
+        return true;
+      }).length
+    );
+  }, 0);
+  const rangedTotalInvoiced = dateFilteredInvoices.reduce((sum, invoice) => sum + invoice.total, 0);
+  const rangedTotalCollected = dateFilteredInvoices.reduce((sum, invoice) => sum + invoice.total_pagado, 0);
+  const rangedTotalOutstanding = dateFilteredInvoices.reduce((sum, invoice) => sum + invoice.importe_pendiente, 0);
+  const rangedInvoiceCount = dateFilteredInvoices.length;
+  const rangedPendingInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PENDIENTE").length;
+  const rangedPartialInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PARCIAL").length;
+  const rangedPaidInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PAGADA").length;
+  const hasActiveOrderFilters = orderFilter !== "ALL";
+  const activeOrderFilterSegments: string[] = [
+    hasActiveOrderFilters ? `estado: ${orderStatusLabels[orderFilter]}` : null,
+  ].filter((segment): segment is string => Boolean(segment));
+  const hasActiveMaterialFilters = materialFilter !== "ALL";
+  const activeMaterialFilterSegments: string[] = [
+    materialFilter === "ACTIVE" ? "estado: activos" : materialFilter === "INACTIVE" ? "estado: inactivos" : null,
+  ].filter((segment): segment is string => Boolean(segment));
+  const hasActivePrinterFilters = printerFilter !== "ALL";
+  const activePrinterFilterSegments: string[] = [
+    hasActivePrinterFilters ? `estado: ${printerStatusLabels[printerFilter]}` : null,
+  ].filter((segment): segment is string => Boolean(segment));
+  const hasActiveMovementFilters = movementFilter !== "ALL";
+  const activeMovementFilterSegments: string[] = [
+    hasActiveMovementFilters ? `tipo: ${movementInventoryLabels[movementFilter]}` : null,
+  ].filter((segment): segment is string => Boolean(segment));
+  const activeInvoiceFilterSegments: string[] = [
+    hasInvoiceStatusFilter ? `estado: ${invoiceStatusFilterLabel(invoiceFilter)}` : null,
+    invoiceDateStart ? `desde: ${invoiceDateStart}` : null,
+    invoiceDateEnd ? `hasta: ${invoiceDateEnd}` : null,
+  ].filter((segment): segment is string => Boolean(segment));
   const readyToDeliver = orders.filter((order) => order.estado === "LISTO").length;
   const readyToInvoice = orders.filter((order) => order.estado === "ENTREGADO").length;
   const busyPrinters = printers.filter((printer) => printer.estado === "IMPRIMIENDO").length;
@@ -310,8 +431,8 @@ export default async function Home({
       <div className="mx-auto grid max-w-[1500px] gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="panel self-start p-5 xl:sticky xl:top-5">
           <div className="hero-panel p-5 text-white">
-            <p className="text-xs uppercase tracking-[0.34em] text-white/70">Mini ERP 3D</p>
-            <h1 className="mt-3 text-[2rem] font-semibold tracking-[-0.06em]">Fabriq Flow</h1>
+            <p className="text-xs uppercase tracking-[0.34em] text-white/70">Version V3</p>
+            <h1 className="mt-3 text-[2rem] font-semibold tracking-[-0.06em]">ERP V3</h1>
             <p className="mt-3 text-sm leading-6 text-white/80">
               Operativa diaria de pedidos, produccion, inventario, impresoras y facturacion.
             </p>
@@ -329,7 +450,7 @@ export default async function Home({
           <div className="mt-5 rounded-[22px] border border-black/6 bg-[color:var(--surface-muted)] px-4 py-4">
             <p className="eyebrow">Jornada</p>
             <p className="mt-2 text-sm font-medium text-slate-800">{todayLabelText}</p>
-            <p className="mt-1 text-sm text-[color:var(--muted)]">ERP operativa, stock sincronizado y trazabilidad activa.</p>
+            <p className="mt-1 text-sm text-[color:var(--muted)]">ERP V3 operativa, stock sincronizado y trazabilidad activa.</p>
           </div>
           <nav className="mt-5 space-y-2">
             {sectionKeys.map((key) => (
@@ -361,12 +482,12 @@ export default async function Home({
           <div className="panel overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-5 px-6 py-5">
               <div>
-                <p className="eyebrow">Panel de control</p>
+                <p className="eyebrow">Panel de control V3</p>
                 <h2 className="mt-3 text-[clamp(2rem,3vw,2.8rem)] font-semibold tracking-[-0.07em] text-slate-950">
-                  Opera el taller con una vista clara y accionable
+                  Opera el taller con ERP V3 y una vista clara y accionable
                 </h2>
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-[color:var(--muted)]">
-                  Pedidos, stock, fabricacion, impresoras y facturas en una misma interfaz, con foco en velocidad y lectura rapida.
+                  Pedidos, stock, fabricacion, impresoras y facturas en una misma interfaz V3, con foco en velocidad y lectura rapida.
                 </p>
               </div>
               <div className="grid min-w-[260px] flex-1 gap-3 sm:grid-cols-2 xl:max-w-md">
@@ -576,6 +697,13 @@ export default async function Home({
                   </div>
                 </div>
 
+                <FilterSummary
+                  totalItems={filteredOrders.length}
+                  hasFilters={hasActiveOrderFilters}
+                  filters={activeOrderFilterSegments}
+                  itemLabel="pedidos"
+                  allItemsText="Mostrando todos los pedidos"
+                />
                 <div className="list-scroll mt-5">
                   {filteredOrders.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[color:var(--muted)]">
@@ -826,7 +954,7 @@ export default async function Home({
                   </div>
                   <select name="materialId" className="input" defaultValue="">
                     <option value="">Material</option>
-                    {materials.map((material) => (
+                    {activeMaterials.map((material) => (
                       <option key={material.id} value={material.id}>
                         {material.codigo} · {material.nombre} · {material.color}
                       </option>
@@ -944,6 +1072,23 @@ export default async function Home({
           </Section>
 
           <Section active={section === "facturas"} title="Facturas" subtitle="Cobro">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+              {[
+                { label: "Facturado en rango", value: currency(rangedTotalInvoiced), detail: `${rangedInvoiceCount} facturas visibles` },
+                { label: "Cobrado en rango", value: currency(rangedTotalCollected), detail: `${rangedPaidInvoices} pagadas visibles` },
+                { label: "Pendiente en rango", value: currency(rangedTotalOutstanding), detail: `${rangedInvoiceCount} facturas filtradas` },
+                { label: "Facturas en rango", value: rangedInvoiceCount, detail: "segun filtros activos" },
+                { label: "Pendientes", value: rangedPendingInvoices, detail: "sin cobros en vista" },
+                { label: "Parciales / pagadas", value: `${rangedPartialInvoices}/${rangedPaidInvoices}`, detail: "visibles ahora" },
+              ].map((metric) => (
+                <article key={String(metric.label)} className="metric-card p-5">
+                  <p className="text-sm text-[color:var(--muted)]">{metric.label}</p>
+                  <p className="mt-4 text-3xl font-semibold tracking-[-0.05em]">{metric.value}</p>
+                  <p className="mt-2 text-sm text-[color:var(--muted)]">{metric.detail}</p>
+                </article>
+              ))}
+            </div>
+
             <div className="panel p-6">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -952,10 +1097,66 @@ export default async function Home({
                     Solo se puede facturar cuando el pedido ya esta entregado.
                   </p>
                 </div>
-                <StatusPill label={`${pendingInvoices} pendientes`} tone={pendingInvoices > 0 ? "warn" : "success"} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <a
+                    href={`/api/exports/invoices?invoiceStatus=${encodeURIComponent(invoiceFilter)}&fecha_inicio=${encodeURIComponent(invoiceDateStart)}&fecha_fin=${encodeURIComponent(invoiceDateEnd)}`}
+                    className="button-secondary"
+                  >
+                    Exportar facturas CSV
+                  </a>
+                  <a
+                    href={`/api/exports/payments?invoiceStatus=${encodeURIComponent(invoiceFilter)}&fecha_inicio=${encodeURIComponent(invoiceDateStart)}&fecha_fin=${encodeURIComponent(invoiceDateEnd)}`}
+                    className="button-secondary"
+                  >
+                    Exportar pagos CSV
+                  </a>
+                  {Object.keys(invoicePaymentLabels).map((status) => (
+                    <FilterLink
+                      key={status}
+                      href={`/?section=facturas&invoiceStatus=${status}&fecha_inicio=${encodeURIComponent(invoiceDateStart)}&fecha_fin=${encodeURIComponent(invoiceDateEnd)}`}
+                      label={invoicePaymentLabels[status]}
+                      active={invoiceFilter === status}
+                      count={
+                        status === "ALL"
+                          ? invoices.length
+                          : invoices.filter((invoice) => invoice.estado_pago === status).length
+                      }
+                    />
+                  ))}
+                  <StatusPill label={`${pendingInvoices} pendientes`} tone={pendingInvoices > 0 ? "warn" : "success"} />
+                </div>
               </div>
+              <form className="mb-4 grid gap-3 rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] p-4 md:grid-cols-[1fr_1fr_auto_auto]" method="get">
+                <input type="hidden" name="section" value="facturas" />
+                <input type="hidden" name="invoiceStatus" value={invoiceFilter} />
+                <label className="space-y-1 text-sm text-[color:var(--muted-strong)]">
+                  <span>Fecha desde</span>
+                  <input type="date" name="fecha_inicio" defaultValue={invoiceDateStart} className="input" />
+                </label>
+                <label className="space-y-1 text-sm text-[color:var(--muted-strong)]">
+                  <span>Fecha hasta</span>
+                  <input type="date" name="fecha_fin" defaultValue={invoiceDateEnd} className="input" />
+                </label>
+                <button type="submit" className="button-secondary self-end">
+                  Aplicar fechas
+                </button>
+                <a href={`/?section=facturas&invoiceStatus=${encodeURIComponent(invoiceFilter)}`} className="button-secondary self-end">
+                  Limpiar fechas
+                </a>
+              </form>
+              <p className="mb-4 text-sm text-[color:var(--muted)]">
+                Las exportaciones descargan CSV compatibles con Excel y Sheets usando los filtros visibles: estado, fecha de factura y fecha de pago asociada.
+                {invoiceDateStart || invoiceDateEnd
+                  ? ` En el rango actual hay ${dateFilteredInvoices.length} facturas y ${filteredPaymentsCount} pagos.`
+                  : ` Ahora mismo ves ${dateFilteredInvoices.length} facturas y ${filteredPaymentsCount} pagos.`}
+              </p>
+              <FilterSummary
+                totalItems={rangedInvoiceCount}
+                hasFilters={hasActiveInvoiceFilters}
+                filters={activeInvoiceFilterSegments}
+              />
               <div className="table-wrap table-scroll">
-                <InvoicesInlineTable invoices={invoices} />
+                <InvoicesInlineTable invoices={dateFilteredInvoices} />
               </div>
             </div>
           </Section>
@@ -1003,6 +1204,13 @@ export default async function Home({
                     ))}
                   </div>
                 </div>
+                <FilterSummary
+                  totalItems={filteredPrinters.length}
+                  hasFilters={hasActivePrinterFilters}
+                  filters={activePrinterFilterSegments}
+                  itemLabel="impresoras"
+                  allItemsText="Mostrando todas las impresoras"
+                />
                 <div className="table-wrap table-scroll">
                   <PrintersInlineTable printers={filteredPrinters} />
                 </div>
@@ -1024,7 +1232,7 @@ export default async function Home({
                 <input name="enlaceModelo" placeholder="Enlace del modelo" className="input" />
                 <select name="materialId" className="input" defaultValue="">
                   <option value="">Material principal</option>
-                  {materials.map((material) => (
+                  {activeMaterials.map((material) => (
                     <option key={material.id} value={material.id}>
                       {material.codigo} · {material.nombre} · {material.color}
                     </option>
@@ -1059,6 +1267,7 @@ export default async function Home({
                       codigo: material.codigo,
                       nombre: material.nombre,
                       color: material.color,
+                      activo: material.activo,
                     }))}
                   />
                 </div>
@@ -1116,21 +1325,34 @@ export default async function Home({
                   <div>
                     <h3 className="text-xl font-semibold">Stock y alertas</h3>
                     <p className="mt-1 text-sm text-[color:var(--muted)]">
-                      Filtra materiales bajo minimo para detectar antes los cuellos de botella.
+                      Gestiona altas y bajas sin perder historico. Los materiales inactivos dejan de aparecer en formularios normales.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {["ALL", "LOW"].map((status) => (
+                    {["ALL", "ACTIVE", "INACTIVE"].map((status) => (
                       <FilterLink
                         key={status}
                         href={`/?section=materiales&materialFilter=${status}`}
-                        label={status === "ALL" ? "todos" : "stock bajo"}
+                        label={status === "ALL" ? "todos" : status === "ACTIVE" ? "activos" : "inactivos"}
                         active={materialFilter === status}
-                        count={status === "ALL" ? materials.length : lowStockMaterials.length}
+                        count={
+                          status === "ALL"
+                            ? materials.length
+                            : status === "ACTIVE"
+                              ? activeMaterials.length
+                              : materials.filter((material) => !material.activo).length
+                        }
                       />
                     ))}
                   </div>
                 </div>
+                <FilterSummary
+                  totalItems={filteredMaterials.length}
+                  hasFilters={hasActiveMaterialFilters}
+                  filters={activeMaterialFilterSegments}
+                  itemLabel="materiales"
+                  allItemsText="Mostrando todos los materiales"
+                />
                 <div className="table-wrap table-scroll">
                   <MaterialsInlineTable materials={filteredMaterials} />
                 </div>
@@ -1186,6 +1408,13 @@ export default async function Home({
                   ))}
                 </div>
               </div>
+              <FilterSummary
+                totalItems={filteredInventoryMovements.length}
+                hasFilters={hasActiveMovementFilters}
+                filters={activeMovementFilterSegments}
+                itemLabel="movimientos"
+                allItemsText="Mostrando todos los movimientos"
+              />
               <div className="table-wrap table-scroll">
                 <table className="table">
                 <thead>

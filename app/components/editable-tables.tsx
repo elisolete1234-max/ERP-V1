@@ -4,13 +4,15 @@ import { useState } from "react";
 import {
   completeManufacturingAction,
   confirmOrderAction,
+  deleteMaterialAction,
   deliverOrderAction,
   generateInvoiceAction,
+  registerInvoicePaymentAction,
   startManufacturingAction,
   retryOrderAction,
+  toggleMaterialActiveAction,
   updateFinishedInventoryAction,
   updateCustomerAction,
-  updateInvoiceAction,
   updateManufacturingAction,
   updateMaterialAction,
   updateOrderAction,
@@ -49,6 +51,7 @@ type Material = {
   stock_minimo_g: number;
   proveedor: string | null;
   notas: string | null;
+  activo: boolean;
   fecha_actualizacion: string;
 };
 
@@ -103,9 +106,20 @@ type Invoice = {
   subtotal: number;
   iva: number;
   total: number;
+  total_pagado: number;
+  importe_pendiente: number;
   estado_pago: string;
   pedido_codigo: string;
   cliente_nombre: string;
+  pagos: Array<{
+    id: string;
+    codigo: string;
+    factura_id: string;
+    fecha_pago: string;
+    metodo_pago: string;
+    importe: number;
+    notas: string | null;
+  }>;
 };
 
 type FinishedInventory = {
@@ -141,6 +155,7 @@ type MaterialOption = {
   codigo: string;
   nombre: string;
   color: string;
+  activo: boolean;
 };
 
 type ProductOption = {
@@ -230,6 +245,16 @@ function orderTone(status: string) {
   return "warn";
 }
 
+function paymentTone(status: string) {
+  if (status === "PAGADA") return "success";
+  if (status === "PARCIAL") return "info";
+  return "warn";
+}
+
+function paymentMethodLabel(method: string) {
+  return method.toLowerCase().replaceAll("_", " ");
+}
+
 function rowHighlight(level?: "danger" | "warn" | "attention" | null) {
   if (level === "danger") return "row-danger";
   if (level === "warn") return "row-warn";
@@ -308,6 +333,51 @@ function InvoiceIcon() {
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
       <path d="M6 3.5h8v13l-2-1.2-2 1.2-2-1.2-2 1.2v-13Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
       <path d="M7.7 7h4.6M7.7 10h4.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M2.8 10s2.6-4.2 7.2-4.2 7.2 4.2 7.2 4.2-2.6 4.2-7.2 4.2S2.8 10 2.8 10Z" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="10" cy="10" r="2.2" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function PaymentIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M4 5.5h12v9H4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M4 8.2h12M10 10v3.2M8.5 11.4h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ArchiveIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M4.2 5.4h11.6v2.5H4.2zM5.4 7.9h9.2v6.7H5.4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M8 10h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function RestoreIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M5.2 8.2A5.5 5.5 0 1 1 10 15.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M5.1 4.8v3.7h3.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M5.8 6.4h8.4l-.7 8.5H6.5l-.7-8.5ZM7.5 4.7h5M4.8 4.7h10.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8.5 8.6v3.6M11.5 8.6v3.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }
@@ -687,27 +757,60 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
         {materials.map((material) => {
           const editing = editingId === material.id;
           const formId = `material-form-${material.id}`;
+          const stockTone =
+            material.stock_actual_g === 0
+              ? "danger"
+              : material.stock_actual_g <= material.stock_minimo_g
+                ? "warn"
+                : null;
           return (
             <tr
               key={material.id}
               className={rowHighlight(
-                material.stock_actual_g === 0
-                  ? "danger"
-                  : material.stock_actual_g <= material.stock_minimo_g
-                    ? "warn"
-                    : null,
+                !material.activo
+                  ? "attention"
+                  : stockTone,
               )}
             >
               <td>
                 <form id={formId} action={updateMaterialAction}>
                   <input type="hidden" name="id" value={material.id} />
                 </form>
-                <ActionButtons
-                  editing={editing}
-                  onEdit={() => setEditingId(material.id)}
-                  onCancel={() => setEditingId(null)}
-                  formId={formId}
-                />
+                <div className="table-action-group">
+                  <ActionButtons
+                    editing={editing}
+                    onEdit={() => setEditingId(material.id)}
+                    onCancel={() => setEditingId(null)}
+                    formId={formId}
+                  />
+                  {!editing ? (
+                    <form action={toggleMaterialActiveAction}>
+                      <input type="hidden" name="id" value={material.id} />
+                      <input type="hidden" name="active" value={material.activo ? "false" : "true"} />
+                      <SubmitButton
+                        variant={material.activo ? "icon-soft" : "icon-dark"}
+                        pendingText={<SpinnerIcon />}
+                        title={material.activo ? "Dar de baja" : "Reactivar"}
+                        aria-label={material.activo ? "Dar de baja" : "Reactivar"}
+                      >
+                        {material.activo ? <ArchiveIcon /> : <RestoreIcon />}
+                      </SubmitButton>
+                    </form>
+                  ) : null}
+                  {!editing && !material.activo ? (
+                    <form action={deleteMaterialAction}>
+                      <input type="hidden" name="id" value={material.id} />
+                      <SubmitButton
+                        variant="icon-danger"
+                        pendingText={<SpinnerIcon />}
+                        title="Eliminar definitivamente"
+                        aria-label="Eliminar definitivamente"
+                      >
+                        <TrashIcon />
+                      </SubmitButton>
+                    </form>
+                  ) : null}
+                </div>
               </td>
               <td>{material.codigo}</td>
               <td>
@@ -763,6 +866,11 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
                           .join(" · ")}
                       </div>
                     ) : null}
+                    <div className="mt-2">
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(material.activo ? "success" : "neutral")}`}>
+                        {material.activo ? "Activo" : "Inactivo"}
+                      </span>
+                    </div>
                   </div>
                 )}
               </td>
@@ -790,15 +898,24 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
                 )}
               </td>
               <td>
-                <span
-                  className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                    material.stock_actual_g <= material.stock_minimo_g
-                      ? badgeClasses("warn")
-                      : badgeClasses("success")
-                  }`}
-                >
-                  {material.stock_actual_g <= material.stock_minimo_g ? "Bajo minimo" : "OK"}
-                </span>
+                <div className="flex flex-wrap gap-2">
+                  <span
+                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      stockTone === "danger"
+                        ? badgeClasses("danger")
+                        : stockTone === "warn"
+                          ? badgeClasses("warn")
+                          : badgeClasses("success")
+                    }`}
+                  >
+                    {stockTone === "danger" ? "Sin stock" : stockTone === "warn" ? "Bajo minimo" : "OK"}
+                  </span>
+                  {!material.activo ? (
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("neutral")}`}>
+                      Baja aplicada
+                    </span>
+                  ) : null}
+                </div>
               </td>
             </tr>
           );
@@ -820,12 +937,23 @@ export function ProductsInlineTable({
   return (
     <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Producto</th><th>Material</th><th>Costes</th><th>PVP</th></tr>
+        <tr>
+          <th>Acciones</th>
+          <th>ID</th>
+          <th>Producto</th>
+          <th>Material</th>
+          <th>Costes</th>
+          <th>PVP</th>
+        </tr>
       </thead>
       <tbody>
         {products.map((product) => {
           const editing = editingId === product.id;
           const formId = `product-form-${product.id}`;
+          const availableMaterials = materials.filter(
+            (material) => material.activo || material.id === product.material_id,
+          );
+
           return (
             <tr key={product.id}>
               <td>
@@ -839,67 +967,271 @@ export function ProductsInlineTable({
                   formId={formId}
                 />
               </td>
+
               <td>{product.codigo}</td>
+
               <td>
                 {editing ? (
                   <div className="table-edit-stack table-cell-edit--wide">
-                    <input form={formId} name="nombre" defaultValue={product.nombre} className={tableInputClass} />
-                    <textarea form={formId} name="descripcion" defaultValue={product.descripcion ?? ""} rows={2} className={tableTextareaClass} />
-                    <input form={formId} name="enlaceModelo" defaultValue={product.enlace_modelo ?? ""} className={tableInputClass} />
-                    <label className="flex items-center gap-2 text-sm">
-                      <input form={formId} type="checkbox" name="activo" defaultChecked={product.activo} />
-                      Activo
-                    </label>
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                        Datos básicos
+                      </p>
+
+                      <div className="table-edit-stack">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Nombre del producto
+                          </label>
+                          <input
+                            form={formId}
+                            name="nombre"
+                            defaultValue={product.nombre}
+                            className={tableInputClass}
+                            placeholder="Ej: Figura decorativa"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Descripción
+                          </label>
+                          <textarea
+                            form={formId}
+                            name="descripcion"
+                            defaultValue={product.descripcion ?? ""}
+                            rows={2}
+                            className={tableTextareaClass}
+                            placeholder="Descripción breve del producto"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Enlace del modelo
+                          </label>
+                          <input
+                            form={formId}
+                            name="enlaceModelo"
+                            defaultValue={product.enlace_modelo ?? ""}
+                            className={tableInputClass}
+                            placeholder="https://..."
+                          />
+                        </div>
+
+                        <label className="mt-1 flex items-center gap-2 text-sm font-medium text-[color:var(--muted-strong)]">
+                          <input
+                            form={formId}
+                            type="checkbox"
+                            name="activo"
+                            defaultChecked={product.activo}
+                          />
+                          Producto activo
+                        </label>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div>
-                    <div>{product.nombre}</div>
-                    <div className="text-xs text-[color:var(--muted)]">{product.gramos_estimados} g - {product.tiempo_impresion_horas} h</div>
+                    <div className="font-medium">{product.nombre}</div>
+                    <div className="text-xs text-[color:var(--muted)]">
+                      {product.gramos_estimados} g · {product.tiempo_impresion_horas} h
+                    </div>
+                    <div className="mt-2">
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          badgeClasses(product.activo ? "success" : "neutral")
+                        }`}
+                      >
+                        {product.activo ? "Activo" : "Inactivo"}
+                      </span>
+                    </div>
                   </div>
                 )}
               </td>
+
               <td>
                 {editing ? (
-                  <select form={formId} name="materialId" defaultValue={product.material_id} className={tableInputClass}>
-                    {materials.map((material) => (
-                      <option key={material.id} value={material.id}>
-                        {material.codigo} - {material.nombre} - {material.color}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                      Material base
+                    </p>
+                    <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                      Material
+                    </label>
+                    <select
+                      form={formId}
+                      name="materialId"
+                      defaultValue={product.material_id}
+                      className={tableInputClass}
+                    >
+                      {availableMaterials.map((material) => (
+                        <option key={material.id} value={material.id}>
+                          {material.codigo} - {material.nombre} - {material.color}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 ) : (
                   product.material_nombre
                 )}
               </td>
+
               <td>
                 {editing ? (
                   <div className="table-edit-stack table-cell-edit">
-                    <div className="table-edit-grid-2">
-                      <input form={formId} name="gramosEstimados" type="number" min="1" defaultValue={product.gramos_estimados} className={tableInputClass} placeholder="Gramos" />
-                      <input form={formId} name="tiempoImpresionHoras" type="number" min="0.1" step="0.1" defaultValue={product.tiempo_impresion_horas} className={tableInputClass} placeholder="Tiempo impresion" />
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                        Producción
+                      </p>
+
+                      <div className="table-edit-grid-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Gramos estimados
+                          </label>
+                          <input
+                            form={formId}
+                            name="gramosEstimados"
+                            type="number"
+                            min="1"
+                            defaultValue={product.gramos_estimados}
+                            className={tableInputClass}
+                            placeholder="120"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Tiempo impresión (h)
+                          </label>
+                          <input
+                            form={formId}
+                            name="tiempoImpresionHoras"
+                            type="number"
+                            min="0.1"
+                            step="0.1"
+                            defaultValue={product.tiempo_impresion_horas}
+                            className={tableInputClass}
+                            placeholder="3.5"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-3 table-edit-grid-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Coste electricidad
+                          </label>
+                          <input
+                            form={formId}
+                            name="costeElectricidad"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            defaultValue={product.coste_electricidad}
+                            className={tableInputClass}
+                            placeholder="0.50"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Coste máquina
+                          </label>
+                          <input
+                            form={formId}
+                            name="costeMaquina"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            defaultValue={product.coste_maquina}
+                            className={tableInputClass}
+                            placeholder="1.20"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-3 table-edit-grid-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Coste mano de obra
+                          </label>
+                          <input
+                            form={formId}
+                            name="costeManoObra"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            defaultValue={product.coste_mano_obra}
+                            className={tableInputClass}
+                            placeholder="2.00"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Coste postprocesado
+                          </label>
+                          <input
+                            form={formId}
+                            name="costePostprocesado"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            defaultValue={product.coste_postprocesado}
+                            className={tableInputClass}
+                            placeholder="1.00"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-3">
+                        <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                          Margen
+                        </label>
+                        <input
+                          form={formId}
+                          name="margen"
+                          type="number"
+                          step="0.01"
+                          defaultValue={product.margen}
+                          className={tableInputClass}
+                          placeholder="2.20"
+                        />
+                      </div>
                     </div>
-                    <div className="table-edit-grid-2">
-                      <input form={formId} name="costeElectricidad" type="number" min="0" step="0.01" defaultValue={product.coste_electricidad} className={tableInputClass} placeholder="Coste electricidad" />
-                      <input form={formId} name="costeMaquina" type="number" min="0" step="0.01" defaultValue={product.coste_maquina} className={tableInputClass} placeholder="Coste maquina" />
-                    </div>
-                    <div className="table-edit-grid-2">
-                      <input form={formId} name="costeManoObra" type="number" min="0" step="0.01" defaultValue={product.coste_mano_obra} className={tableInputClass} placeholder="Coste mano de obra" />
-                      <input form={formId} name="costePostprocesado" type="number" min="0" step="0.01" defaultValue={product.coste_postprocesado} className={tableInputClass} placeholder="Coste postprocesado" />
-                    </div>
-                    <input form={formId} name="margen" type="number" step="0.01" defaultValue={product.margen} className={tableInputClass} placeholder="Margen" />
                   </div>
                 ) : (
                   <div>
                     <div>Receta: {formatCurrency(product.coste_total_producto)}</div>
                     <div className="text-xs text-[color:var(--muted)]">
-                      Material {formatCurrency(product.coste_material_estimado)} · Maquina {formatCurrency(product.coste_maquina)}
+                      Material {formatCurrency(product.coste_material_estimado)} · Máquina {formatCurrency(product.coste_maquina)}
                     </div>
                   </div>
                 )}
               </td>
+
               <td>
                 {editing ? (
-                  <input form={formId} name="pvp" type="number" min="0.01" step="0.01" defaultValue={product.pvp} className={tableInputClass} />
+                  <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                      Venta
+                    </p>
+                    <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                      PVP
+                    </label>
+                    <input
+                      form={formId}
+                      name="pvp"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      defaultValue={product.pvp}
+                      className={tableInputClass}
+                      placeholder="15.00"
+                    />
+                  </div>
                 ) : (
                   formatCurrency(product.pvp)
                 )}
@@ -1036,50 +1368,242 @@ export function InvoicesInlineTable({
 }: {
   invoices: Invoice[];
 }) {
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [paymentId, setPaymentId] = useState<string | null>(null);
 
   return (
     <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>Factura</th><th>Pedido</th><th>Cliente</th><th>Subtotal</th><th>IVA</th><th>Total</th><th>Pago</th></tr>
+        <tr>
+          <th>Acciones</th>
+          <th>Factura</th>
+          <th>Pedido</th>
+          <th>Cliente</th>
+          <th>Subtotal</th>
+          <th>IVA</th>
+          <th>Total</th>
+          <th>Pagado</th>
+          <th>Pendiente</th>
+          <th>Pago</th>
+        </tr>
       </thead>
       <tbody>
         {invoices.map((invoice) => {
-          const editing = editingId === invoice.id;
-          const formId = `invoice-form-${invoice.id}`;
-          return (
-            <tr key={invoice.id} className={rowHighlight(invoice.estado_pago === "PENDIENTE" ? "attention" : null)}>
-              <td>
-                <form id={formId} action={updateInvoiceAction}>
-                  <input type="hidden" name="id" value={invoice.id} />
-                </form>
-                <ActionButtons
-                  editing={editing}
-                  onEdit={() => setEditingId(invoice.id)}
-                  onCancel={() => setEditingId(null)}
-                  formId={formId}
-                />
-              </td>
-              <td>{invoice.codigo}</td>
-              <td>{invoice.pedido_codigo}</td>
-              <td>{invoice.cliente_nombre}</td>
-              <td>{formatCurrency(invoice.subtotal)}</td>
-              <td>{formatCurrency(invoice.iva)}</td>
-              <td>{formatCurrency(invoice.total)}</td>
-              <td>
-                {editing ? (
-                  <select form={formId} name="estadoPago" defaultValue={invoice.estado_pago} className={tableInputClass}>
-                    <option value="PENDIENTE">pendiente</option>
-                    <option value="PAGADA">pagada</option>
-                  </select>
-                ) : (
-                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(invoice.estado_pago === "PAGADA" ? "success" : "warn")}`}>
+          const expanded = detailId === invoice.id;
+          const registeringPayment = paymentId === invoice.id;
+          const pendingAmount = Math.max(invoice.importe_pendiente, 0);
+          const canRegisterPayment = pendingAmount > 0;
+          const paymentCount = invoice.pagos.length;
+          const highlight =
+            invoice.estado_pago === "PENDIENTE"
+              ? "warn"
+              : invoice.estado_pago === "PARCIAL"
+                ? "attention"
+                : null;
+
+          return [
+              <tr key={`invoice-${invoice.id}`} className={rowHighlight(highlight)}>
+                <td>
+                  <div className="table-action-group">
+                    <button
+                      type="button"
+                      title={expanded ? "Ocultar detalle" : "Ver detalle"}
+                      aria-label={expanded ? "Ocultar detalle" : "Ver detalle"}
+                      className="icon-action-button icon-action-button--soft"
+                      onClick={() => {
+                        const nextOpen = detailId === invoice.id ? null : invoice.id;
+                        setDetailId(nextOpen);
+                        if (nextOpen === null) {
+                          setPaymentId((current) => (current === invoice.id ? null : current));
+                        }
+                      }}
+                    >
+                      <EyeIcon />
+                    </button>
+                    <button
+                      type="button"
+                      title={canRegisterPayment ? "Registrar pago" : "Factura pagada"}
+                      aria-label={canRegisterPayment ? "Registrar pago" : "Factura pagada"}
+                      disabled={!canRegisterPayment}
+                      className={`icon-action-button ${
+                        canRegisterPayment ? "icon-action-button--dark" : "icon-action-button"
+                      }`}
+                      onClick={() => {
+                        if (!canRegisterPayment) return;
+                        const nextOpen = paymentId === invoice.id ? null : invoice.id;
+                        setDetailId(invoice.id);
+                        setPaymentId(nextOpen);
+                      }}
+                    >
+                      <PaymentIcon />
+                    </button>
+                  </div>
+                </td>
+                <td>{invoice.codigo}</td>
+                <td>{invoice.pedido_codigo}</td>
+                <td>{invoice.cliente_nombre}</td>
+                <td>{formatCurrency(invoice.subtotal)}</td>
+                <td>{formatCurrency(invoice.iva)}</td>
+                <td>{formatCurrency(invoice.total)}</td>
+                <td>{formatCurrency(invoice.total_pagado)}</td>
+                <td>{formatCurrency(invoice.importe_pendiente)}</td>
+                <td>
+                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>
                     {invoice.estado_pago.toLowerCase()}
                   </span>
-                )}
-              </td>
-            </tr>
-          );
+                </td>
+              </tr>,
+              expanded ? (
+                <tr key={`invoice-detail-${invoice.id}`} className={rowHighlight(highlight)}>
+                  <td colSpan={10} className="bg-[color:var(--surface-strong)]">
+                    <div className="grid gap-4 px-2 py-4 xl:grid-cols-[1.1fr_0.9fr]">
+                      <div className="panel-muted p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="eyebrow">Trazabilidad de cobro</p>
+                            <h4 className="mt-2 text-base font-semibold text-slate-900">Historial de pagos</h4>
+                          </div>
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>
+                            {invoice.estado_pago.toLowerCase()}
+                          </span>
+                        </div>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Total</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.total)}</p>
+                          </div>
+                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Cobrado</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.total_pagado)}</p>
+                          </div>
+                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Pendiente</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.importe_pendiente)}</p>
+                          </div>
+                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Pagos</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{paymentCount}</p>
+                          </div>
+                        </div>
+                        <div className="mt-4 space-y-3">
+                          {invoice.pagos.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-black/10 bg-white/75 px-4 py-4 text-sm text-[color:var(--muted)]">
+                              Esta factura aun no tiene pagos registrados.
+                            </div>
+                          ) : (
+                            invoice.pagos.map((payment) => (
+                              <article key={payment.id} className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                  <div>
+                                    <p className="text-sm font-semibold text-slate-900">
+                                      {payment.codigo} · {payment.metodo_pago.toLowerCase()}
+                                    </p>
+                                    <p className="mt-1 text-xs text-[color:var(--muted)]">{formatDate(payment.fecha_pago)}</p>
+                                  </div>
+                                  <p className="text-sm font-semibold text-slate-900">{formatCurrency(payment.importe)}</p>
+                                </div>
+                                {payment.notas ? (
+                                  <p className="mt-2 text-sm text-[color:var(--muted)]">{payment.notas}</p>
+                                ) : null}
+                              </article>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="panel-muted p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="eyebrow">Registrar pago</p>
+                            <h4 className="mt-2 text-base font-semibold text-slate-900">Cobro sobre {invoice.codigo}</h4>
+                          </div>
+                          <div className="text-right text-xs text-[color:var(--muted)]">
+                            <div>Total: {formatCurrency(invoice.total)}</div>
+                            <div>Cobrado: {formatCurrency(invoice.total_pagado)}</div>
+                            <div>Pendiente: {formatCurrency(invoice.importe_pendiente)}</div>
+                          </div>
+                        </div>
+
+                        {registeringPayment && canRegisterPayment ? (
+                          <form action={registerInvoicePaymentAction} className="mt-4 space-y-3">
+                            <input type="hidden" name="facturaId" value={invoice.id} />
+                            <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
+                              Introduce un importe entre 0,01 EUR y {formatCurrency(pendingAmount)}. Si completas el pendiente, la factura pasara a pagada automaticamente.
+                              <div className="mt-1 text-xs text-sky-700">
+                                Metodos admitidos: {["EFECTIVO", "TRANSFERENCIA", "TARJETA", "BIZUM", "PAYPAL", "OTRO"].map(paymentMethodLabel).join(", ")}.
+                              </div>
+                            </div>
+                            <div className="table-edit-grid-2">
+                              <input
+                                name="importe"
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                max={pendingAmount.toFixed(2)}
+                                defaultValue={pendingAmount.toFixed(2)}
+                                placeholder="Importe"
+                                className={tableInputClass}
+                                required
+                              />
+                              <select name="metodoPago" defaultValue="TRANSFERENCIA" className={tableInputClass}>
+                                <option value="EFECTIVO">efectivo</option>
+                                <option value="TRANSFERENCIA">transferencia</option>
+                                <option value="TARJETA">tarjeta</option>
+                                <option value="BIZUM">bizum</option>
+                                <option value="PAYPAL">paypal</option>
+                                <option value="OTRO">otro</option>
+                              </select>
+                            </div>
+                            <input
+                              name="fechaPago"
+                              type="date"
+                              defaultValue={new Date().toISOString().slice(0, 10)}
+                              className={tableInputClass}
+                              required
+                            />
+                            <textarea
+                              name="notas"
+                              rows={2}
+                              placeholder="Notas del pago"
+                              className={tableTextareaClass}
+                            />
+                            <div className="table-action-group">
+                              <SubmitButton variant="chip-dark" pendingText="Guardando...">
+                                Registrar pago
+                              </SubmitButton>
+                              <button
+                                type="button"
+                                onClick={() => setPaymentId(null)}
+                                className="button-secondary"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </form>
+                        ) : (
+                          <div className="mt-4 space-y-3">
+                            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3 text-sm text-[color:var(--muted)]">
+                              {canRegisterPayment
+                                ? "Abre el formulario para registrar un pago parcial o completar el cobro."
+                                : "La factura ya esta totalmente pagada."}
+                            </div>
+                            {canRegisterPayment ? (
+                              <button
+                                type="button"
+                                onClick={() => setPaymentId(invoice.id)}
+                                className="button-secondary"
+                              >
+                                Registrar pago
+                              </button>
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              ) : null,
+            ];
         })}
       </tbody>
     </table>

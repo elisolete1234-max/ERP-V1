@@ -7,6 +7,7 @@ import {
   createCustomerRecord,
   createMaterialRecord,
   createOrderRecord,
+  createInvoicePaymentRecord,
   createPrinterRecord,
   createProductRecord,
   deliverOrder,
@@ -15,6 +16,7 @@ import {
   restockMaterial,
   restockFinishedProduct,
   retryOrderAfterRestock,
+  setMaterialActiveState,
   updateCustomerRecord,
   updateFinishedInventoryRecord,
   updateInvoiceRecord,
@@ -23,6 +25,7 @@ import {
   updateOrderRecord,
   updatePrinterRecord,
   updateProductRecord,
+  deleteMaterialRecord,
 } from "@/lib/erp-service";
 
 function asString(value: FormDataEntryValue | null) {
@@ -166,6 +169,25 @@ export async function updateMaterialAction(formData: FormData) {
       }),
     "Material actualizado.",
     "/?section=materiales",
+  );
+}
+
+export async function toggleMaterialActiveAction(formData: FormData) {
+  const materialId = asString(formData.get("id"));
+  const active = asString(formData.get("active")) === "true";
+
+  await executeAndRefresh(
+    () => setMaterialActiveState(materialId, active),
+    active ? "Material reactivado." : "Material dado de baja.",
+    "/?section=materiales",
+  );
+}
+
+export async function deleteMaterialAction(formData: FormData) {
+  await executeAndRefresh(
+    () => deleteMaterialRecord(asString(formData.get("id"))),
+    "Material eliminado definitivamente.",
+    "/?section=materiales&materialFilter=ALL",
   );
 }
 
@@ -415,6 +437,21 @@ export async function updateInvoiceAction(formData: FormData) {
         estadoPago: asString(formData.get("estadoPago")),
       }),
     "Factura actualizada.",
+    "/?section=facturas",
+  );
+}
+
+export async function registerInvoicePaymentAction(formData: FormData) {
+  await executeAndRefresh(
+    () =>
+      createInvoicePaymentRecord({
+        facturaId: asString(formData.get("facturaId")),
+        fechaPago: asString(formData.get("fechaPago")) || undefined,
+        metodoPago: asString(formData.get("metodoPago")),
+        importe: asNumber(formData.get("importe")),
+        notas: asString(formData.get("notas")),
+      }),
+    "Pago registrado correctamente.",
     "/?section=facturas",
   );
 }

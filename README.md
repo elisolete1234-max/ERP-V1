@@ -242,6 +242,12 @@ npm run build
 npm install
 ```
 
+Si trabajas desde otro PC:
+
+- clona el repo con Git en una carpeta local normal
+- no uses OneDrive como carpeta activa del entorno de desarrollo
+- deja OneDrive solo para backups o copia de seguridad externa
+
 ### Desarrollo local
 
 ```bash
@@ -260,6 +266,19 @@ http://localhost:3000
 npm run build
 npm start
 ```
+
+### Flujo multi-PC recomendado
+
+Referencia rapida:
+
+- [`MULTI-PC-WORKFLOW.md`](./MULTI-PC-WORKFLOW.md)
+
+Resumen:
+
+- Git es la fuente de verdad del codigo
+- cada PC debe tener su propio `node_modules`, `.next`, caches y logs
+- `data/fabriq-erp.db` no se versiona ni se comparte por sincronizacion en vivo
+- OneDrive debe usarse solo para backups, no para fusionar cambios de desarrollo
 
 ### Que probar rapidamente
 
@@ -304,6 +323,9 @@ web/
 
 - `.next/` y `.test-dist/` son generadas automaticamente
 - `node_modules/` contiene dependencias
+- `.npm-cache/`, logs y temporales son locales a cada PC
+- `data/` contiene la base SQLite local del entorno actual
+- `backups/` contiene copias locales y no forma parte del codigo versionado
 - `prisma/` puede seguir presente en el repo por arrastre historico, pero no forma parte de la arquitectura activa de esta V1
 
 ---

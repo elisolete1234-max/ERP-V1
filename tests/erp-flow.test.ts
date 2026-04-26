@@ -1,26 +1,37 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { row, rows } from "../lib/db";
+import { buildCsvFilename, formatCsvDateTime, formatCsvMoney, serializeCsv } from "../lib/csv";
+import { row, rows, run } from "../lib/db";
 import {
   completeManufacturingOrder,
   confirmOrder,
   createCustomerRecord,
+  createInvoicePaymentRecord,
   createMaterialRecord,
   createOrderRecord,
   createPrinterRecord,
   createProductRecord,
   deliverOrder,
+  deleteMaterialRecord,
   generateInvoiceForOrder,
+  getInvoicePaymentsExportRows,
+  getInvoicesExportRows,
   resetDatabase,
   restockFinishedProduct,
+  setMaterialActiveState,
   startManufacturingOrder,
   updateManufacturingOrderRecord,
   updateMaterialRecord,
   updateProductRecord,
   updateOrderRecord,
   updatePrinterRecord,
-  updateInvoiceRecord,
 } from "../lib/erp-service";
+
+type CsvFixtureRow = {
+  codigo: string;
+  cliente: string;
+  notas: string;
+};
 
 async function ids() {
   return {
@@ -77,6 +88,36 @@ test("la base reseteada arranca sin datos de negocio", async () => {
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM finished_product_inventory`))!.total, 0);
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM inventory_movements`))!.total, 0);
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices`))!.total, 0);
+});
+
+test("serializeCsv escapa comillas, delimitadores y preserva encabezados", () => {
+  const csv = serializeCsv(
+    [
+      {
+        codigo: 'FAC-"001"',
+        cliente: "Mateo; Studio",
+        notas: "Linea 1\nLinea 2",
+      },
+    ],
+    {
+      columns: [
+        { header: "codigo_factura", value: (row: CsvFixtureRow) => row.codigo },
+        { header: "cliente", value: (row: CsvFixtureRow) => row.cliente },
+        { header: "notas", value: (row: CsvFixtureRow) => row.notas },
+      ],
+    },
+  );
+
+  assert.equal(
+    csv,
+    'codigo_factura;cliente;notas\r\n"FAC-""001""";"Mateo; Studio";Linea 1 Linea 2',
+  );
+});
+
+test("helpers CSV formatean importes, fechas y nombres de archivo de forma estable", () => {
+  assert.equal(formatCsvMoney(1234.5), "1234,50");
+  assert.equal(formatCsvDateTime("2026-04-17T08:05:00"), "2026-04-17 08:05");
+  assert.equal(buildCsvFilename("facturas", new Date("2026-04-17T08:05:00")), "facturas-20260417-0805.csv");
 });
 
 test("usa stock terminado completo sin fabricar", async () => {
@@ -285,6 +326,50 @@ test("editar material conserva campos opcionales vacios y guarda el detalle V2",
   assert.equal(material.peso_spool_g, 1000);
   assert.equal(material.temp_extrusor, 210);
   assert.equal(material.temp_cama, null);
+});
+
+test("permite dar de baja y reactivar materiales sin borrar su historico", async () => {
+  const { materialId } = await setupSingleProductFixture();
+
+  await setMaterialActiveState(materialId, false);
+  assert.equal((await row<{ activo: number }>(`SELECT activo FROM materials WHERE id = ?`, materialId))!.activo, 0);
+
+  await setMaterialActiveState(materialId, true);
+  assert.equal((await row<{ activo: number }>(`SELECT activo FROM materials WHERE id = ?`, materialId))!.activo, 1);
+});
+
+test("solo elimina de verdad materiales inactivos y sin historico ni relaciones", async () => {
+  await createMaterialRecord({ nombre: "Material temporal" });
+  const materialId = (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))!.id;
+
+  await assert.rejects(() => deleteMaterialRecord(materialId), /dar de baja/i);
+
+  await setMaterialActiveState(materialId, false);
+  await deleteMaterialRecord(materialId);
+
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM materials WHERE id = ?`, materialId))!.total, 0);
+});
+
+test("bloquea la eliminacion real si el material tiene productos o movimientos", async () => {
+  const { materialId } = await setupSingleProductFixture();
+  await setMaterialActiveState(materialId, false);
+
+  await assert.rejects(
+    () => deleteMaterialRecord(materialId),
+    /producto|movimiento/i,
+  );
+});
+
+test("no permite nuevos productos con materiales inactivos", async () => {
+  await createCustomerRecord({ nombre: "Cliente base" });
+  await createMaterialRecord({ nombre: "Material inactivo" });
+  const materialId = (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))!.id;
+  await setMaterialActiveState(materialId, false);
+
+  await assert.rejects(
+    () => createProductRecord({ nombre: "Producto bloqueado", materialId }),
+    /material inactivo/i,
+  );
 });
 
 test("editar producto actualiza la receta V2 sin romper el producto", async () => {
@@ -546,7 +631,7 @@ test("estados del pedido transicionan correctamente y la factura solo se genera 
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices WHERE pedido_id = ?`, orderId))!.total, 1);
 });
 
-test("la factura sincroniza el estado de pago del pedido", async () => {
+test("la factura arranca pendiente y sincroniza pagos parciales y totales con el pedido", async () => {
   const { customerId, productId } = await setupSingleProductFixture();
   const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
   await confirmOrder(orderId);
@@ -560,13 +645,149 @@ test("la factura sincroniza el estado de pago del pedido", async () => {
   await deliverOrder(orderId);
   await generateInvoiceForOrder(orderId);
 
-  const invoiceId = (await row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, orderId))!.id;
+  const invoice = (await row<{
+    id: string;
+    total: number;
+    total_pagado: number;
+    importe_pendiente: number;
+    estado_pago: string;
+  }>(`SELECT id, total, total_pagado, importe_pendiente, estado_pago FROM invoices WHERE pedido_id = ?`, orderId))!;
   assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM orders WHERE id = ?`, orderId))!.estado_pago, "PENDIENTE");
+  assert.equal(invoice.estado_pago, "PENDIENTE");
+  assert.equal(invoice.total_pagado, 0);
+  assert.equal(invoice.importe_pendiente, invoice.total);
 
-  await updateInvoiceRecord({ id: invoiceId, estadoPago: "PAGADA" });
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "TRANSFERENCIA",
+    importe: 10,
+    notas: "Primer cobro",
+  });
 
-  assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM invoices WHERE id = ?`, invoiceId))!.estado_pago, "PAGADA");
+  const afterPartial = (await row<{
+    total_pagado: number;
+    importe_pendiente: number;
+    estado_pago: string;
+  }>(`SELECT total_pagado, importe_pendiente, estado_pago FROM invoices WHERE id = ?`, invoice.id))!;
+
+  assert.equal(afterPartial.estado_pago, "PARCIAL");
+  assert.equal(afterPartial.total_pagado, 10);
+  assert.equal(afterPartial.importe_pendiente, Number((invoice.total - 10).toFixed(2)));
+  assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM orders WHERE id = ?`, orderId))!.estado_pago, "PARCIAL");
+
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "BIZUM",
+    importe: afterPartial.importe_pendiente,
+    notas: "Pago final",
+  });
+
+  assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM invoices WHERE id = ?`, invoice.id))!.estado_pago, "PAGADA");
   assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM orders WHERE id = ?`, orderId))!.estado_pago, "PAGADA");
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoice_payments WHERE factura_id = ?`, invoice.id))!.total, 2);
+});
+
+test("bloquea pagos invalidos o superiores al pendiente", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{ id: string; total: number }>(`SELECT id, total FROM invoices WHERE pedido_id = ?`, orderId))!;
+
+  await assert.rejects(
+    () => createInvoicePaymentRecord({ facturaId: invoice.id, metodoPago: "TARJETA", importe: 0 }),
+    /mayor que cero/i,
+  );
+  await assert.rejects(
+    () => createInvoicePaymentRecord({ facturaId: invoice.id, metodoPago: "TARJETA", importe: -5 }),
+    /mayor que cero/i,
+  );
+  await assert.rejects(
+    () => createInvoicePaymentRecord({ facturaId: invoice.id, metodoPago: "TARJETA", importe: invoice.total + 1 }),
+    /supera el importe pendiente/i,
+  );
+  await assert.rejects(
+    () => createInvoicePaymentRecord({ facturaId: invoice.id, metodoPago: "CRIPTO", importe: 5 }),
+    /metodo de pago no valido/i,
+  );
+  await assert.rejects(
+    () => createInvoicePaymentRecord({ facturaId: invoice.id, metodoPago: "TARJETA", importe: 5, fechaPago: "fecha-invalida" }),
+    /fecha de pago no es valida/i,
+  );
+});
+
+test("bloquea registrar pagos cuando la factura ya esta totalmente pagada", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{ id: string; total: number }>(`SELECT id, total FROM invoices WHERE pedido_id = ?`, orderId))!;
+
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "TRANSFERENCIA",
+    importe: invoice.total,
+    notas: "Pago completo",
+  });
+
+  await assert.rejects(
+    () => createInvoicePaymentRecord({ facturaId: invoice.id, metodoPago: "TARJETA", importe: 1 }),
+    /ya esta pagada/i,
+  );
+});
+
+test("las exportaciones de facturas y pagos respetan rango de fechas y estado", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, orderId))!;
+
+  await run(`UPDATE invoices SET fecha = ? WHERE id = ?`, "2026-04-10T09:00:00.000Z", invoice.id);
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "TRANSFERENCIA",
+    importe: 10,
+    fechaPago: "2026-04-12",
+    notas: "Pago dentro de rango",
+  });
+
+  const invoicesInRange = await getInvoicesExportRows("PARCIAL", "2026-04-01", "2026-04-30");
+  const invoicesOutOfRange = await getInvoicesExportRows("PARCIAL", "2026-05-01", "2026-05-31");
+  const paymentsInRange = await getInvoicePaymentsExportRows("PARCIAL", "2026-04-01", "2026-04-30");
+  const paymentsOutOfRange = await getInvoicePaymentsExportRows("PARCIAL", "2026-05-01", "2026-05-31");
+
+  assert.equal(invoicesInRange.length, 1);
+  assert.equal(invoicesOutOfRange.length, 0);
+  assert.equal(paymentsInRange.length, 1);
+  assert.equal(paymentsOutOfRange.length, 0);
 });
 
 test("el inventario terminado refleja stock reservado y disponible", async () => {

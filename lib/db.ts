@@ -241,6 +241,7 @@ async function migrateDatabase() {
   await ensureColumn("materials", "temp_extrusor", "INTEGER");
   await ensureColumn("materials", "temp_cama", "INTEGER");
   await ensureColumn("materials", "notas", "TEXT");
+  await ensureColumn("materials", "activo", "INTEGER DEFAULT 1");
   await ensureColumn("products", "codigo", "TEXT");
   await ensureColumn("products", "coste_maquina", "REAL DEFAULT 0");
   await ensureColumn("products", "coste_mano_obra", "REAL DEFAULT 0");
@@ -257,6 +258,8 @@ async function migrateDatabase() {
   await ensureColumn("manufacturing_orders", "impresora_id", "TEXT");
   await ensureColumn("manufacturing_orders", "coste_impresora_total", "REAL DEFAULT 0");
   await ensureColumn("manufacturing_orders", "tiempo_estimado_horas", "REAL");
+  await ensureColumn("invoices", "total_pagado", "REAL DEFAULT 0");
+  await ensureColumn("invoices", "importe_pendiente", "REAL DEFAULT 0");
   await ensureColumn("finished_product_inventory", "unidades_stock", "INTEGER DEFAULT 0");
   await ensureColumn("finished_product_inventory", "unidades_reservadas", "INTEGER DEFAULT 0");
   await ensureColumn("finished_product_inventory", "unidades_disponibles", "INTEGER DEFAULT 0");
@@ -304,6 +307,7 @@ async function createSchema() {
       stock_minimo_g INTEGER NOT NULL,
       proveedor TEXT,
       notas TEXT,
+      activo INTEGER NOT NULL DEFAULT 1,
       fecha_actualizacion TEXT NOT NULL
     );
 
@@ -405,9 +409,22 @@ async function createSchema() {
       subtotal REAL NOT NULL,
       iva REAL NOT NULL,
       total REAL NOT NULL,
+      total_pagado REAL NOT NULL DEFAULT 0,
+      importe_pendiente REAL NOT NULL DEFAULT 0,
       estado_pago TEXT NOT NULL,
       FOREIGN KEY(pedido_id) REFERENCES orders(id) ON DELETE CASCADE,
       FOREIGN KEY(cliente_id) REFERENCES customers(id) ON DELETE RESTRICT
+    );
+
+    CREATE TABLE IF NOT EXISTS invoice_payments (
+      id TEXT PRIMARY KEY,
+      codigo TEXT UNIQUE,
+      factura_id TEXT NOT NULL,
+      fecha_pago TEXT NOT NULL,
+      metodo_pago TEXT NOT NULL,
+      importe REAL NOT NULL,
+      notas TEXT,
+      FOREIGN KEY(factura_id) REFERENCES invoices(id) ON DELETE RESTRICT
     );
 
     CREATE TABLE IF NOT EXISTS order_status_history (
@@ -496,14 +513,17 @@ async function createSchema() {
   await ensureColumn("finished_product_inventory", "codigo", "TEXT");
   await ensureColumn("printers", "codigo", "TEXT");
   await ensureColumn("inventory_movements", "codigo", "TEXT");
+  await ensureColumn("invoice_payments", "codigo", "TEXT");
   await exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_finished_inventory_codigo ON finished_product_inventory(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_printers_codigo ON printers(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_movements_codigo ON inventory_movements(codigo);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_payments_codigo ON invoice_payments(codigo);
   `);
   await backfillCodes("finished_product_inventory", "STK-", "rowid ASC");
   await backfillCodes("printers", "IMP-", "rowid ASC");
   await backfillCodes("inventory_movements", "MIV-", "fecha ASC");
+  await backfillCodes("invoice_payments", "PAG-", "fecha_pago ASC");
 }
 
 export async function ensureDatabaseReady() {
