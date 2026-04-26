@@ -378,6 +378,10 @@ export default async function Home({
   const activePrinterFilterSegments: string[] = [
     hasActivePrinterFilters ? `estado: ${printerStatusLabels[printerFilter]}` : null,
   ].filter((segment): segment is string => Boolean(segment));
+  const hasActiveMovementFilters = movementFilter !== "ALL";
+  const activeMovementFilterSegments: string[] = [
+    hasActiveMovementFilters ? `tipo: ${movementInventoryLabels[movementFilter]}` : null,
+  ].filter((segment): segment is string => Boolean(segment));
   const activeInvoiceFilterSegments: string[] = [
     hasInvoiceStatusFilter ? `estado: ${invoiceStatusFilterLabel(invoiceFilter)}` : null,
     invoiceDateStart ? `desde: ${invoiceDateStart}` : null,
@@ -1404,6 +1408,13 @@ export default async function Home({
                   ))}
                 </div>
               </div>
+              <FilterSummary
+                totalItems={filteredInventoryMovements.length}
+                hasFilters={hasActiveMovementFilters}
+                filters={activeMovementFilterSegments}
+                itemLabel="movimientos"
+                allItemsText="Mostrando todos los movimientos"
+              />
               <div className="table-wrap table-scroll">
                 <table className="table">
                 <thead>
