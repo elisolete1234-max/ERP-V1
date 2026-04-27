@@ -479,17 +479,19 @@ export default async function Home({
               <Link
                 key={key}
                 href={`/?section=${key}`}
-                className={`flex items-center justify-between rounded-2xl px-4 py-3 text-sm font-medium transition ${
+                className={`flex items-center justify-between rounded-2xl px-4 py-3 text-sm font-medium transition focus-visible:outline-none ${
                   section === key
-                    ? "bg-[linear-gradient(135deg,#111827,#1d4ed8)] text-white shadow-[0_14px_30px_rgba(29,78,216,0.18)]"
+                    ? "bg-[linear-gradient(135deg,#111827,#1d4ed8)] text-slate-50 shadow-[0_14px_30px_rgba(29,78,216,0.18)] hover:text-white [&_*]:text-inherit"
                     : "text-[color:var(--muted-strong)] hover:bg-slate-50 hover:text-slate-950"
                 }`}
               >
-                <span>{sectionLabels[key]}</span>
+                <span className={section === key ? "text-slate-50" : undefined}>{sectionLabels[key]}</span>
                 {sectionCounters[key] != null ? (
                   <span
                     className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                      section === key ? "bg-white/18 text-white" : "bg-black/6 text-[color:var(--muted)]"
+                      section === key
+                        ? "border border-white/12 bg-white/18 text-slate-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]"
+                        : "bg-black/6 text-[color:var(--muted)]"
                     }`}
                   >
                     {sectionCounters[key]}
