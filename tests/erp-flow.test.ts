@@ -52,6 +52,7 @@ async function setupSingleProductFixture(input?: {
   grams?: number;
   hours?: number;
   electricity?: number;
+  pvp?: number;
 }) {
   await createCustomerRecord({ nombre: "Cliente Test" });
   await createMaterialRecord({
@@ -70,7 +71,7 @@ async function setupSingleProductFixture(input?: {
     tiempoImpresionHoras: input?.hours ?? 2,
     costeElectricidad: input?.electricity ?? 1.5,
     margen: 10,
-    pvp: 30,
+    pvp: input?.pvp ?? 30,
     materialId,
   });
   await createPrinterRecord({ nombre: "Impresora 1", costeHora: 2, horasUsoAcumuladas: 0, estado: "LIBRE" });
@@ -755,8 +756,8 @@ test("pedido y factura sin descuento mantienen el comportamiento actual", async 
 
   assert.equal(order.subtotal, 30);
   assert.equal(order.descuento, 0);
-  assert.equal(order.iva, 6.3);
-  assert.equal(order.total, 36.3);
+  assert.equal(order.iva, 5.21);
+  assert.equal(order.total, 30);
 
   await confirmOrder(orderId);
   const manufacturingId = (await row<{ id: string }>(
@@ -777,8 +778,47 @@ test("pedido y factura sin descuento mantienen el comportamiento actual", async 
 
   assert.equal(invoice.subtotal, 30);
   assert.equal(invoice.descuento, 0);
-  assert.equal(invoice.iva, 6.3);
-  assert.equal(invoice.total, 36.3);
+  assert.equal(invoice.iva, 5.21);
+  assert.equal(invoice.total, 30);
+});
+
+test("desglosa correctamente un PVP con IVA incluido y un descuento final con IVA incluido", async () => {
+  const { customerId, productId } = await setupSingleProductFixture({ pvp: 5 });
+
+  const singleOrderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 1 }],
+  });
+
+  const singleOrder = (await row<{
+    subtotal: number;
+    descuento: number;
+    iva: number;
+    total: number;
+  }>(`SELECT subtotal, descuento, iva, total FROM orders WHERE id = ?`, singleOrderId))!;
+
+  assert.equal(singleOrder.subtotal, 5);
+  assert.equal(singleOrder.descuento, 0);
+  assert.equal(singleOrder.total, 5);
+  assert.equal(singleOrder.iva, 0.87);
+
+  const discountedOrderId = await createOrderRecord({
+    clienteId: customerId,
+    descuento: 2,
+    lines: [{ productId, quantity: 2 }],
+  });
+
+  const discountedOrder = (await row<{
+    subtotal: number;
+    descuento: number;
+    iva: number;
+    total: number;
+  }>(`SELECT subtotal, descuento, iva, total FROM orders WHERE id = ?`, discountedOrderId))!;
+
+  assert.equal(discountedOrder.subtotal, 10);
+  assert.equal(discountedOrder.descuento, 2);
+  assert.equal(discountedOrder.total, 8);
+  assert.equal(discountedOrder.iva, 1.39);
 });
 
 test("pedido y factura con descuento calculan base, IVA y total final correctamente", async () => {
@@ -799,9 +839,9 @@ test("pedido y factura con descuento calculan base, IVA y total final correctame
 
   assert.equal(order.subtotal, 60);
   assert.equal(order.descuento, 5);
-  assert.equal(order.iva, 11.55);
-  assert.equal(order.total, 66.55);
-  assert.equal(order.beneficio_total, 48);
+  assert.equal(order.iva, 9.55);
+  assert.equal(order.total, 55);
+  assert.equal(order.beneficio_total, 38.45);
 
   await confirmOrder(orderId);
   const manufacturingId = (await row<{ id: string }>(
@@ -822,8 +862,8 @@ test("pedido y factura con descuento calculan base, IVA y total final correctame
 
   assert.equal(invoice.subtotal, 60);
   assert.equal(invoice.descuento, 5);
-  assert.equal(invoice.iva, 11.55);
-  assert.equal(invoice.total, 66.55);
+  assert.equal(invoice.iva, 9.55);
+  assert.equal(invoice.total, 55);
 });
 
 test("los pagos usan el total final con descuento como pendiente", async () => {
@@ -851,9 +891,9 @@ test("los pagos usan el total final con descuento como pendiente", async () => {
     importe_pendiente: number;
   }>(`SELECT id, total, total_pagado, importe_pendiente FROM invoices WHERE pedido_id = ?`, orderId))!;
 
-  assert.equal(invoice.total, 66.55);
+  assert.equal(invoice.total, 55);
   assert.equal(invoice.total_pagado, 0);
-  assert.equal(invoice.importe_pendiente, 66.55);
+  assert.equal(invoice.importe_pendiente, 55);
 
   await createInvoicePaymentRecord({
     facturaId: invoice.id,
@@ -868,7 +908,7 @@ test("los pagos usan el total final con descuento como pendiente", async () => {
   }>(`SELECT total_pagado, importe_pendiente, estado_pago FROM invoices WHERE id = ?`, invoice.id))!;
 
   assert.equal(afterPayment.total_pagado, 20);
-  assert.equal(afterPayment.importe_pendiente, 46.55);
+  assert.equal(afterPayment.importe_pendiente, 35);
   assert.equal(afterPayment.estado_pago, "PARCIAL");
 });
 
@@ -899,7 +939,7 @@ test("permite editar el descuento de una factura no pagada y recalcula total y p
     importe_pendiente: number;
   }>(`SELECT id, subtotal, descuento, iva, total, total_pagado, importe_pendiente FROM invoices WHERE pedido_id = ?`, orderId))!;
 
-  assert.equal(invoice.total, 72.6);
+  assert.equal(invoice.total, 60);
   await updateInvoiceRecord({ id: invoice.id, descuento: 5 });
 
   const updated = (await row<{
@@ -912,10 +952,10 @@ test("permite editar el descuento de una factura no pagada y recalcula total y p
   }>(`SELECT descuento, iva, total, total_pagado, importe_pendiente, estado_pago FROM invoices WHERE id = ?`, invoice.id))!;
 
   assert.equal(updated.descuento, 5);
-  assert.equal(updated.iva, 11.55);
-  assert.equal(updated.total, 66.55);
+  assert.equal(updated.iva, 9.55);
+  assert.equal(updated.total, 55);
   assert.equal(updated.total_pagado, 0);
-  assert.equal(updated.importe_pendiente, 66.55);
+  assert.equal(updated.importe_pendiente, 55);
   assert.equal(updated.estado_pago, "PENDIENTE");
 });
 

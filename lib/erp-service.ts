@@ -55,9 +55,10 @@ function calculateOrderFinancials(input: {
 }) {
   const subtotal = roundMoney(input.subtotal);
   const descuento = normalizeDiscount(input.discount, subtotal);
-  const baseImponible = roundMoney(subtotal - descuento);
-  const iva = roundMoney((baseImponible * (input.vatRate ?? DEFAULT_VAT_RATE)) / 100);
-  const total = roundMoney(baseImponible + iva);
+  const total = roundMoney(subtotal - descuento);
+  const vatMultiplier = 1 + (input.vatRate ?? DEFAULT_VAT_RATE) / 100;
+  const baseImponible = roundMoney(total / vatMultiplier);
+  const iva = roundMoney(total - baseImponible);
   const costeTotalPedido = roundMoney(input.costeTotalPedido);
   const beneficioTotal = roundMoney(baseImponible - costeTotalPedido);
 
@@ -70,15 +71,6 @@ function calculateOrderFinancials(input: {
     costeTotalPedido,
     beneficioTotal,
   };
-}
-
-function inferVatRateFromAmounts(subtotal: number, descuento: number, iva: number) {
-  const taxableBase = roundMoney(Math.max(subtotal - descuento, 0));
-  if (taxableBase <= 0) {
-    return DEFAULT_VAT_RATE;
-  }
-
-  return (iva / taxableBase) * 100;
 }
 
 function nowIso() {
@@ -305,9 +297,10 @@ async function recalculateOrderTotals(orderId: string, vatRate = DEFAULT_VAT_RAT
   const subtotal = roundMoney(totals?.subtotal ?? 0);
   const costeTotal = roundMoney(totals?.coste_total ?? 0);
   const descuento = clampStoredDiscount(order?.descuento, subtotal);
-  const baseImponible = roundMoney(subtotal - descuento);
-  const iva = roundMoney((baseImponible * vatRate) / 100);
-  const total = roundMoney(baseImponible + iva);
+  const total = roundMoney(subtotal - descuento);
+  const vatMultiplier = 1 + vatRate / 100;
+  const baseImponible = roundMoney(total / vatMultiplier);
+  const iva = roundMoney(total - baseImponible);
   const beneficio = roundMoney(baseImponible - costeTotal);
 
   await run(
@@ -921,6 +914,7 @@ export async function getAppSnapshot() {
 
   const orders = await Promise.all(ordersBase.map(async (order) => ({
     ...order,
+    subtotal: roundMoney(order.total + (order.descuento ?? 0)),
     lineas: await rows<{
       id: string;
       codigo: string;
@@ -1072,6 +1066,7 @@ export async function getAppSnapshot() {
 
       return {
         ...invoice,
+        subtotal: roundMoney(invoice.total + (invoice.descuento ?? 0)),
         total_pagado: totalPagado,
         importe_pendiente: importePendiente,
         estado_pago: estadoPago,
@@ -1191,9 +1186,9 @@ export async function getInvoicesExportRows(status?: string, fromDate?: string, 
        o.codigo AS codigoPedido,
        c.nombre AS cliente,
        i.fecha AS fechaFactura,
-       i.subtotal AS subtotal,
+       ROUND(i.total + i.descuento, 2) AS subtotal,
        i.descuento AS descuento,
-       ROUND(i.subtotal - i.descuento, 2) AS baseImponible,
+       ROUND(i.total - i.iva, 2) AS baseImponible,
        i.iva AS iva,
        i.total AS total,
        i.total_pagado AS totalPagado,
@@ -1969,11 +1964,11 @@ export async function updateInvoiceRecord(input: {
       throw new Error("No se puede modificar el descuento de una factura ya pagada.");
     }
 
-    const vatRate = inferVatRateFromAmounts(invoice.subtotal, invoice.descuento, invoice.iva);
+    const grossSubtotal = roundMoney(invoice.total + (invoice.descuento ?? 0));
     const nextFinancials = calculateOrderFinancials({
-      subtotal: invoice.subtotal,
+      subtotal: grossSubtotal,
       costeTotalPedido: 0,
-      vatRate,
+      vatRate: DEFAULT_VAT_RATE,
       discount: input.descuento,
     });
 

@@ -282,8 +282,8 @@ function deriveInvoicePaymentView(invoice: Pick<Invoice, "total" | "total_pagado
   };
 }
 
-function deriveTaxableBase(subtotal: number, descuento: number) {
-  return Number(Math.max(subtotal - descuento, 0).toFixed(2));
+function deriveTaxableBase(total: number, iva: number) {
+  return Number(Math.max(total - iva, 0).toFixed(2));
 }
 
 function rowHighlight(level?: "danger" | "warn" | "attention" | null) {
@@ -655,7 +655,7 @@ export function OrdersInlineBoard({
                 <div className="table-edit-card">
                   <InlineField
                     label="Descuento (€)"
-                    hint="Importe a descontar antes de IVA"
+                    hint="Importe final a descontar, IVA incluido"
                   >
                     <input
                       name="descuento"
@@ -722,7 +722,7 @@ export function OrdersInlineBoard({
             ) : (
               <>
                 {(() => {
-                  const baseImponible = deriveTaxableBase(order.subtotal, order.descuento);
+                  const baseImponible = deriveTaxableBase(order.total, order.iva);
                   return (
                     <>
                       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -743,11 +743,11 @@ export function OrdersInlineBoard({
 
                       <div className="mt-3 grid gap-3 sm:grid-cols-5">
                         <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
-                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Subtotal</p>
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Subtotal IVA incluido</p>
                           <p className="mt-2 text-sm font-semibold">{formatCurrency(order.subtotal)}</p>
                         </div>
                         <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
-                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Descuento</p>
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Descuento IVA incluido</p>
                           <p className="mt-2 text-sm font-semibold">{formatCurrency(order.descuento)}</p>
                         </div>
                         <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
@@ -755,7 +755,7 @@ export function OrdersInlineBoard({
                           <p className="mt-2 text-sm font-semibold">{formatCurrency(baseImponible)}</p>
                         </div>
                         <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
-                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">IVA</p>
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">IVA incluido</p>
                           <p className="mt-2 text-sm font-semibold">{formatCurrency(order.iva)}</p>
                         </div>
                         <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
@@ -1573,10 +1573,10 @@ export function InvoicesInlineTable({
           <th>Factura</th>
           <th>Pedido</th>
           <th>Cliente</th>
-          <th>Subtotal</th>
-          <th>Descuento</th>
+          <th>Subtotal IVA incl.</th>
+          <th>Descuento IVA incl.</th>
           <th>Base</th>
-          <th>IVA</th>
+          <th>IVA incl.</th>
           <th>Total</th>
           <th>Pagado</th>
           <th>Pendiente</th>
@@ -1589,7 +1589,7 @@ export function InvoicesInlineTable({
           const registeringPayment = paymentId === invoice.id;
           const { total, totalPaid, pendingAmount, paymentStatus, canRegisterPayment } =
             deriveInvoicePaymentView(invoice);
-          const taxableBase = deriveTaxableBase(invoice.subtotal, invoice.descuento);
+          const taxableBase = deriveTaxableBase(total, invoice.iva);
           const canEditDiscount = paymentStatus !== "PAGADA";
           const paymentCount = invoice.pagos.length;
           const highlight =
@@ -1669,11 +1669,11 @@ export function InvoicesInlineTable({
                         </div>
                         <div className="mt-4 grid gap-3 sm:grid-cols-5">
                           <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Subtotal</p>
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Subtotal IVA incluido</p>
                             <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.subtotal)}</p>
                           </div>
                           <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Descuento</p>
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Descuento IVA incluido</p>
                             <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.descuento)}</p>
                           </div>
                           <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
@@ -1681,7 +1681,7 @@ export function InvoicesInlineTable({
                             <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(taxableBase)}</p>
                           </div>
                           <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">IVA</p>
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">IVA incluido</p>
                             <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.iva)}</p>
                           </div>
                           <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
@@ -1759,7 +1759,7 @@ export function InvoicesInlineTable({
                                 Puedes ajustar el descuento mientras la factura no este totalmente pagada. El total nunca puede quedar por debajo de lo ya cobrado.
                               </div>
                               <div className="table-edit-card">
-                                <InlineField label="Descuento (€)" hint="Importe a descontar antes de IVA">
+                                <InlineField label="Descuento (€)" hint="Importe final a descontar, IVA incluido">
                                   <input
                                     name="descuento"
                                     type="number"

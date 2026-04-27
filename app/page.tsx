@@ -920,7 +920,7 @@ export default async function Home({
                 ))}
                 <Field
                   label="Descuento (€)"
-                  hint="Importe a descontar antes de IVA"
+                  hint="Importe final a descontar, IVA incluido"
                 >
                   <input
                     name="descuento"
