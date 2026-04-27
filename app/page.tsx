@@ -1300,11 +1300,15 @@ export default async function Home({
           </Section>
           <Section active={section === "productos-terminados"} title="Productos terminados" subtitle="Inventario de salida">
             <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
-              <form action={restockFinishedProductAction} className="panel form-shell p-6 space-y-5">
+              <form
+                id="add-finished-stock"
+                action={restockFinishedProductAction}
+                className="panel form-shell p-6 space-y-5"
+              >
                 <div>
-                  <h3 className="text-xl font-semibold">Registrar entrada</h3>
+                  <h3 className="text-xl font-semibold">Añadir stock</h3>
                   <p className="mt-2 text-sm text-[color:var(--muted)]">
-                    Usa esta entrada para stock ya fabricado, sobrantes o productos listos para venta directa.
+                    Registra una entrada manual de producto terminado sin afectar fabricacion ni ventas ya existentes.
                   </p>
                 </div>
                 <Field label="Producto">
@@ -1318,8 +1322,8 @@ export default async function Home({
                   </select>
                 </Field>
                 <div className="form-grid-2">
-                  <Field label="Cantidad disponible">
-                    <input name="cantidad" type="number" min="1" placeholder="Cantidad disponible" className="input" />
+                  <Field label="Cantidad">
+                    <input name="cantidad" type="number" min="1" placeholder="Cantidad" className="input" />
                   </Field>
                   <Field label="Ubicacion">
                     <input name="ubicacion" placeholder="Ubicacion" className="input" />
@@ -1329,11 +1333,11 @@ export default async function Home({
                   <Field label="Coste unitario">
                     <input name="costeUnitario" type="number" min="0" step="0.01" placeholder="Coste unitario" className="input" />
                   </Field>
-                  <Field label="Motivo de entrada">
-                    <input name="motivo" placeholder="Motivo de entrada" className="input" />
+                  <Field label="Motivo (opcional)">
+                    <input name="motivo" placeholder="Motivo" className="input" />
                   </Field>
                 </div>
-                <SubmitButton pendingText="Registrando...">Registrar entrada</SubmitButton>
+                <SubmitButton pendingText="Añadiendo...">Añadir stock</SubmitButton>
               </form>
 
               <div className="panel p-6">
@@ -1344,7 +1348,12 @@ export default async function Home({
                       Si hay unidades aqui, el pedido las usara antes de lanzar fabricacion.
                     </p>
                   </div>
-                  <StatusPill label={`${finishedUnits} uds`} tone={finishedUnits > 0 ? "success" : "neutral"} />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusPill label={`${finishedUnits} uds`} tone={finishedUnits > 0 ? "success" : "neutral"} />
+                    <a href="#add-finished-stock" className="button-secondary">
+                      Añadir stock
+                    </a>
+                  </div>
                 </div>
                 <div className="table-wrap table-scroll">
                   <FinishedInventoryInlineTable finishedInventory={finishedInventory} />
