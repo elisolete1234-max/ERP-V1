@@ -14,6 +14,7 @@ import {
   deliverOrder,
   deleteMaterialRecord,
   generateInvoiceForOrder,
+  getAppSnapshot,
   getInvoicePaymentsExportRows,
   getInvoicesExportRows,
   resetDatabase,
@@ -802,6 +803,58 @@ test("bloquea registrar pagos cuando la factura ya esta totalmente pagada", asyn
     () => createInvoicePaymentRecord({ facturaId: invoice.id, metodoPago: "TARJETA", importe: 1 }),
     /ya esta pagada/i,
   );
+});
+
+test("recalcula facturas desincronizadas antes de mostrarlas o registrar cobros", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{ id: string; total: number }>(`SELECT id, total FROM invoices WHERE pedido_id = ?`, orderId))!;
+
+  await run(
+    `UPDATE invoices
+     SET total_pagado = ?, importe_pendiente = ?, estado_pago = ?
+     WHERE id = ?`,
+    0,
+    0,
+    "PENDIENTE",
+    invoice.id,
+  );
+
+  const snapshot = await getAppSnapshot();
+  const visibleInvoice = snapshot.invoices.find((item) => item.id === invoice.id);
+
+  assert.ok(visibleInvoice);
+  assert.equal(visibleInvoice!.estado_pago, "PENDIENTE");
+  assert.equal(visibleInvoice!.total_pagado, 0);
+  assert.equal(visibleInvoice!.importe_pendiente, invoice.total);
+
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "TRANSFERENCIA",
+    importe: Number((invoice.total / 2).toFixed(2)),
+    notas: "Pago tras resincronizacion",
+  });
+
+  const afterPayment = (await row<{
+    total_pagado: number;
+    importe_pendiente: number;
+    estado_pago: string;
+  }>(`SELECT total_pagado, importe_pendiente, estado_pago FROM invoices WHERE id = ?`, invoice.id))!;
+
+  assert.equal(afterPayment.estado_pago, "PARCIAL");
+  assert.equal(afterPayment.total_pagado, Number((invoice.total / 2).toFixed(2)));
+  assert.equal(afterPayment.importe_pendiente, Number((invoice.total - afterPayment.total_pagado).toFixed(2)));
 });
 
 test("las exportaciones de facturas y pagos respetan rango de fechas y estado", async () => {

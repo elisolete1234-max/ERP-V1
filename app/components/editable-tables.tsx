@@ -1518,13 +1518,16 @@ export function InvoicesInlineTable({
         {invoices.map((invoice) => {
           const expanded = detailId === invoice.id;
           const registeringPayment = paymentId === invoice.id;
-          const pendingAmount = Math.max(invoice.importe_pendiente, 0);
-          const canRegisterPayment = pendingAmount > 0;
+          const totalPaid = Number(invoice.total_pagado.toFixed(2));
+          const pendingAmount = Number(Math.max(invoice.total - totalPaid, 0).toFixed(2));
+          const paymentStatus =
+            totalPaid <= 0 ? "PENDIENTE" : totalPaid < invoice.total ? "PARCIAL" : "PAGADA";
+          const canRegisterPayment = pendingAmount > 0 && paymentStatus !== "PAGADA";
           const paymentCount = invoice.pagos.length;
           const highlight =
-            invoice.estado_pago === "PENDIENTE"
+            paymentStatus === "PENDIENTE"
               ? "warn"
-              : invoice.estado_pago === "PARCIAL"
+              : paymentStatus === "PARCIAL"
                 ? "attention"
                 : null;
 
@@ -1572,11 +1575,11 @@ export function InvoicesInlineTable({
                 <td>{formatCurrency(invoice.subtotal)}</td>
                 <td>{formatCurrency(invoice.iva)}</td>
                 <td>{formatCurrency(invoice.total)}</td>
-                <td>{formatCurrency(invoice.total_pagado)}</td>
-                <td>{formatCurrency(invoice.importe_pendiente)}</td>
+                <td>{formatCurrency(totalPaid)}</td>
+                <td>{formatCurrency(pendingAmount)}</td>
                 <td>
-                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>
-                    {invoice.estado_pago.toLowerCase()}
+                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(paymentStatus))}`}>
+                    {paymentStatus.toLowerCase()}
                   </span>
                 </td>
               </tr>,
@@ -1590,8 +1593,8 @@ export function InvoicesInlineTable({
                             <p className="eyebrow">Trazabilidad de cobro</p>
                             <h4 className="mt-2 text-base font-semibold text-slate-900">Historial de pagos</h4>
                           </div>
-                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>
-                            {invoice.estado_pago.toLowerCase()}
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(paymentStatus))}`}>
+                            {paymentStatus.toLowerCase()}
                           </span>
                         </div>
                         <div className="mt-4 grid gap-3 sm:grid-cols-4">
@@ -1601,11 +1604,11 @@ export function InvoicesInlineTable({
                           </div>
                           <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
                             <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Cobrado</p>
-                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.total_pagado)}</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(totalPaid)}</p>
                           </div>
                           <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
                             <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Pendiente</p>
-                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.importe_pendiente)}</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(pendingAmount)}</p>
                           </div>
                           <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
                             <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Pagos</p>
@@ -1646,8 +1649,8 @@ export function InvoicesInlineTable({
                           </div>
                           <div className="text-right text-xs text-[color:var(--muted)]">
                             <div>Total: {formatCurrency(invoice.total)}</div>
-                            <div>Cobrado: {formatCurrency(invoice.total_pagado)}</div>
-                            <div>Pendiente: {formatCurrency(invoice.importe_pendiente)}</div>
+                            <div>Cobrado: {formatCurrency(totalPaid)}</div>
+                            <div>Pendiente: {formatCurrency(pendingAmount)}</div>
                           </div>
                         </div>
 

@@ -737,6 +737,11 @@ export async function getAppSnapshot() {
     await syncFinishedInventoryMetrics(item.product_id);
   }
 
+  const invoiceIds = await rows<{ id: string }>(`SELECT id FROM invoices`);
+  for (const item of invoiceIds) {
+    await syncInvoicePaymentSummary(item.id);
+  }
+
   const customers = await rows<{
     id: string;
     codigo: string;
@@ -988,21 +993,31 @@ export async function getAppSnapshot() {
   );
 
   const invoices = await Promise.all(
-    invoicesBase.map(async (invoice) => ({
-      ...invoice,
-      pagos: await rows<{
-        id: string;
-        codigo: string;
-        factura_id: string;
-        fecha_pago: string;
-        metodo_pago: string;
-        importe: number;
-        notas: string | null;
-      }>(
-        `SELECT * FROM invoice_payments WHERE factura_id = ? ORDER BY fecha_pago DESC, codigo DESC`,
-        invoice.id,
-      ),
-    })),
+    invoicesBase.map(async (invoice) => {
+      const totalPagado = roundMoney(invoice.total_pagado ?? 0);
+      const importePendiente = roundMoney(Math.max(invoice.total - totalPagado, 0));
+      const estadoPago =
+        totalPagado <= 0 ? "PENDIENTE" : totalPagado < invoice.total ? "PARCIAL" : "PAGADA";
+
+      return {
+        ...invoice,
+        total_pagado: totalPagado,
+        importe_pendiente: importePendiente,
+        estado_pago: estadoPago,
+        pagos: await rows<{
+          id: string;
+          codigo: string;
+          factura_id: string;
+          fecha_pago: string;
+          metodo_pago: string;
+          importe: number;
+          notas: string | null;
+        }>(
+          `SELECT * FROM invoice_payments WHERE factura_id = ? ORDER BY fecha_pago DESC, codigo DESC`,
+          invoice.id,
+        ),
+      };
+    }),
   );
 
   const finishedInventory = await rows<{
