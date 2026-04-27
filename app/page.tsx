@@ -224,6 +224,48 @@ function StatusPill({
   );
 }
 
+function IntelligentAlertCard({
+  tone,
+  title,
+  description,
+  href,
+  actionLabel,
+}: {
+  tone: "critical" | "warning" | "info" | "success";
+  title: string;
+  description: string;
+  href?: string;
+  actionLabel?: string;
+}) {
+  const toneClass =
+    tone === "critical"
+      ? "smart-alert-card smart-alert-card--critical"
+      : tone === "warning"
+        ? "smart-alert-card smart-alert-card--warning"
+        : tone === "info"
+          ? "smart-alert-card smart-alert-card--info"
+          : "smart-alert-card smart-alert-card--success";
+  const toneLabel =
+    tone === "critical" ? "Critico" : tone === "warning" ? "Warning" : tone === "info" ? "Info" : "Todo en orden";
+
+  return (
+    <article className={toneClass}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <span className="smart-alert-badge">{toneLabel}</span>
+          <h4 className="mt-3 text-base font-semibold text-slate-950">{title}</h4>
+          <p className="mt-2 text-sm leading-6 text-[color:var(--muted-strong)]">{description}</p>
+        </div>
+        {href && actionLabel ? (
+          <Link href={href} className="smart-alert-link">
+            {actionLabel}
+          </Link>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
 function Section({
   active,
   title,
@@ -449,6 +491,101 @@ export default async function Home({
   const readyToDeliver = orders.filter((order) => order.estado === "LISTO").length;
   const readyToInvoice = orders.filter((order) => order.estado === "ENTREGADO").length;
   const busyPrinters = printers.filter((printer) => printer.estado === "IMPRIMIENDO").length;
+  const maintenancePrinters = activePrinters.filter((printer) => printer.estado === "MANTENIMIENTO");
+  const blockedOrders = orders.filter((order) => order.estado === "INCIDENCIA_STOCK");
+  const blockedManufacturing = manufacturingOrders.filter((order) => order.estado === "BLOQUEADA_POR_STOCK");
+  const pendingManufacturingOrders = manufacturingOrders.filter((order) => order.estado !== "COMPLETADA");
+  const partialInvoices = invoices.filter((invoice) => invoice.estado_pago === "PARCIAL");
+  const pendingPaymentInvoices = invoices.filter((invoice) => invoice.estado_pago === "PENDIENTE");
+  const lowStockPreview = lowStockMaterials
+    .slice(0, 3)
+    .map((material) => `${material.codigo} ${material.nombre} (${material.stock_actual_g}/${material.stock_minimo_g} g)`)
+    .join(", ");
+  const blockedOrdersPreview = blockedOrders
+    .slice(0, 3)
+    .map((order) => `${order.codigo} ${order.cliente_nombre}`)
+    .join(", ");
+  const blockedManufacturingPreview = blockedManufacturing
+    .slice(0, 3)
+    .map((order) => `${order.codigo} ${order.producto_nombre}`)
+    .join(", ");
+  const printerPreview = [
+    busyPrinters > 0 ? `${busyPrinters} imprimiendo` : null,
+    maintenancePrinters.length > 0 ? `${maintenancePrinters.length} en mantenimiento` : null,
+  ]
+    .filter((segment): segment is string => Boolean(segment))
+    .join(" y ");
+  const paymentPreview = [
+    pendingPaymentInvoices.length > 0 ? `${pendingPaymentInvoices.length} pendientes` : null,
+    partialInvoices.length > 0 ? `${partialInvoices.length} parciales` : null,
+  ]
+    .filter((segment): segment is string => Boolean(segment))
+    .join(" y ");
+  const smartAlerts = [
+    ...(blockedOrders.length > 0 || blockedManufacturing.length > 0
+      ? [
+          {
+            tone: "critical" as const,
+            title: "Pedidos o fabricacion bloqueados",
+            description:
+              blockedOrders.length > 0 && blockedManufacturing.length > 0
+                ? `${blockedOrders.length} pedidos con incidencia y ${blockedManufacturing.length} ordenes de fabricacion bloqueadas. ${[blockedOrdersPreview, blockedManufacturingPreview].filter(Boolean).join(". ")}`
+                : blockedOrders.length > 0
+                  ? `${blockedOrders.length} pedidos con incidencia de stock. ${blockedOrdersPreview}`
+                  : `${blockedManufacturing.length} ordenes de fabricacion bloqueadas por stock. ${blockedManufacturingPreview}`,
+            href: blockedOrders.length > 0 ? "/?section=pedidos&orderStatus=INCIDENCIA_STOCK" : "/?section=fabricacion&manufacturingStatus=BLOQUEADA_POR_STOCK",
+            actionLabel: "Revisar bloqueo",
+          },
+        ]
+      : []),
+    ...(lowStockMaterials.length > 0
+      ? [
+          {
+            tone: "warning" as const,
+            title: "Materiales con stock bajo",
+            description:
+              lowStockMaterials.length === 1
+                ? `Hay 1 material por debajo o en su minimo. ${lowStockPreview}`
+                : `Hay ${lowStockMaterials.length} materiales por debajo o en su minimo. ${lowStockPreview}`,
+            href: "/?section=materiales&materialFilter=ACTIVE",
+            actionLabel: "Ver materiales",
+          },
+        ]
+      : []),
+    ...(pendingPaymentInvoices.length > 0 || partialInvoices.length > 0
+      ? [
+          {
+            tone: "warning" as const,
+            title: "Facturas pendientes de cobro",
+            description: `Hay ${pendingInvoices} facturas no liquidadas. ${paymentPreview}`,
+            href: "/?section=facturas&invoiceStatus=ALL",
+            actionLabel: "Ver facturas",
+          },
+        ]
+      : []),
+    ...(pendingManufacturingOrders.length > 0
+      ? [
+          {
+            tone: blockedManufacturing.length > 0 ? ("warning" as const) : ("info" as const),
+            title: "Fabricacion en curso o pendiente",
+            description: `Hay ${pendingManufacturingOrders.length} ordenes sin completar, de las cuales ${manufacturingOrders.filter((order) => order.estado === "PENDIENTE").length} estan pendientes de iniciar.`,
+            href: "/?section=fabricacion",
+            actionLabel: "Abrir fabricacion",
+          },
+        ]
+      : []),
+    ...(busyPrinters > 0 || maintenancePrinters.length > 0
+      ? [
+          {
+            tone: maintenancePrinters.length > 0 ? ("warning" as const) : ("info" as const),
+            title: "Estado de impresoras",
+            description: `Capacidad activa monitorizada: ${printerPreview}.`,
+            href: "/?section=impresoras",
+            actionLabel: "Ver impresoras",
+          },
+        ]
+      : []),
+  ];
   const todayLabelText = new Intl.DateTimeFormat("es-ES", {
     weekday: "long",
     day: "numeric",
@@ -647,6 +784,39 @@ export default async function Home({
             </div>
 
             <div className="grid gap-4 xl:grid-cols-2">
+              <div className="panel p-6 xl:col-span-2">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="eyebrow">Alertas inteligentes</p>
+                    <h3 className="mt-3 text-xl font-semibold">Prioridades operativas del ERP V3</h3>
+                  </div>
+                  <StatusPill
+                    label={smartAlerts.length === 0 ? "Todo en orden" : `${smartAlerts.length} alertas activas`}
+                    tone={smartAlerts.some((alert) => alert.tone === "critical") ? "danger" : smartAlerts.length > 0 ? "warn" : "success"}
+                  />
+                </div>
+                <div className="mt-5 grid gap-3 xl:grid-cols-2">
+                  {smartAlerts.length === 0 ? (
+                    <IntelligentAlertCard
+                      tone="success"
+                      title="Todo en orden"
+                      description="No hay incidencias activas en stock, pedidos, fabricacion, impresoras ni cobros pendientes fuera de la operativa normal."
+                    />
+                  ) : (
+                    smartAlerts.map((alert) => (
+                      <IntelligentAlertCard
+                        key={`${alert.tone}-${alert.title}`}
+                        tone={alert.tone}
+                        title={alert.title}
+                        description={alert.description}
+                        href={alert.href}
+                        actionLabel={alert.actionLabel}
+                      />
+                    ))
+                  )}
+                </div>
+              </div>
+
               <div className="panel p-6">
                 <h3 className="text-xl font-semibold">Alertas de stock bajo</h3>
                 <div className="mt-4 space-y-3">
