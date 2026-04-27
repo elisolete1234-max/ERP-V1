@@ -405,6 +405,15 @@ function PaymentIcon() {
   );
 }
 
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M10 3.5v8.2M6.8 8.8 10 12l3.2-3.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4.5 14.2h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function ArchiveIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1656,6 +1665,14 @@ export function InvoicesInlineTable({
                     >
                       <PaymentIcon />
                     </button>
+                    <a
+                      href={`/api/exports/invoices/${invoice.id}/pdf`}
+                      title="Descargar PDF"
+                      aria-label="Descargar PDF"
+                      className="icon-action-button icon-action-button--soft"
+                    >
+                      <DownloadIcon />
+                    </a>
                   </div>
                 </td>
                 <td>{invoice.codigo}</td>
@@ -1756,10 +1773,18 @@ export function InvoicesInlineTable({
                             <p className="eyebrow">Ajustes y cobro</p>
                             <h4 className="mt-2 text-base font-semibold text-slate-900">Factura {invoice.codigo}</h4>
                           </div>
-                          <div className="text-right text-xs text-[color:var(--muted)]">
-                            <div>Total: {formatCurrency(total)}</div>
-                            <div>Cobrado: {formatCurrency(totalPaid)}</div>
-                            <div>Pendiente: {formatCurrency(pendingAmount)}</div>
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            <a
+                              href={`/api/exports/invoices/${invoice.id}/pdf`}
+                              className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-900 transition hover:-translate-y-0.5 hover:bg-sky-100"
+                            >
+                              Descargar PDF
+                            </a>
+                            <div className="text-right text-xs text-[color:var(--muted)]">
+                              <div>Total: {formatCurrency(total)}</div>
+                              <div>Cobrado: {formatCurrency(totalPaid)}</div>
+                              <div>Pendiente: {formatCurrency(pendingAmount)}</div>
+                            </div>
                           </div>
                         </div>
 

@@ -15,6 +15,7 @@ import {
   deleteMaterialRecord,
   generateInvoiceForOrder,
   getAppSnapshot,
+  getInvoicePdfData,
   getInvoicePaymentsExportRows,
   getInvoicesExportRows,
   resetDatabase,
@@ -31,6 +32,7 @@ import {
   updateOrderRecord,
   updatePrinterRecord,
 } from "../lib/erp-service";
+import { GET as getInvoicePdfRoute } from "../app/api/exports/invoices/[id]/pdf/route";
 
 type CsvFixtureRow = {
   codigo: string;
@@ -1275,6 +1277,58 @@ test("las exportaciones de facturas y pagos respetan rango de fechas y estado", 
   assert.equal(invoicesOutOfRange.length, 0);
   assert.equal(paymentsInRange.length, 1);
   assert.equal(paymentsOutOfRange.length, 0);
+});
+
+test("el PDF de factura usa los importes reales y se descarga como adjunto", async () => {
+  const { customerId, productId } = await setupSingleProductFixture({ pvp: 5, ivaPercentage: 10 });
+  const orderId = await createOrderRecord({
+    clienteId: customerId,
+    descuento: 1,
+    lines: [{ productId, quantity: 2 }],
+  });
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{ id: string; codigo: string; total: number }>(
+    `SELECT id, codigo, total FROM invoices WHERE pedido_id = ?`,
+    orderId,
+  ))!;
+
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "TRANSFERENCIA",
+    importe: 4,
+    notas: "Primer pago PDF",
+  });
+
+  const pdfData = await getInvoicePdfData(invoice.id);
+  assert.equal(pdfData.resumen.subtotal, 10);
+  assert.equal(pdfData.resumen.descuento, 1);
+  assert.equal(pdfData.resumen.total, 9);
+  assert.equal(pdfData.resumen.baseImponible, 8.18);
+  assert.equal(pdfData.resumen.iva, 0.82);
+  assert.equal(pdfData.resumen.totalPagado, 4);
+  assert.equal(pdfData.resumen.importePendiente, 5);
+  assert.equal(pdfData.resumen.estadoPago, "PARCIAL");
+  assert.equal(pdfData.lineas.length, 1);
+  assert.equal(pdfData.lineas[0]?.iva_porcentaje, 10);
+
+  const response = await getInvoicePdfRoute(new Request(`http://localhost/api/exports/invoices/${invoice.id}/pdf`), {
+    params: { id: invoice.id },
+  });
+  const pdfText = Buffer.from(await response.arrayBuffer()).toString("latin1");
+
+  assert.equal(response.headers.get("content-type"), "application/pdf");
+  assert.match(response.headers.get("content-disposition") ?? "", new RegExp(`factura-${invoice.codigo.toLowerCase()}\\.pdf`));
+  assert.match(pdfText, /^%PDF-/);
+  assert.match(pdfText, new RegExp(invoice.codigo));
 });
 
 test("el inventario terminado refleja stock reservado y disponible", async () => {

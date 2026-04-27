@@ -1264,6 +1264,147 @@ export async function getInvoicesExportRows(status?: string, fromDate?: string, 
   );
 }
 
+export async function getInvoicePdfData(invoiceId: string) {
+  if (!invoiceId) {
+    throw new Error("La factura necesita ID.");
+  }
+
+  await syncInvoicePaymentSummary(invoiceId);
+
+  const invoice = await row<{
+    id: string;
+    codigo: string;
+    pedido_id: string;
+    cliente_id: string;
+    fecha: string;
+    descuento: number;
+    iva: number;
+    total: number;
+    total_pagado: number;
+    pedido_codigo: string;
+    fecha_pedido: string;
+    observaciones: string | null;
+    cliente_codigo: string;
+    cliente_nombre: string;
+    cliente_telefono: string | null;
+    cliente_email: string | null;
+    cliente_direccion: string | null;
+  }>(
+    `SELECT
+       i.id,
+       i.codigo,
+       i.pedido_id,
+       i.cliente_id,
+       i.fecha,
+       i.descuento,
+       i.iva,
+       i.total,
+       i.total_pagado,
+       o.codigo AS pedido_codigo,
+       o.fecha_pedido,
+       o.observaciones,
+       c.codigo AS cliente_codigo,
+       c.nombre AS cliente_nombre,
+       c.telefono AS cliente_telefono,
+       c.email AS cliente_email,
+       c.direccion AS cliente_direccion
+     FROM invoices i
+     JOIN orders o ON o.id = i.pedido_id
+     JOIN customers c ON c.id = i.cliente_id
+     WHERE i.id = ?`,
+    invoiceId,
+  );
+
+  if (!invoice) {
+    throw new Error("La factura no existe.");
+  }
+
+  const lineas = await rows<{
+    id: string;
+    codigo: string;
+    producto_id: string;
+    producto_codigo: string;
+    producto_nombre: string;
+    cantidad: number;
+    precio_unitario: number;
+    precio_total_linea: number;
+    iva_porcentaje: number | null;
+  }>(
+    `SELECT
+       l.id,
+       l.codigo,
+       l.producto_id,
+       p.codigo AS producto_codigo,
+       p.nombre AS producto_nombre,
+       l.cantidad,
+       l.precio_unitario,
+       l.precio_total_linea,
+       l.iva_porcentaje
+     FROM order_lines l
+     JOIN products p ON p.id = l.producto_id
+     WHERE l.pedido_id = ?
+     ORDER BY l.codigo ASC`,
+    invoice.pedido_id,
+  );
+
+  const pagos = await rows<{
+    id: string;
+    codigo: string;
+    fecha_pago: string;
+    metodo_pago: string;
+    importe: number;
+    notas: string | null;
+  }>(
+    `SELECT id, codigo, fecha_pago, metodo_pago, importe, notas
+     FROM invoice_payments
+     WHERE factura_id = ?
+     ORDER BY fecha_pago ASC, codigo ASC`,
+    invoiceId,
+  );
+
+  const subtotal = roundMoney(invoice.total + (invoice.descuento ?? 0));
+  const totalPagado = roundMoney(invoice.total_pagado ?? 0);
+  const importePendiente = roundMoney(Math.max(invoice.total - totalPagado, 0));
+  const estadoPago: InvoicePaymentStatus =
+    totalPagado <= 0 ? "PENDIENTE" : totalPagado < invoice.total ? "PARCIAL" : "PAGADA";
+  const baseImponible = roundMoney(Math.max(invoice.total - invoice.iva, 0));
+
+  return {
+    id: invoice.id,
+    codigo: invoice.codigo,
+    fecha: invoice.fecha,
+    pedido: {
+      id: invoice.pedido_id,
+      codigo: invoice.pedido_codigo,
+      fecha: invoice.fecha_pedido,
+      observaciones: invoice.observaciones,
+    },
+    cliente: {
+      id: invoice.cliente_id,
+      codigo: invoice.cliente_codigo,
+      nombre: invoice.cliente_nombre,
+      telefono: invoice.cliente_telefono,
+      email: invoice.cliente_email,
+      direccion: invoice.cliente_direccion,
+    },
+    lineas: lineas.map((linea) => ({
+      ...linea,
+      iva_porcentaje: normalizeVatRate(linea.iva_porcentaje ?? DEFAULT_VAT_RATE),
+    })),
+    pagos,
+    resumen: {
+      subtotal,
+      descuento: roundMoney(invoice.descuento ?? 0),
+      baseImponible,
+      iva: roundMoney(invoice.iva ?? 0),
+      total: roundMoney(invoice.total ?? 0),
+      totalPagado,
+      importePendiente,
+      estadoPago,
+    },
+  };
+}
+
 export async function getInvoicePaymentsExportRows(status?: string, fromDate?: string, toDate?: string) {
   const statusFilter = normalizeInvoiceStatusFilter(status);
   const startDate = normalizeDateFilter(fromDate);
