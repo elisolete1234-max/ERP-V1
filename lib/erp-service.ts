@@ -56,6 +56,8 @@ async function getProductOrThrow(productId: string) {
     coste_postprocesado: number;
     pvp: number;
     precio_kg: number;
+    activo: number;
+    material_activo: number;
   }>(
     `SELECT
        p.id,
@@ -67,7 +69,9 @@ async function getProductOrThrow(productId: string) {
        p.coste_mano_obra,
        p.coste_postprocesado,
        p.pvp,
-       m.precio_kg
+       p.activo,
+       m.precio_kg,
+       m.activo AS material_activo
      FROM products p
      JOIN materials m ON m.id = p.material_id
      WHERE p.id = ?`,
@@ -76,6 +80,14 @@ async function getProductOrThrow(productId: string) {
 
   if (!product) {
     throw new Error("Uno de los productos seleccionados no existe.");
+  }
+
+  if (!parseBoolean(product.activo)) {
+    throw new Error("Uno de los productos seleccionados esta inactivo.");
+  }
+
+  if (!parseBoolean(product.material_activo)) {
+    throw new Error("Uno de los productos seleccionados depende de un material inactivo.");
   }
 
   return product;
@@ -408,6 +420,61 @@ async function getMaterialStatusOrThrow(materialId: string) {
   };
 }
 
+async function getCustomerStatusOrThrow(customerId: string) {
+  const customer = await row<{
+    id: string;
+    codigo: string;
+    nombre: string;
+    activo: number;
+  }>(`SELECT id, codigo, nombre, activo FROM customers WHERE id = ?`, customerId);
+
+  if (!customer) {
+    throw new Error("El cliente no existe.");
+  }
+
+  return {
+    ...customer,
+    activo: parseBoolean(customer.activo),
+  };
+}
+
+async function getProductStatusOrThrow(productId: string) {
+  const product = await row<{
+    id: string;
+    codigo: string;
+    nombre: string;
+    activo: number;
+  }>(`SELECT id, codigo, nombre, activo FROM products WHERE id = ?`, productId);
+
+  if (!product) {
+    throw new Error("El producto no existe.");
+  }
+
+  return {
+    ...product,
+    activo: parseBoolean(product.activo),
+  };
+}
+
+async function getPrinterStatusOrThrow(printerId: string) {
+  const printer = await row<{
+    id: string;
+    codigo: string;
+    nombre: string;
+    estado: PrinterState;
+    activo: number;
+  }>(`SELECT id, codigo, nombre, estado, activo FROM printers WHERE id = ?`, printerId);
+
+  if (!printer) {
+    throw new Error("La impresora no existe.");
+  }
+
+  return {
+    ...printer,
+    activo: parseBoolean(printer.activo),
+  };
+}
+
 async function applyMaterialInventoryMovement(input: {
   materialId: string;
   tipo: "ENTRADA" | "SALIDA";
@@ -579,10 +646,11 @@ async function getFirstAvailablePrinter() {
     estado: PrinterState;
     horas_uso_acumuladas: number;
     coste_hora: number;
+    activo: number;
   }>(
     `SELECT *
      FROM printers
-     WHERE estado = 'LIBRE'
+     WHERE estado = 'LIBRE' AND activo = 1
      ORDER BY horas_uso_acumuladas ASC, nombre ASC
      LIMIT 1`,
   );
@@ -676,8 +744,13 @@ export async function getAppSnapshot() {
     telefono: string | null;
     email: string | null;
     direccion: string | null;
+    activo: number;
     fecha_creacion: string;
   }>(`SELECT * FROM customers ORDER BY fecha_creacion DESC`);
+  const normalizedCustomers = customers.map((customer) => ({
+    ...customer,
+    activo: parseBoolean(customer.activo),
+  }));
 
   const materialsBase = await rows<{
     id: string;
@@ -964,6 +1037,7 @@ export async function getAppSnapshot() {
     horas_uso_acumuladas: number;
     coste_hora: number;
     ubicacion: string | null;
+    activo: number;
     fecha_actualizacion: string;
     orden_activa_codigo: string | null;
   }>(
@@ -973,9 +1047,13 @@ export async function getAppSnapshot() {
      FROM printers pr
      LEFT JOIN manufacturing_orders mo
        ON mo.impresora_id = pr.id
-      AND mo.estado = 'INICIADA'
+     AND mo.estado = 'INICIADA'
      ORDER BY pr.codigo ASC, pr.nombre ASC`,
   );
+  const normalizedPrinters = printers.map((printer) => ({
+    ...printer,
+    activo: parseBoolean(printer.activo),
+  }));
 
   const inventoryMovements = await rows<{
     id: string;
@@ -991,14 +1069,14 @@ export async function getAppSnapshot() {
   }>(`SELECT * FROM inventory_movements ORDER BY fecha DESC, codigo DESC`);
 
   return {
-    customers,
+    customers: normalizedCustomers,
     materials,
     products,
     orders,
     manufacturingOrders,
     stockMovements,
     finishedInventory,
-    printers,
+    printers: normalizedPrinters,
     inventoryMovements,
     invoices,
   };
@@ -1118,14 +1196,15 @@ export async function createCustomerRecord(input: {
   }
 
   await run(
-    `INSERT INTO customers (id, codigo, nombre, telefono, email, direccion, fecha_creacion)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO customers (id, codigo, nombre, telefono, email, direccion, activo, fecha_creacion)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     randomUUID(),
     await nextCode("customers", "CLI-"),
     input.nombre.trim(),
     input.telefono?.trim() || null,
     input.email?.trim() || null,
     input.direccion?.trim() || null,
+    1,
     nowIso(),
   );
 }
@@ -1151,6 +1230,30 @@ export async function updateCustomerRecord(input: {
     input.direccion?.trim() || null,
     input.id,
   );
+}
+
+export async function setCustomerActiveState(customerId: string, active: boolean) {
+  const customer = await getCustomerStatusOrThrow(customerId);
+
+  if (customer.activo === active) {
+    return;
+  }
+
+  if (!active) {
+    const openOrders = (await row<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM orders
+       WHERE cliente_id = ?
+         AND estado IN ('BORRADOR', 'CONFIRMADO', 'EN_PRODUCCION', 'LISTO', 'ENTREGADO', 'INCIDENCIA_STOCK')`,
+      customerId,
+    ))?.total ?? 0;
+
+    if (openOrders > 0) {
+      throw new Error("No se puede dar de baja el cliente porque tiene pedidos abiertos o pendientes de cierre.");
+    }
+  }
+
+  await run(`UPDATE customers SET activo = ? WHERE id = ?`, active ? 1 : 0, customerId);
 }
 
 export async function createMaterialRecord(input: {
@@ -1483,8 +1586,8 @@ export async function updateProductRecord(input: {
     throw new Error("Revisa el producto: tiempo, PVP y costes deben ser validos.");
   }
 
-  const currentProduct = await row<{ material_id: string }>(
-    `SELECT material_id FROM products WHERE id = ?`,
+  const currentProduct = await row<{ material_id: string; activo: number }>(
+    `SELECT material_id, activo FROM products WHERE id = ?`,
     input.id,
   );
   if (!currentProduct) {
@@ -1500,6 +1603,28 @@ export async function updateProductRecord(input: {
   }
   if (!material.activo && currentProduct.material_id !== input.materialId) {
     throw new Error("No se puede asignar un material inactivo a nuevos usos.");
+  }
+
+  if (parseBoolean(currentProduct.activo) && input.activo === false) {
+    const openOrderLines = (await row<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM order_lines l
+       JOIN orders o ON o.id = l.pedido_id
+       WHERE l.producto_id = ?
+         AND o.estado IN ('BORRADOR', 'CONFIRMADO', 'EN_PRODUCCION', 'LISTO', 'ENTREGADO', 'INCIDENCIA_STOCK')`,
+      input.id,
+    ))?.total ?? 0;
+    const openManufacturing = (await row<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM manufacturing_orders
+       WHERE producto_id = ?
+         AND estado IN ('PENDIENTE', 'INICIADA', 'BLOQUEADA_POR_STOCK')`,
+      input.id,
+    ))?.total ?? 0;
+
+    if (openOrderLines > 0 || openManufacturing > 0) {
+      throw new Error("No se puede desactivar el producto mientras participe en pedidos u ordenes de fabricacion abiertas.");
+    }
   }
 
   await transaction(async () => {
@@ -1534,6 +1659,38 @@ export async function updateProductRecord(input: {
   });
 }
 
+export async function setProductActiveState(productId: string, active: boolean) {
+  const product = await getProductStatusOrThrow(productId);
+
+  if (product.activo === active) {
+    return;
+  }
+
+  if (!active) {
+    const openOrderLines = (await row<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM order_lines l
+       JOIN orders o ON o.id = l.pedido_id
+       WHERE l.producto_id = ?
+         AND o.estado IN ('BORRADOR', 'CONFIRMADO', 'EN_PRODUCCION', 'LISTO', 'ENTREGADO', 'INCIDENCIA_STOCK')`,
+      productId,
+    ))?.total ?? 0;
+    const openManufacturing = (await row<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM manufacturing_orders
+       WHERE producto_id = ?
+         AND estado IN ('PENDIENTE', 'INICIADA', 'BLOQUEADA_POR_STOCK')`,
+      productId,
+    ))?.total ?? 0;
+
+    if (openOrderLines > 0 || openManufacturing > 0) {
+      throw new Error("No se puede dar de baja el producto porque participa en pedidos u ordenes de fabricacion abiertas.");
+    }
+  }
+
+  await run(`UPDATE products SET activo = ? WHERE id = ?`, active ? 1 : 0, productId);
+}
+
 export async function createOrderRecord(input: {
   clienteId: string;
   observaciones?: string;
@@ -1543,9 +1700,15 @@ export async function createOrderRecord(input: {
   if (!input.clienteId) {
     throw new Error("Debes seleccionar un cliente.");
   }
-  const customer = row(`SELECT id FROM customers WHERE id = ?`, input.clienteId);
+  const customer = await row<{ id: string; activo: number }>(
+    `SELECT id, activo FROM customers WHERE id = ?`,
+    input.clienteId,
+  );
   if (!customer) {
     throw new Error("El cliente no existe.");
+  }
+  if (!parseBoolean(customer.activo)) {
+    throw new Error("El cliente seleccionado esta inactivo. Reactivalo antes de crear pedidos nuevos.");
   }
   if (input.vatRate != null && (input.vatRate < 0 || input.vatRate > 100)) {
     throw new Error("El IVA debe estar entre 0 y 100.");
@@ -1815,8 +1978,8 @@ export async function createPrinterRecord(input: {
 
   await run(
     `INSERT INTO printers
-      (id, codigo, nombre, estado, horas_uso_acumuladas, coste_hora, ubicacion, fecha_actualizacion)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, codigo, nombre, estado, horas_uso_acumuladas, coste_hora, ubicacion, activo, fecha_actualizacion)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     randomUUID(),
     await nextCode("printers", "IMP-"),
     input.nombre.trim(),
@@ -1824,6 +1987,7 @@ export async function createPrinterRecord(input: {
     roundMoney(input.horasUsoAcumuladas ?? 0),
     roundMoney(input.costeHora ?? 0),
     input.ubicacion?.trim() || null,
+    1,
     nowIso(),
   );
 }
@@ -1870,6 +2034,36 @@ export async function updatePrinterRecord(input: {
   );
 }
 
+export async function setPrinterActiveState(printerId: string, active: boolean) {
+  const printer = await getPrinterStatusOrThrow(printerId);
+
+  if (printer.activo === active) {
+    return;
+  }
+
+  if (!active) {
+    const activeOrders = (await row<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM manufacturing_orders
+       WHERE impresora_id = ? AND estado = 'INICIADA'`,
+      printerId,
+    ))?.total ?? 0;
+
+    if (activeOrders > 0 || printer.estado === "IMPRIMIENDO") {
+      throw new Error("No se puede dar de baja la impresora mientras tenga una orden de fabricacion activa.");
+    }
+  }
+
+  await run(
+    `UPDATE printers
+     SET activo = ?, fecha_actualizacion = ?
+     WHERE id = ?`,
+    active ? 1 : 0,
+    nowIso(),
+    printerId,
+  );
+}
+
 export async function restockFinishedProduct(
   productId: string,
   quantity: number,
@@ -1878,9 +2072,15 @@ export async function restockFinishedProduct(
   unitCost?: number,
 ) {
   const parsedQuantity = requirePositiveInteger(quantity, "La entrada de producto terminado debe ser mayor que cero.");
-  const product = await row<{ id: string; pvp: number }>(`SELECT id, pvp FROM products WHERE id = ?`, productId);
+  const product = await row<{ id: string; pvp: number; activo: number }>(
+    `SELECT id, pvp, activo FROM products WHERE id = ?`,
+    productId,
+  );
   if (!product) {
     throw new Error("El producto no existe.");
+  }
+  if (!parseBoolean(product.activo)) {
+    throw new Error("El producto esta inactivo. Reactivalo antes de registrar nuevas entradas.");
   }
   if (unitCost != null && unitCost < 0) {
     throw new Error("El coste unitario no puede ser negativo.");
@@ -2169,9 +2369,15 @@ export async function updateOrderRecord(input: {
   if (!current) {
     throw new Error("El pedido no existe.");
   }
-  const customer = await row(`SELECT id FROM customers WHERE id = ?`, input.clienteId);
+  const customer = await row<{ id: string; activo: number }>(
+    `SELECT id, activo FROM customers WHERE id = ?`,
+    input.clienteId,
+  );
   if (!customer) {
     throw new Error("El cliente no existe.");
+  }
+  if (!parseBoolean(customer.activo)) {
+    throw new Error("El cliente seleccionado esta inactivo. Reactivalo antes de editar el pedido.");
   }
   if (["EN_PRODUCCION", "LISTO", "ENTREGADO", "FACTURADO"].includes(current.estado)) {
     throw new Error("No se pueden editar pedidos ya lanzados a produccion o cerrados.");
@@ -2322,11 +2528,15 @@ export async function startManufacturingOrder(manufacturingOrderId: string) {
           estado: PrinterState;
           horas_uso_acumuladas: number;
           coste_hora: number;
+          activo: number;
         }>(`SELECT * FROM printers WHERE id = ?`, manufacturingOrder.impresora_id)
       : undefined) ?? (await getFirstAvailablePrinter());
 
   if (!printer) {
     throw new Error("No hay impresoras libres para lanzar la orden.");
+  }
+  if (!parseBoolean(printer.activo)) {
+    throw new Error("La impresora asignada esta inactiva. Reactivala antes de iniciar la fabricacion.");
   }
   if (printer.estado !== "LIBRE") {
     throw new Error("La impresora asignada no esta libre.");
@@ -2652,4 +2862,3 @@ export async function generateInvoiceForOrder(orderId: string) {
     await syncFinishedInventoryMetricsForOrder(orderId);
   });
 }
-

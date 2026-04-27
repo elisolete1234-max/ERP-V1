@@ -278,7 +278,10 @@ export default async function Home({
     orderStatus?: string;
     manufacturingStatus?: string;
     materialFilter?: string;
+    productFilter?: string;
+    customerFilter?: string;
     printerStatus?: string;
+    printerActiveFilter?: string;
     movementInventory?: string;
     invoiceStatus?: string;
     fecha_inicio?: string;
@@ -308,7 +311,10 @@ export default async function Home({
   const orderFilter = resolved.orderStatus ?? "ALL";
   const manufacturingFilter = resolved.manufacturingStatus ?? "ALL";
   const materialFilter = resolved.materialFilter ?? "ALL";
+  const productFilter = resolved.productFilter ?? "ALL";
+  const customerFilter = resolved.customerFilter ?? "ALL";
   const printerFilter = resolved.printerStatus ?? "ALL";
+  const printerActiveFilter = resolved.printerActiveFilter ?? "ALL";
   const movementFilter = resolved.movementInventory ?? "ALL";
   const invoiceFilter = resolved.invoiceStatus ?? "ALL";
   const invoiceDateStart = toDateInputValue(resolved.fecha_inicio);
@@ -330,7 +336,26 @@ export default async function Home({
       : materialFilter === "INACTIVE"
         ? materials.filter((material) => !material.activo)
         : materials;
-  const filteredPrinters = printerFilter === "ALL" ? printers : printers.filter((printer) => printer.estado === printerFilter);
+  const filteredProducts =
+    productFilter === "ACTIVE"
+      ? products.filter((product) => product.activo)
+      : productFilter === "INACTIVE"
+        ? products.filter((product) => !product.activo)
+        : products;
+  const filteredCustomers =
+    customerFilter === "ACTIVE"
+      ? customers.filter((customer) => customer.activo)
+      : customerFilter === "INACTIVE"
+        ? customers.filter((customer) => !customer.activo)
+        : customers;
+  const filteredPrintersByState =
+    printerFilter === "ALL" ? printers : printers.filter((printer) => printer.estado === printerFilter);
+  const filteredPrinters =
+    printerActiveFilter === "ACTIVE"
+      ? filteredPrintersByState.filter((printer) => printer.activo)
+      : printerActiveFilter === "INACTIVE"
+        ? filteredPrintersByState.filter((printer) => !printer.activo)
+        : filteredPrintersByState;
   const filteredInventoryMovements =
     movementFilter === "ALL"
       ? inventoryMovements
@@ -354,6 +379,9 @@ export default async function Home({
   });
 
   const activeMaterials = materials.filter((material) => material.activo);
+  const activeProducts = products.filter((product) => product.activo);
+  const activeCustomers = customers.filter((customer) => customer.activo);
+  const activePrinters = printers.filter((printer) => printer.activo);
   const lowStockMaterials = activeMaterials.filter((material) => material.stock_actual_g <= material.stock_minimo_g);
   const finishedUnits = finishedInventory.reduce((sum, item) => sum + item.cantidad_disponible, 0);
   const finishedStockValue = finishedInventory.reduce(
@@ -396,9 +424,18 @@ export default async function Home({
   const activeMaterialFilterSegments: string[] = [
     materialFilter === "ACTIVE" ? "estado: activos" : materialFilter === "INACTIVE" ? "estado: inactivos" : null,
   ].filter((segment): segment is string => Boolean(segment));
-  const hasActivePrinterFilters = printerFilter !== "ALL";
+  const hasActiveProductFilters = productFilter !== "ALL";
+  const activeProductFilterSegments: string[] = [
+    productFilter === "ACTIVE" ? "estado: activos" : productFilter === "INACTIVE" ? "estado: inactivos" : null,
+  ].filter((segment): segment is string => Boolean(segment));
+  const hasActiveCustomerFilters = customerFilter !== "ALL";
+  const activeCustomerFilterSegments: string[] = [
+    customerFilter === "ACTIVE" ? "estado: activos" : customerFilter === "INACTIVE" ? "estado: inactivos" : null,
+  ].filter((segment): segment is string => Boolean(segment));
+  const hasActivePrinterFilters = printerFilter !== "ALL" || printerActiveFilter !== "ALL";
   const activePrinterFilterSegments: string[] = [
     hasActivePrinterFilters ? `estado: ${printerStatusLabels[printerFilter]}` : null,
+    printerActiveFilter === "ACTIVE" ? "visibles: activas" : printerActiveFilter === "INACTIVE" ? "visibles: inactivas" : null,
   ].filter((segment): segment is string => Boolean(segment));
   const hasActiveMovementFilters = movementFilter !== "ALL";
   const activeMovementFilterSegments: string[] = [
@@ -679,7 +716,7 @@ export default async function Home({
                 <Field label="Cliente" hint="Selecciona la ficha del cliente antes de definir las lineas.">
                   <select name="clienteId" className="input" defaultValue="">
                   <option value="">Cliente</option>
-                  {customers.map((customer) => (
+                  {activeCustomers.map((customer) => (
                     <option key={customer.id} value={customer.id}>
                       {customer.codigo} · {customer.nombre}
                     </option>
@@ -694,7 +731,7 @@ export default async function Home({
                     <Field label="Producto">
                       <select name={`producto_${index}`} className="input" defaultValue="">
                       <option value="">Producto linea {index}</option>
-                      {products.map((product) => (
+                      {activeProducts.map((product) => (
                         <option key={product.id} value={product.id}>
                           {product.codigo} · {product.nombre}
                         </option>
@@ -918,12 +955,12 @@ export default async function Home({
                     }) : (
                       <OrdersInlineBoard
                         orders={filteredOrders}
-                        customers={customers.map((customer) => ({
+                        customers={activeCustomers.map((customer) => ({
                           id: customer.id,
                           codigo: customer.codigo,
                           nombre: customer.nombre,
                         }))}
-                        products={products.map((product) => ({
+                        products={activeProducts.map((product) => ({
                           id: product.id,
                           codigo: product.codigo,
                           nombre: product.nombre,
@@ -1088,7 +1125,7 @@ export default async function Home({
                 <Field label="Producto">
                   <select name="productId" className="input" defaultValue="">
                   <option value="">Producto</option>
-                  {products.map((product) => (
+                  {activeProducts.map((product) => (
                     <option key={product.id} value={product.id}>
                       {product.codigo} · {product.nombre}
                     </option>
@@ -1259,20 +1296,37 @@ export default async function Home({
                   <div>
                     <h3 className="text-xl font-semibold">Estado de impresoras</h3>
                     <p className="mt-1 text-sm text-[color:var(--muted)]">
-                      Solo puede haber una orden activa por impresora. Filtra rapido para ver capacidad disponible.
+                      Solo puede haber una orden activa por impresora. Las inactivas quedan fuera de nuevas asignaciones.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {["ALL", ...Object.keys(printerStatusLabels)].map((status) => (
                       <FilterLink
                         key={status}
-                        href={`/?section=impresoras&printerStatus=${status}`}
+                        href={`/?section=impresoras&printerStatus=${status}&printerActiveFilter=${printerActiveFilter}`}
                         label={status === "ALL" ? "todas" : printerStatusLabels[status]}
                         active={printerFilter === status}
                         count={status === "ALL" ? printers.length : printers.filter((printer) => printer.estado === status).length}
                       />
                     ))}
                   </div>
+                </div>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {["ALL", "ACTIVE", "INACTIVE"].map((status) => (
+                    <FilterLink
+                      key={status}
+                      href={`/?section=impresoras&printerStatus=${printerFilter}&printerActiveFilter=${status}`}
+                      label={status === "ALL" ? "ver todas" : status === "ACTIVE" ? "solo activas" : "ver inactivas"}
+                      active={printerActiveFilter === status}
+                      count={
+                        status === "ALL"
+                          ? printers.length
+                          : status === "ACTIVE"
+                            ? activePrinters.length
+                            : printers.filter((printer) => !printer.activo).length
+                      }
+                    />
+                  ))}
                 </div>
                 <FilterSummary
                   totalItems={filteredPrinters.length}
@@ -1353,9 +1407,41 @@ export default async function Home({
               </form>
 
               <div className="panel p-6">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xl font-semibold">Catalogo de productos</h3>
+                    <p className="mt-1 text-sm text-[color:var(--muted)]">
+                      Los productos inactivos conservan historico pero no aparecen en nuevas operaciones.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {["ALL", "ACTIVE", "INACTIVE"].map((status) => (
+                      <FilterLink
+                        key={status}
+                        href={`/?section=productos&productFilter=${status}`}
+                        label={status === "ALL" ? "todos" : status === "ACTIVE" ? "activos" : "inactivos"}
+                        active={productFilter === status}
+                        count={
+                          status === "ALL"
+                            ? products.length
+                            : status === "ACTIVE"
+                              ? activeProducts.length
+                              : products.filter((product) => !product.activo).length
+                        }
+                      />
+                    ))}
+                  </div>
+                </div>
+                <FilterSummary
+                  totalItems={filteredProducts.length}
+                  hasFilters={hasActiveProductFilters}
+                  filters={activeProductFilterSegments}
+                  itemLabel="productos"
+                  allItemsText="Mostrando todos los productos"
+                />
                 <div className="table-wrap table-scroll">
                   <ProductsInlineTable
-                    products={products}
+                    products={filteredProducts}
                     materials={materials.map((material) => ({
                       id: material.id,
                       codigo: material.codigo,
@@ -1514,8 +1600,40 @@ export default async function Home({
                 <SubmitButton pendingText="Creando...">Crear cliente</SubmitButton>
               </form>
               <div className="panel p-6">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xl font-semibold">Base de clientes</h3>
+                    <p className="mt-1 text-sm text-[color:var(--muted)]">
+                      Los clientes inactivos se mantienen para historico, pero salen de los formularios de pedidos nuevos.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {["ALL", "ACTIVE", "INACTIVE"].map((status) => (
+                      <FilterLink
+                        key={status}
+                        href={`/?section=clientes&customerFilter=${status}`}
+                        label={status === "ALL" ? "todos" : status === "ACTIVE" ? "activos" : "inactivos"}
+                        active={customerFilter === status}
+                        count={
+                          status === "ALL"
+                            ? customers.length
+                            : status === "ACTIVE"
+                              ? activeCustomers.length
+                              : customers.filter((customer) => !customer.activo).length
+                        }
+                      />
+                    ))}
+                  </div>
+                </div>
+                <FilterSummary
+                  totalItems={filteredCustomers.length}
+                  hasFilters={hasActiveCustomerFilters}
+                  filters={activeCustomerFilterSegments}
+                  itemLabel="clientes"
+                  allItemsText="Mostrando todos los clientes"
+                />
                 <div className="table-wrap table-scroll">
-                  <CustomersInlineTable customers={customers} />
+                  <CustomersInlineTable customers={filteredCustomers} />
                 </div>
               </div>
             </div>

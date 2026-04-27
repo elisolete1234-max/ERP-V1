@@ -18,7 +18,10 @@ import {
   getInvoicesExportRows,
   resetDatabase,
   restockFinishedProduct,
+  setCustomerActiveState,
   setMaterialActiveState,
+  setPrinterActiveState,
+  setProductActiveState,
   startManufacturingOrder,
   updateManufacturingOrderRecord,
   updateMaterialRecord,
@@ -372,6 +375,30 @@ test("no permite nuevos productos con materiales inactivos", async () => {
   );
 });
 
+test("no permite nuevos pedidos con clientes inactivos", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  await setCustomerActiveState(customerId, false);
+
+  await assert.rejects(
+    () => createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] }),
+    /cliente seleccionado esta inactivo/i,
+  );
+});
+
+test("no permite nuevas operaciones con productos inactivos", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  await setProductActiveState(productId, false);
+
+  await assert.rejects(
+    () => createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] }),
+    /producto.*inactivo/i,
+  );
+  await assert.rejects(
+    () => restockFinishedProduct(productId, 1, "Entrada manual"),
+    /producto esta inactivo/i,
+  );
+});
+
 test("editar producto actualiza la receta V2 sin romper el producto", async () => {
   const { productId, materialId } = await setupSingleProductFixture();
 
@@ -552,6 +579,29 @@ test("no permite marcar impresoras manualmente en estados incoherentes", async (
         costeHora: 2,
       }),
     /orden activa/i,
+  );
+});
+
+test("las impresoras inactivas no se asignan a nuevas fabricaciones y no pueden darse de baja con orden activa", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const printerId = (await row<{ id: string }>(`SELECT id FROM printers LIMIT 1`))!.id;
+  await setPrinterActiveState(printerId, false);
+
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+
+  await assert.rejects(() => startManufacturingOrder(manufacturingId), /impresoras libres|inactiva/i);
+
+  await setPrinterActiveState(printerId, true);
+  await startManufacturingOrder(manufacturingId);
+
+  await assert.rejects(
+    () => setPrinterActiveState(printerId, false),
+    /orden de fabricacion activa/i,
   );
 });
 

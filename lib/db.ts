@@ -231,6 +231,7 @@ async function ensureMaterialMovementBaselines() {
 
 async function migrateDatabase() {
   await ensureColumn("customers", "codigo", "TEXT");
+  await ensureColumn("customers", "activo", "INTEGER DEFAULT 1");
   await ensureColumn("materials", "codigo", "TEXT");
   await ensureColumn("materials", "tipo_color", "TEXT");
   await ensureColumn("materials", "efecto", "TEXT");
@@ -243,6 +244,7 @@ async function migrateDatabase() {
   await ensureColumn("materials", "notas", "TEXT");
   await ensureColumn("materials", "activo", "INTEGER DEFAULT 1");
   await ensureColumn("products", "codigo", "TEXT");
+  await ensureColumn("products", "activo", "INTEGER DEFAULT 1");
   await ensureColumn("products", "coste_maquina", "REAL DEFAULT 0");
   await ensureColumn("products", "coste_mano_obra", "REAL DEFAULT 0");
   await ensureColumn("products", "coste_postprocesado", "REAL DEFAULT 0");
@@ -263,6 +265,7 @@ async function migrateDatabase() {
   await ensureColumn("finished_product_inventory", "unidades_stock", "INTEGER DEFAULT 0");
   await ensureColumn("finished_product_inventory", "unidades_reservadas", "INTEGER DEFAULT 0");
   await ensureColumn("finished_product_inventory", "unidades_disponibles", "INTEGER DEFAULT 0");
+  await ensureColumn("printers", "activo", "INTEGER DEFAULT 1");
   await ensureIndexes();
   await backfillCodes("customers", "CLI-", "fecha_creacion ASC");
   await backfillCodes("materials", "MAT-", "fecha_actualizacion ASC");
@@ -284,6 +287,7 @@ async function createSchema() {
       telefono TEXT,
       email TEXT,
       direccion TEXT,
+      activo INTEGER NOT NULL DEFAULT 1,
       fecha_creacion TEXT NOT NULL
     );
 
@@ -326,7 +330,7 @@ async function createSchema() {
       margen REAL NOT NULL,
       pvp REAL NOT NULL,
       material_id TEXT NOT NULL,
-      activo INTEGER NOT NULL,
+      activo INTEGER NOT NULL DEFAULT 1,
       FOREIGN KEY(material_id) REFERENCES materials(id) ON DELETE RESTRICT
     );
 
@@ -492,6 +496,7 @@ async function createSchema() {
       horas_uso_acumuladas REAL NOT NULL DEFAULT 0,
       coste_hora REAL NOT NULL DEFAULT 0,
       ubicacion TEXT,
+      activo INTEGER NOT NULL DEFAULT 1,
       fecha_actualizacion TEXT NOT NULL
     );
 

@@ -16,7 +16,10 @@ import {
   restockMaterial,
   restockFinishedProduct,
   retryOrderAfterRestock,
+  setCustomerActiveState,
   setMaterialActiveState,
+  setPrinterActiveState,
+  setProductActiveState,
   updateCustomerRecord,
   updateFinishedInventoryRecord,
   updateInvoiceRecord,
@@ -113,6 +116,17 @@ export async function updateCustomerAction(formData: FormData) {
         direccion: asString(formData.get("direccion")),
       }),
     "Cliente actualizado.",
+    "/?section=clientes",
+  );
+}
+
+export async function toggleCustomerActiveAction(formData: FormData) {
+  const customerId = asString(formData.get("id"));
+  const active = asString(formData.get("active")) === "true";
+
+  await executeAndRefresh(
+    () => setCustomerActiveState(customerId, active),
+    active ? "Cliente reactivado." : "Cliente dado de baja.",
     "/?section=clientes",
   );
 }
@@ -234,6 +248,17 @@ export async function updateProductAction(formData: FormData) {
         activo: formData.get("activo") === "on",
       }),
     "Producto actualizado.",
+    "/?section=productos",
+  );
+}
+
+export async function toggleProductActiveAction(formData: FormData) {
+  const productId = asString(formData.get("id"));
+  const active = asString(formData.get("active")) === "true";
+
+  await executeAndRefresh(
+    () => setProductActiveState(productId, active),
+    active ? "Producto reactivado." : "Producto dado de baja.",
     "/?section=productos",
   );
 }
@@ -379,6 +404,17 @@ export async function updatePrinterAction(formData: FormData) {
         ubicacion: asString(formData.get("ubicacion")),
       }),
     "Impresora actualizada.",
+    "/?section=impresoras",
+  );
+}
+
+export async function togglePrinterActiveAction(formData: FormData) {
+  const printerId = asString(formData.get("id"));
+  const active = asString(formData.get("active")) === "true";
+
+  await executeAndRefresh(
+    () => setPrinterActiveState(printerId, active),
+    active ? "Impresora reactivada." : "Impresora dada de baja.",
     "/?section=impresoras",
   );
 }

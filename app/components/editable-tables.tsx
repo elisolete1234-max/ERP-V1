@@ -10,7 +10,10 @@ import {
   registerInvoicePaymentAction,
   startManufacturingAction,
   retryOrderAction,
+  toggleCustomerActiveAction,
   toggleMaterialActiveAction,
+  togglePrinterActiveAction,
+  toggleProductActiveAction,
   updateFinishedInventoryAction,
   updateCustomerAction,
   updateManufacturingAction,
@@ -28,6 +31,7 @@ type Customer = {
   telefono: string | null;
   email: string | null;
   direccion: string | null;
+  activo: boolean;
   fecha_creacion: string;
 };
 
@@ -146,6 +150,7 @@ type Printer = {
   horas_uso_acumuladas: number;
   coste_hora: number;
   ubicacion: string | null;
+  activo: boolean;
   fecha_actualizacion: string;
   orden_activa_codigo: string | null;
 };
@@ -470,17 +475,36 @@ export function CustomersInlineTable({ customers }: { customers: Customer[] }) {
           const editing = editingId === customer.id;
           const formId = `customer-form-${customer.id}`;
           return (
-            <tr key={customer.id}>
+            <tr
+              key={customer.id}
+              className={`${!customer.activo ? `${rowHighlight("attention")} opacity-75` : ""}`.trim()}
+            >
               <td>
                 <form id={formId} action={updateCustomerAction}>
                   <input type="hidden" name="id" value={customer.id} />
                 </form>
-                <ActionButtons
-                  editing={editing}
-                  onEdit={() => setEditingId(customer.id)}
-                  onCancel={() => setEditingId(null)}
-                  formId={formId}
-                />
+                <div className="table-action-group">
+                  <ActionButtons
+                    editing={editing}
+                    onEdit={() => setEditingId(customer.id)}
+                    onCancel={() => setEditingId(null)}
+                    formId={formId}
+                  />
+                  {!editing ? (
+                    <form action={toggleCustomerActiveAction}>
+                      <input type="hidden" name="id" value={customer.id} />
+                      <input type="hidden" name="active" value={customer.activo ? "false" : "true"} />
+                      <SubmitButton
+                        variant={customer.activo ? "icon-soft" : "icon-dark"}
+                        pendingText={<SpinnerIcon />}
+                        title={customer.activo ? "Dar de baja" : "Reactivar"}
+                        aria-label={customer.activo ? "Dar de baja" : "Reactivar"}
+                      >
+                        {customer.activo ? <ArchiveIcon /> : <RestoreIcon />}
+                      </SubmitButton>
+                    </form>
+                  ) : null}
+                </div>
               </td>
               <td>{customer.codigo}</td>
               <td>
@@ -489,7 +513,18 @@ export function CustomersInlineTable({ customers }: { customers: Customer[] }) {
                     <input form={formId} name="nombre" defaultValue={customer.nombre} className={tableInputClass} />
                   </InlineField>
                 ) : (
-                  customer.nombre
+                  <div>
+                    <div className="font-medium">{customer.nombre}</div>
+                    <div className="mt-2">
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          badgeClasses(customer.activo ? "success" : "neutral")
+                        }`}
+                      >
+                        {customer.activo ? "Activo" : "Inactivo"}
+                      </span>
+                    </div>
+                  </div>
                 )}
               </td>
               <td>
@@ -1028,17 +1063,36 @@ export function ProductsInlineTable({
           );
 
           return (
-            <tr key={product.id}>
+            <tr
+              key={product.id}
+              className={`${!product.activo ? `${rowHighlight("attention")} opacity-75` : ""}`.trim()}
+            >
               <td>
                 <form id={formId} action={updateProductAction}>
                   <input type="hidden" name="id" value={product.id} />
                 </form>
-                <ActionButtons
-                  editing={editing}
-                  onEdit={() => setEditingId(product.id)}
-                  onCancel={() => setEditingId(null)}
-                  formId={formId}
-                />
+                <div className="table-action-group">
+                  <ActionButtons
+                    editing={editing}
+                    onEdit={() => setEditingId(product.id)}
+                    onCancel={() => setEditingId(null)}
+                    formId={formId}
+                  />
+                  {!editing ? (
+                    <form action={toggleProductActiveAction}>
+                      <input type="hidden" name="id" value={product.id} />
+                      <input type="hidden" name="active" value={product.activo ? "false" : "true"} />
+                      <SubmitButton
+                        variant={product.activo ? "icon-soft" : "icon-dark"}
+                        pendingText={<SpinnerIcon />}
+                        title={product.activo ? "Dar de baja" : "Reactivar"}
+                        aria-label={product.activo ? "Dar de baja" : "Reactivar"}
+                      >
+                        {product.activo ? <ArchiveIcon /> : <RestoreIcon />}
+                      </SubmitButton>
+                    </form>
+                  ) : null}
+                </div>
               </td>
 
               <td>{product.codigo}</td>
@@ -1805,24 +1859,42 @@ export function PrintersInlineTable({ printers }: { printers: Printer[] }) {
           return (
             <tr
               key={printer.id}
-              className={rowHighlight(
-                printer.estado === "MANTENIMIENTO"
-                  ? "danger"
-                  : printer.estado === "IMPRIMIENDO"
-                    ? "attention"
-                    : null,
-              )}
+              className={`${rowHighlight(
+                !printer.activo
+                  ? "attention"
+                  : printer.estado === "MANTENIMIENTO"
+                    ? "danger"
+                    : printer.estado === "IMPRIMIENDO"
+                      ? "attention"
+                      : null,
+              )} ${!printer.activo ? "opacity-75" : ""}`.trim()}
             >
               <td>
                 <form id={formId} action={updatePrinterAction}>
                   <input type="hidden" name="id" value={printer.id} />
                 </form>
-                <ActionButtons
-                  editing={editing}
-                  onEdit={() => setEditingId(printer.id)}
-                  onCancel={() => setEditingId(null)}
-                  formId={formId}
-                />
+                <div className="table-action-group">
+                  <ActionButtons
+                    editing={editing}
+                    onEdit={() => setEditingId(printer.id)}
+                    onCancel={() => setEditingId(null)}
+                    formId={formId}
+                  />
+                  {!editing ? (
+                    <form action={togglePrinterActiveAction}>
+                      <input type="hidden" name="id" value={printer.id} />
+                      <input type="hidden" name="active" value={printer.activo ? "false" : "true"} />
+                      <SubmitButton
+                        variant={printer.activo ? "icon-soft" : "icon-dark"}
+                        pendingText={<SpinnerIcon />}
+                        title={printer.activo ? "Dar de baja" : "Reactivar"}
+                        aria-label={printer.activo ? "Dar de baja" : "Reactivar"}
+                      >
+                        {printer.activo ? <ArchiveIcon /> : <RestoreIcon />}
+                      </SubmitButton>
+                    </form>
+                  ) : null}
+                </div>
               </td>
               <td>{printer.codigo}</td>
               <td>
@@ -1838,6 +1910,15 @@ export function PrintersInlineTable({ printers }: { printers: Printer[] }) {
                 ) : (
                   <div>
                     <div>{printer.nombre}</div>
+                    <div className="mt-2">
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          badgeClasses(printer.activo ? "success" : "neutral")
+                        }`}
+                      >
+                        {printer.activo ? "Activo" : "Inactivo"}
+                      </span>
+                    </div>
                     <div className="text-xs text-[color:var(--muted)]">
                       {printer.ubicacion || "-"}
                       {printer.orden_activa_codigo ? ` · Orden ${printer.orden_activa_codigo}` : ""}
