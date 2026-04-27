@@ -248,6 +248,28 @@ function Section({
   );
 }
 
+function Field({
+  label,
+  hint,
+  children,
+  className = "",
+  stacked = false,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+  className?: string;
+  stacked?: boolean;
+}) {
+  return (
+    <label className={`form-field ${stacked ? "form-field--stack" : ""} ${className}`.trim()}>
+      <span className="form-label">{label}</span>
+      {hint ? <span className="form-hint">{hint}</span> : null}
+      {children}
+    </label>
+  );
+}
+
 export default async function Home({
   searchParams,
 }: {
@@ -645,36 +667,50 @@ export default async function Home({
 
           <Section active={section === "pedidos"} title="Pedidos" subtitle="Ventas y avance">
             <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-              <form id="create-order" action={createOrderAction} className="panel p-6 space-y-4">
+              <form id="create-order" action={createOrderAction} className="panel form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Crear pedido</h3>
                   <p className="mt-2 text-sm text-[color:var(--muted)]">
                     El sistema intentara servir primero desde stock terminado y fabricara solo lo que falte.
                   </p>
                 </div>
-                <select name="clienteId" className="input" defaultValue="">
+                <Field label="Cliente" hint="Selecciona la ficha del cliente antes de definir las lineas.">
+                  <select name="clienteId" className="input" defaultValue="">
                   <option value="">Cliente</option>
                   {customers.map((customer) => (
                     <option key={customer.id} value={customer.id}>
                       {customer.codigo} · {customer.nombre}
                     </option>
                   ))}
-                </select>
+                  </select>
+                </Field>
+                <p className="form-section-title">Lineas del pedido</p>
                 {[1, 2, 3].map((index) => (
-                  <div key={index} className="grid gap-3 sm:grid-cols-[1.45fr_0.55fr_0.8fr]">
-                    <select name={`producto_${index}`} className="input" defaultValue="">
+                  <div key={index} className="form-field--stack">
+                    <p className="form-label">Linea {index}</p>
+                    <div className="grid gap-3 sm:grid-cols-[1.45fr_0.55fr_0.8fr]">
+                    <Field label="Producto">
+                      <select name={`producto_${index}`} className="input" defaultValue="">
                       <option value="">Producto linea {index}</option>
                       {products.map((product) => (
                         <option key={product.id} value={product.id}>
                           {product.codigo} · {product.nombre}
                         </option>
                       ))}
-                    </select>
-                    <input name={`cantidad_${index}`} type="number" min="0" placeholder="Cantidad" className="input" />
-                    <input name={`precio_${index}`} type="number" min="0" step="0.01" placeholder="Precio unitario" className="input" />
+                      </select>
+                    </Field>
+                    <Field label="Cantidad">
+                      <input name={`cantidad_${index}`} type="number" min="0" placeholder="Cantidad" className="input" />
+                    </Field>
+                    <Field label="Precio unitario">
+                      <input name={`precio_${index}`} type="number" min="0" step="0.01" placeholder="Precio unitario" className="input" />
+                    </Field>
+                    </div>
                   </div>
                 ))}
-                <textarea name="observaciones" rows={3} placeholder="Observaciones" className="input" />
+                <Field label="Observaciones" hint="Notas opcionales para el seguimiento del pedido.">
+                  <textarea name="observaciones" rows={3} placeholder="Observaciones" className="input" />
+                </Field>
                 <SubmitButton pendingText="Creando pedido...">Crear pedido</SubmitButton>
               </form>
 
@@ -945,23 +981,31 @@ export default async function Home({
           <Section active={section === "stock"} title="Stock de materiales" subtitle="Inventario de materiales">
             <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
               <div className="space-y-4">
-                <form id="restock-material" action={restockMaterialAction} className="panel p-6 space-y-4">
+                <form id="restock-material" action={restockMaterialAction} className="panel form-shell p-6 space-y-5">
                   <div>
                     <h3 className="text-xl font-semibold">Registrar reposicion</h3>
                     <p className="mt-2 text-sm text-[color:var(--muted)]">
                       Toda entrada de material queda registrada con movimiento de inventario.
                     </p>
                   </div>
-                  <select name="materialId" className="input" defaultValue="">
+                  <Field label="Material">
+                    <select name="materialId" className="input" defaultValue="">
                     <option value="">Material</option>
                     {activeMaterials.map((material) => (
                       <option key={material.id} value={material.id}>
                         {material.codigo} · {material.nombre} · {material.color}
                       </option>
                     ))}
-                  </select>
-                  <input name="cantidadG" type="number" min="1" placeholder="Cantidad en gramos" className="input" />
-                  <input name="motivo" placeholder="Motivo de la reposicion" className="input" />
+                    </select>
+                  </Field>
+                  <div className="form-grid-2">
+                    <Field label="Cantidad en gramos">
+                      <input name="cantidadG" type="number" min="1" placeholder="Cantidad en gramos" className="input" />
+                    </Field>
+                    <Field label="Motivo de la reposicion">
+                      <input name="motivo" placeholder="Motivo de la reposicion" className="input" />
+                    </Field>
+                  </div>
                   <SubmitButton pendingText="Registrando...">Registrar reposicion</SubmitButton>
                 </form>
 
@@ -1032,25 +1076,39 @@ export default async function Home({
           </Section>
           <Section active={section === "productos-terminados"} title="Productos terminados" subtitle="Inventario de salida">
             <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
-              <form action={restockFinishedProductAction} className="panel p-6 space-y-4">
+              <form action={restockFinishedProductAction} className="panel form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Registrar entrada</h3>
                   <p className="mt-2 text-sm text-[color:var(--muted)]">
                     Usa esta entrada para stock ya fabricado, sobrantes o productos listos para venta directa.
                   </p>
                 </div>
-                <select name="productId" className="input" defaultValue="">
+                <Field label="Producto">
+                  <select name="productId" className="input" defaultValue="">
                   <option value="">Producto</option>
                   {products.map((product) => (
                     <option key={product.id} value={product.id}>
                       {product.codigo} · {product.nombre}
                     </option>
                   ))}
-                </select>
-                <input name="cantidad" type="number" min="1" placeholder="Cantidad disponible" className="input" />
-                <input name="ubicacion" placeholder="Ubicacion" className="input" />
-                <input name="costeUnitario" type="number" min="0" step="0.01" placeholder="Coste unitario" className="input" />
-                <input name="motivo" placeholder="Motivo de entrada" className="input" />
+                  </select>
+                </Field>
+                <div className="form-grid-2">
+                  <Field label="Cantidad disponible">
+                    <input name="cantidad" type="number" min="1" placeholder="Cantidad disponible" className="input" />
+                  </Field>
+                  <Field label="Ubicacion">
+                    <input name="ubicacion" placeholder="Ubicacion" className="input" />
+                  </Field>
+                </div>
+                <div className="form-grid-2">
+                  <Field label="Coste unitario">
+                    <input name="costeUnitario" type="number" min="0" step="0.01" placeholder="Coste unitario" className="input" />
+                  </Field>
+                  <Field label="Motivo de entrada">
+                    <input name="motivo" placeholder="Motivo de entrada" className="input" />
+                  </Field>
+                </div>
                 <SubmitButton pendingText="Registrando...">Registrar entrada</SubmitButton>
               </form>
 
@@ -1163,24 +1221,34 @@ export default async function Home({
 
           <Section active={section === "impresoras"} title="Impresoras" subtitle="Capacidad de produccion">
             <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
-              <form action={createPrinterAction} className="panel p-6 space-y-4">
+              <form action={createPrinterAction} className="panel form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Nueva impresora</h3>
                   <p className="mt-2 text-sm text-[color:var(--muted)]">
                     Define capacidad, coste por hora y estado operativo para que la asignacion sea automatica.
                   </p>
                 </div>
-                <input name="nombre" placeholder="Nombre de impresora" className="input" />
-                <select name="estado" className="input" defaultValue="LIBRE">
+                <Field label="Nombre de impresora">
+                  <input name="nombre" placeholder="Nombre de impresora" className="input" />
+                </Field>
+                <Field label="Estado inicial">
+                  <select name="estado" className="input" defaultValue="LIBRE">
                   <option value="LIBRE">libre</option>
                   <option value="IMPRIMIENDO">imprimiendo</option>
                   <option value="MANTENIMIENTO">mantenimiento</option>
-                </select>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <input name="horasUsoAcumuladas" type="number" min="0" step="0.1" placeholder="Horas acumuladas" className="input" />
-                  <input name="costeHora" type="number" min="0" step="0.01" placeholder="Coste por hora" className="input" />
+                  </select>
+                </Field>
+                <div className="form-grid-2">
+                  <Field label="Horas acumuladas">
+                    <input name="horasUsoAcumuladas" type="number" min="0" step="0.1" placeholder="Horas acumuladas" className="input" />
+                  </Field>
+                  <Field label="Coste por hora">
+                    <input name="costeHora" type="number" min="0" step="0.01" placeholder="Coste por hora" className="input" />
+                  </Field>
                 </div>
-                <input name="ubicacion" placeholder="Ubicacion" className="input" />
+                <Field label="Ubicacion">
+                  <input name="ubicacion" placeholder="Ubicacion" className="input" />
+                </Field>
                 <SubmitButton pendingText="Creando...">Crear impresora</SubmitButton>
               </form>
 
@@ -1220,40 +1288,64 @@ export default async function Home({
 
           <Section active={section === "productos"} title="Productos" subtitle="Catalogo">
             <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-              <form action={createProductAction} className="panel p-6 space-y-4">
+              <form action={createProductAction} className="panel form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Nuevo producto</h3>
                   <p className="mt-2 text-sm text-[color:var(--muted)]">
                     El material principal es obligatorio y permite calcular consumo, coste y fabricacion.
                   </p>
                 </div>
-                <input name="nombre" placeholder="Nombre" className="input" />
-                <textarea name="descripcion" placeholder="Descripcion" rows={3} className="input" />
-                <input name="enlaceModelo" placeholder="Enlace del modelo" className="input" />
-                <select name="materialId" className="input" defaultValue="">
+                <Field label="Nombre del producto">
+                  <input name="nombre" placeholder="Nombre" className="input" />
+                </Field>
+                <Field label="Descripcion">
+                  <textarea name="descripcion" placeholder="Descripcion" rows={3} className="input" />
+                </Field>
+                <Field label="Enlace del modelo">
+                  <input name="enlaceModelo" placeholder="Enlace del modelo" className="input" />
+                </Field>
+                <Field label="Material principal">
+                  <select name="materialId" className="input" defaultValue="">
                   <option value="">Material principal</option>
                   {activeMaterials.map((material) => (
                     <option key={material.id} value={material.id}>
                       {material.codigo} · {material.nombre} · {material.color}
                     </option>
                   ))}
-                </select>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <input name="gramosEstimados" type="number" min="1" placeholder="Gramos estimados" className="input" />
-                  <input name="tiempoImpresionHoras" type="number" min="0.1" step="0.1" placeholder="Horas impresion" className="input" />
+                  </select>
+                </Field>
+                <div className="form-grid-2">
+                  <Field label="Gramos estimados">
+                    <input name="gramosEstimados" type="number" min="1" placeholder="Gramos estimados" className="input" />
+                  </Field>
+                  <Field label="Horas de impresion">
+                    <input name="tiempoImpresionHoras" type="number" min="0.1" step="0.1" placeholder="Horas impresion" className="input" />
+                  </Field>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <input name="costeElectricidad" type="number" min="0" step="0.01" placeholder="Coste electricidad" className="input" />
-                  <input name="costeMaquina" type="number" min="0" step="0.01" placeholder="Coste maquina" className="input" />
-                  <input name="costeManoObra" type="number" min="0" step="0.01" placeholder="Coste mano de obra" className="input" />
+                <div className="form-grid-3">
+                  <Field label="Coste electricidad">
+                    <input name="costeElectricidad" type="number" min="0" step="0.01" placeholder="Coste electricidad" className="input" />
+                  </Field>
+                  <Field label="Coste maquina">
+                    <input name="costeMaquina" type="number" min="0" step="0.01" placeholder="Coste maquina" className="input" />
+                  </Field>
+                  <Field label="Coste mano de obra">
+                    <input name="costeManoObra" type="number" min="0" step="0.01" placeholder="Coste mano de obra" className="input" />
+                  </Field>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <input name="costePostprocesado" type="number" min="0" step="0.01" placeholder="Coste postprocesado" className="input" />
-                  <input name="margen" type="number" step="0.01" placeholder="Margen" className="input" />
-                  <input name="pvp" type="number" min="0.01" step="0.01" placeholder="PVP" className="input" />
+                <div className="form-grid-3">
+                  <Field label="Coste postprocesado">
+                    <input name="costePostprocesado" type="number" min="0" step="0.01" placeholder="Coste postprocesado" className="input" />
+                  </Field>
+                  <Field label="Margen">
+                    <input name="margen" type="number" step="0.01" placeholder="Margen" className="input" />
+                  </Field>
+                  <Field label="PVP">
+                    <input name="pvp" type="number" min="0.01" step="0.01" placeholder="PVP" className="input" />
+                  </Field>
                 </div>
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" name="activo" defaultChecked /> Activo
+                <label className="form-checkbox">
+                  <input type="checkbox" name="activo" defaultChecked /> Producto activo
                 </label>
                 <SubmitButton pendingText="Creando...">Crear producto</SubmitButton>
               </form>
@@ -1277,46 +1369,80 @@ export default async function Home({
 
           <Section active={section === "materiales"} title="Materiales" subtitle="Filamentos y resinas">
             <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-              <form action={createMaterialAction} className="panel p-6 space-y-4">
+              <form action={createMaterialAction} className="panel form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Nuevo material</h3>
                   <p className="mt-2 text-sm text-[color:var(--muted)]">
                     Define precio, stock minimo y proveedor para activar alertas y calculos de coste.
                   </p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <input name="nombre" placeholder="Nombre" className="input" />
-                  <input name="marca" placeholder="Marca" className="input" />
+                <div className="form-grid-2">
+                  <Field label="Nombre">
+                    <input name="nombre" placeholder="Nombre" className="input" />
+                  </Field>
+                  <Field label="Marca">
+                    <input name="marca" placeholder="Marca" className="input" />
+                  </Field>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <input name="tipo" placeholder="Tipo" className="input" />
-                  <input name="color" placeholder="Color" className="input" />
+                <div className="form-grid-2">
+                  <Field label="Tipo">
+                    <input name="tipo" placeholder="Tipo" className="input" />
+                  </Field>
+                  <Field label="Color">
+                    <input name="color" placeholder="Color" className="input" />
+                  </Field>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <input name="tipoColor" placeholder="Tipo color" className="input" />
-                  <input name="nombreComercial" placeholder="Nombre comercial" className="input" />
+                <div className="form-grid-2">
+                  <Field label="Tipo color">
+                    <input name="tipoColor" placeholder="Tipo color" className="input" />
+                  </Field>
+                  <Field label="Nombre comercial">
+                    <input name="nombreComercial" placeholder="Nombre comercial" className="input" />
+                  </Field>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <input name="colorBase" placeholder="Color base" className="input" />
-                  <input name="efecto" placeholder="Efecto" className="input" />
+                <div className="form-grid-2">
+                  <Field label="Color base">
+                    <input name="colorBase" placeholder="Color base" className="input" />
+                  </Field>
+                  <Field label="Efecto">
+                    <input name="efecto" placeholder="Efecto" className="input" />
+                  </Field>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <input name="precioKg" type="number" step="0.01" min="0" placeholder="Precio EUR/kg" className="input" />
-                  <input name="proveedor" placeholder="Proveedor" className="input" />
+                <div className="form-grid-2">
+                  <Field label="Precio EUR/kg">
+                    <input name="precioKg" type="number" step="0.01" min="0" placeholder="Precio EUR/kg" className="input" />
+                  </Field>
+                  <Field label="Proveedor">
+                    <input name="proveedor" placeholder="Proveedor" className="input" />
+                  </Field>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <input name="stockActualG" type="number" min="0" placeholder="Stock actual (g)" className="input" />
-                  <input name="stockMinimoG" type="number" min="0" placeholder="Stock minimo (g)" className="input" />
+                <div className="form-grid-2">
+                  <Field label="Stock actual (g)">
+                    <input name="stockActualG" type="number" min="0" placeholder="Stock actual (g)" className="input" />
+                  </Field>
+                  <Field label="Stock minimo (g)">
+                    <input name="stockMinimoG" type="number" min="0" placeholder="Stock minimo (g)" className="input" />
+                  </Field>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <input name="diametroMm" type="number" min="0" step="0.01" placeholder="Diametro mm" className="input" />
-                  <input name="pesoSpoolG" type="number" min="0" placeholder="Peso spool g" className="input" />
+                <div className="form-grid-2">
+                  <Field label="Diametro mm">
+                    <input name="diametroMm" type="number" min="0" step="0.01" placeholder="Diametro mm" className="input" />
+                  </Field>
+                  <Field label="Peso spool g">
+                    <input name="pesoSpoolG" type="number" min="0" placeholder="Peso spool g" className="input" />
+                  </Field>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <input name="tempExtrusor" type="number" min="0" placeholder="Temp extrusor" className="input" />
-                  <input name="tempCama" type="number" min="0" placeholder="Temp cama" className="input" />
+                <div className="form-grid-2">
+                  <Field label="Temp extrusor">
+                    <input name="tempExtrusor" type="number" min="0" placeholder="Temp extrusor" className="input" />
+                  </Field>
+                  <Field label="Temp cama">
+                    <input name="tempCama" type="number" min="0" placeholder="Temp cama" className="input" />
+                  </Field>
                 </div>
-                <textarea name="notas" rows={3} placeholder="Notas tecnicas" className="input" />
+                <Field label="Notas tecnicas">
+                  <textarea name="notas" rows={3} placeholder="Notas tecnicas" className="input" />
+                </Field>
                 <SubmitButton pendingText="Creando...">Crear material</SubmitButton>
               </form>
 
@@ -1362,17 +1488,27 @@ export default async function Home({
 
           <Section active={section === "clientes"} title="Clientes" subtitle="Gestion">
             <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-              <form action={createCustomerAction} className="panel p-6 space-y-4">
+              <form action={createCustomerAction} className="panel form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Nuevo cliente</h3>
                   <p className="mt-2 text-sm text-[color:var(--muted)]">
                     Mantener la ficha completa evita vueltas atras al crear pedidos, entregar o facturar.
                   </p>
                 </div>
-                <input name="nombre" placeholder="Nombre" className="input" />
-                <input name="telefono" placeholder="Telefono" className="input" />
-                <input name="email" type="email" placeholder="Email" className="input" />
-                <textarea name="direccion" placeholder="Direccion" rows={3} className="input" />
+                <Field label="Nombre">
+                  <input name="nombre" placeholder="Nombre" className="input" />
+                </Field>
+                <div className="form-grid-2">
+                  <Field label="Telefono">
+                    <input name="telefono" placeholder="Telefono" className="input" />
+                  </Field>
+                  <Field label="Email">
+                    <input name="email" type="email" placeholder="Email" className="input" />
+                  </Field>
+                </div>
+                <Field label="Direccion">
+                  <textarea name="direccion" placeholder="Direccion" rows={3} className="input" />
+                </Field>
                 <SubmitButton pendingText="Creando...">Crear cliente</SubmitButton>
               </form>
               <div className="panel p-6">

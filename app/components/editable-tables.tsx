@@ -277,6 +277,24 @@ function orderStatusLabel(status: string) {
 const tableInputClass = "input table-input";
 const tableTextareaClass = "input table-input";
 
+function InlineField({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="table-inline-field">
+      <span className="table-inline-label">{label}</span>
+      {hint ? <span className="table-inline-hint">{hint}</span> : null}
+      {children}
+    </label>
+  );
+}
+
 function PencilIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -467,17 +485,25 @@ export function CustomersInlineTable({ customers }: { customers: Customer[] }) {
               <td>{customer.codigo}</td>
               <td>
                 {editing ? (
-                  <input form={formId} name="nombre" defaultValue={customer.nombre} className={tableInputClass} />
+                  <InlineField label="Nombre">
+                    <input form={formId} name="nombre" defaultValue={customer.nombre} className={tableInputClass} />
+                  </InlineField>
                 ) : (
                   customer.nombre
                 )}
               </td>
               <td>
                 {editing ? (
-                  <div className="table-edit-stack table-cell-edit">
-                    <input form={formId} name="telefono" defaultValue={customer.telefono ?? ""} placeholder="Telefono" className={tableInputClass} />
-                    <input form={formId} name="email" type="email" defaultValue={customer.email ?? ""} placeholder="Email" className={tableInputClass} />
-                    <textarea form={formId} name="direccion" defaultValue={customer.direccion ?? ""} rows={2} placeholder="Direccion" className={tableTextareaClass} />
+                  <div className="table-edit-stack table-cell-edit table-edit-card">
+                    <InlineField label="Telefono">
+                      <input form={formId} name="telefono" defaultValue={customer.telefono ?? ""} placeholder="Telefono" className={tableInputClass} />
+                    </InlineField>
+                    <InlineField label="Email">
+                      <input form={formId} name="email" type="email" defaultValue={customer.email ?? ""} placeholder="Email" className={tableInputClass} />
+                    </InlineField>
+                    <InlineField label="Direccion">
+                      <textarea form={formId} name="direccion" defaultValue={customer.direccion ?? ""} rows={2} placeholder="Direccion" className={tableTextareaClass} />
+                    </InlineField>
                   </div>
                 ) : (
                   <div>
@@ -529,7 +555,7 @@ export function OrdersInlineBoard({
               <form action={updateOrderAction} className="space-y-4">
                 <input type="hidden" name="id" value={order.id} />
                 <input type="hidden" name="estado" value={order.estado} />
-                <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="table-edit-toolbar">
                   <div>
                     <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{order.codigo}</p>
                     <h4 className="mt-2 text-lg font-semibold">Editar pedido</h4>
@@ -554,51 +580,68 @@ export function OrdersInlineBoard({
                     </button>
                   </div>
                 </div>
-                <select name="clienteId" className={tableInputClass} defaultValue={order.cliente_id}>
-                  {customers.map((customer) => (
-                    <option key={customer.id} value={customer.id}>
-                      {customer.codigo} - {customer.nombre}
-                    </option>
-                  ))}
-                </select>
-                {lineDraft.map((line, index) => (
-                  <div key={`${order.id}-line-${index}`} className="table-edit-grid-3">
-                    <select
-                      name={`producto_${index + 1}`}
-                      className={tableInputClass}
-                      defaultValue={line?.producto_id ?? ""}
-                    >
-                      <option value="">Producto linea {index + 1}</option>
-                      {products.map((product) => (
-                        <option key={product.id} value={product.id}>
-                          {product.codigo} - {product.nombre}
+                <div className="table-edit-card">
+                  <InlineField label="Cliente">
+                    <select name="clienteId" className={tableInputClass} defaultValue={order.cliente_id}>
+                      {customers.map((customer) => (
+                        <option key={customer.id} value={customer.id}>
+                          {customer.codigo} - {customer.nombre}
                         </option>
                       ))}
                     </select>
-                    <input
-                      name={`cantidad_${index + 1}`}
-                      type="number"
-                      min="0"
-                      defaultValue={line?.cantidad ?? ""}
-                      className={tableInputClass}
-                    />
-                    <input
-                      name={`precio_${index + 1}`}
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      defaultValue={line?.precio_unitario ?? ""}
-                      className={tableInputClass}
-                    />
+                  </InlineField>
+                </div>
+                {lineDraft.map((line, index) => (
+                  <div key={`${order.id}-line-${index}`} className="table-edit-card">
+                    <p className="table-inline-label">Linea {index + 1}</p>
+                    <div className="mt-3 table-edit-grid-3">
+                      <InlineField label="Producto">
+                        <select
+                          name={`producto_${index + 1}`}
+                          className={tableInputClass}
+                          defaultValue={line?.producto_id ?? ""}
+                        >
+                          <option value="">Producto linea {index + 1}</option>
+                          {products.map((product) => (
+                            <option key={product.id} value={product.id}>
+                              {product.codigo} - {product.nombre}
+                            </option>
+                          ))}
+                        </select>
+                      </InlineField>
+                      <InlineField label="Cantidad">
+                        <input
+                          name={`cantidad_${index + 1}`}
+                          type="number"
+                          min="0"
+                          defaultValue={line?.cantidad ?? ""}
+                          className={tableInputClass}
+                        />
+                      </InlineField>
+                      <InlineField label="Precio unitario">
+                        <input
+                          name={`precio_${index + 1}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          defaultValue={line?.precio_unitario ?? ""}
+                          className={tableInputClass}
+                        />
+                      </InlineField>
+                    </div>
                   </div>
                 ))}
-                <textarea
-                  name="observaciones"
-                  rows={3}
-                  defaultValue={order.observaciones ?? ""}
-                  className={tableTextareaClass}
-                  placeholder="Observaciones"
-                />
+                <div className="table-edit-card">
+                  <InlineField label="Observaciones">
+                    <textarea
+                      name="observaciones"
+                      rows={3}
+                      defaultValue={order.observaciones ?? ""}
+                      className={tableTextareaClass}
+                      placeholder="Observaciones"
+                    />
+                  </InlineField>
+                </div>
               </form>
             ) : (
               <>
@@ -815,33 +858,61 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
               <td>{material.codigo}</td>
               <td>
                 {editing ? (
-                  <div className="table-edit-stack table-cell-edit--wide">
+                  <div className="table-edit-stack table-cell-edit--wide table-edit-card">
                     <div className="table-edit-grid-2">
-                      <input form={formId} name="nombre" defaultValue={material.nombre} className={tableInputClass} placeholder="Material" />
-                      <input form={formId} name="nombreComercial" defaultValue={material.nombre_comercial ?? ""} className={tableInputClass} placeholder="Nombre comercial" />
+                      <InlineField label="Material">
+                        <input form={formId} name="nombre" defaultValue={material.nombre} className={tableInputClass} placeholder="Material" />
+                      </InlineField>
+                      <InlineField label="Nombre comercial">
+                        <input form={formId} name="nombreComercial" defaultValue={material.nombre_comercial ?? ""} className={tableInputClass} placeholder="Nombre comercial" />
+                      </InlineField>
                     </div>
                     <div className="table-edit-grid-2">
-                      <input form={formId} name="marca" defaultValue={material.marca} className={tableInputClass} placeholder="Marca" />
-                      <input form={formId} name="tipo" defaultValue={material.tipo} className={tableInputClass} placeholder="Tipo" />
+                      <InlineField label="Marca">
+                        <input form={formId} name="marca" defaultValue={material.marca} className={tableInputClass} placeholder="Marca" />
+                      </InlineField>
+                      <InlineField label="Tipo">
+                        <input form={formId} name="tipo" defaultValue={material.tipo} className={tableInputClass} placeholder="Tipo" />
+                      </InlineField>
                     </div>
                     <div className="table-edit-grid-2">
-                      <input form={formId} name="color" defaultValue={material.color} className={tableInputClass} placeholder="Color visible" />
-                      <input form={formId} name="tipoColor" defaultValue={material.tipo_color ?? ""} className={tableInputClass} placeholder="Tipo color" />
+                      <InlineField label="Color visible">
+                        <input form={formId} name="color" defaultValue={material.color} className={tableInputClass} placeholder="Color visible" />
+                      </InlineField>
+                      <InlineField label="Tipo color">
+                        <input form={formId} name="tipoColor" defaultValue={material.tipo_color ?? ""} className={tableInputClass} placeholder="Tipo color" />
+                      </InlineField>
                     </div>
                     <div className="table-edit-grid-2">
-                      <input form={formId} name="colorBase" defaultValue={material.color_base ?? ""} className={tableInputClass} placeholder="Color base" />
-                      <input form={formId} name="efecto" defaultValue={material.efecto ?? ""} className={tableInputClass} placeholder="Efecto" />
+                      <InlineField label="Color base">
+                        <input form={formId} name="colorBase" defaultValue={material.color_base ?? ""} className={tableInputClass} placeholder="Color base" />
+                      </InlineField>
+                      <InlineField label="Efecto">
+                        <input form={formId} name="efecto" defaultValue={material.efecto ?? ""} className={tableInputClass} placeholder="Efecto" />
+                      </InlineField>
                     </div>
                     <div className="table-edit-grid-2">
-                      <input form={formId} name="diametroMm" type="number" min="0" step="0.01" defaultValue={material.diametro_mm ?? ""} className={tableInputClass} placeholder="Diametro mm" />
-                      <input form={formId} name="pesoSpoolG" type="number" min="0" defaultValue={material.peso_spool_g ?? ""} className={tableInputClass} placeholder="Peso spool g" />
+                      <InlineField label="Diametro mm">
+                        <input form={formId} name="diametroMm" type="number" min="0" step="0.01" defaultValue={material.diametro_mm ?? ""} className={tableInputClass} placeholder="Diametro mm" />
+                      </InlineField>
+                      <InlineField label="Peso spool g">
+                        <input form={formId} name="pesoSpoolG" type="number" min="0" defaultValue={material.peso_spool_g ?? ""} className={tableInputClass} placeholder="Peso spool g" />
+                      </InlineField>
                     </div>
                     <div className="table-edit-grid-2">
-                      <input form={formId} name="tempExtrusor" type="number" min="0" defaultValue={material.temp_extrusor ?? ""} className={tableInputClass} placeholder="Temp extrusor" />
-                      <input form={formId} name="tempCama" type="number" min="0" defaultValue={material.temp_cama ?? ""} className={tableInputClass} placeholder="Temp cama" />
+                      <InlineField label="Temp extrusor">
+                        <input form={formId} name="tempExtrusor" type="number" min="0" defaultValue={material.temp_extrusor ?? ""} className={tableInputClass} placeholder="Temp extrusor" />
+                      </InlineField>
+                      <InlineField label="Temp cama">
+                        <input form={formId} name="tempCama" type="number" min="0" defaultValue={material.temp_cama ?? ""} className={tableInputClass} placeholder="Temp cama" />
+                      </InlineField>
                     </div>
-                    <input form={formId} name="proveedor" defaultValue={material.proveedor ?? ""} className={tableInputClass} placeholder="Proveedor" />
-                    <textarea form={formId} name="notas" defaultValue={material.notas ?? ""} rows={2} className={tableTextareaClass} placeholder="Notas" />
+                    <InlineField label="Proveedor">
+                      <input form={formId} name="proveedor" defaultValue={material.proveedor ?? ""} className={tableInputClass} placeholder="Proveedor" />
+                    </InlineField>
+                    <InlineField label="Notas">
+                      <textarea form={formId} name="notas" defaultValue={material.notas ?? ""} rows={2} className={tableTextareaClass} placeholder="Notas" />
+                    </InlineField>
                   </div>
                 ) : (
                   <div>
@@ -883,12 +954,14 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
               </td>
               <td>
                 {editing ? (
-                  <div className="table-edit-stack table-cell-edit">
+                  <div className="table-edit-stack table-cell-edit table-edit-card">
                     <input form={formId} name="stockActualG" type="hidden" value={material.stock_actual_g} />
                     <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-2 text-sm">
                       Stock actual: {material.stock_actual_g} g
                     </div>
-                    <input form={formId} name="stockMinimoG" type="number" min="0" defaultValue={material.stock_minimo_g} className={tableInputClass} />
+                    <InlineField label="Stock minimo">
+                      <input form={formId} name="stockMinimoG" type="number" min="0" defaultValue={material.stock_minimo_g} className={tableInputClass} />
+                    </InlineField>
                   </div>
                 ) : (
                   <div>
@@ -1533,40 +1606,54 @@ export function InvoicesInlineTable({
                                 Metodos admitidos: {["EFECTIVO", "TRANSFERENCIA", "TARJETA", "BIZUM", "PAYPAL", "OTRO"].map(paymentMethodLabel).join(", ")}.
                               </div>
                             </div>
-                            <div className="table-edit-grid-2">
-                              <input
-                                name="importe"
-                                type="number"
-                                min="0.01"
-                                step="0.01"
-                                max={pendingAmount.toFixed(2)}
-                                defaultValue={pendingAmount.toFixed(2)}
-                                placeholder="Importe"
-                                className={tableInputClass}
-                                required
-                              />
-                              <select name="metodoPago" defaultValue="TRANSFERENCIA" className={tableInputClass}>
-                                <option value="EFECTIVO">efectivo</option>
-                                <option value="TRANSFERENCIA">transferencia</option>
-                                <option value="TARJETA">tarjeta</option>
-                                <option value="BIZUM">bizum</option>
-                                <option value="PAYPAL">paypal</option>
-                                <option value="OTRO">otro</option>
-                              </select>
+                            <div className="table-edit-card">
+                              <div className="table-edit-grid-2">
+                                <InlineField label="Importe">
+                                  <input
+                                    name="importe"
+                                    type="number"
+                                    min="0.01"
+                                    step="0.01"
+                                    max={pendingAmount.toFixed(2)}
+                                    defaultValue={pendingAmount.toFixed(2)}
+                                    placeholder="Importe"
+                                    className={tableInputClass}
+                                    required
+                                  />
+                                </InlineField>
+                                <InlineField label="Metodo de pago">
+                                  <select name="metodoPago" defaultValue="TRANSFERENCIA" className={tableInputClass}>
+                                    <option value="EFECTIVO">efectivo</option>
+                                    <option value="TRANSFERENCIA">transferencia</option>
+                                    <option value="TARJETA">tarjeta</option>
+                                    <option value="BIZUM">bizum</option>
+                                    <option value="PAYPAL">paypal</option>
+                                    <option value="OTRO">otro</option>
+                                  </select>
+                                </InlineField>
+                              </div>
                             </div>
-                            <input
-                              name="fechaPago"
-                              type="date"
-                              defaultValue={new Date().toISOString().slice(0, 10)}
-                              className={tableInputClass}
-                              required
-                            />
-                            <textarea
-                              name="notas"
-                              rows={2}
-                              placeholder="Notas del pago"
-                              className={tableTextareaClass}
-                            />
+                            <div className="table-edit-card">
+                              <InlineField label="Fecha de pago">
+                                <input
+                                  name="fechaPago"
+                                  type="date"
+                                  defaultValue={new Date().toISOString().slice(0, 10)}
+                                  className={tableInputClass}
+                                  required
+                                />
+                              </InlineField>
+                            </div>
+                            <div className="table-edit-card">
+                              <InlineField label="Notas del pago">
+                                <textarea
+                                  name="notas"
+                                  rows={2}
+                                  placeholder="Notas del pago"
+                                  className={tableTextareaClass}
+                                />
+                              </InlineField>
+                            </div>
                             <div className="table-action-group">
                               <SubmitButton variant="chip-dark" pendingText="Guardando...">
                                 Registrar pago
@@ -1651,7 +1738,11 @@ export function FinishedInventoryInlineTable({
               </td>
               <td>
                 {editing ? (
-                  <input form={formId} name="cantidadDisponible" type="number" min="0" defaultValue={item.cantidad_disponible} className={tableInputClass} />
+                  <div className="table-edit-card">
+                    <InlineField label="Cantidad disponible">
+                      <input form={formId} name="cantidadDisponible" type="number" min="0" defaultValue={item.cantidad_disponible} className={tableInputClass} />
+                    </InlineField>
+                  </div>
                 ) : (
                   <div>
                     <div className={item.cantidad_disponible === 0 ? "text-[color:var(--danger)]" : ""}>
@@ -1665,16 +1756,24 @@ export function FinishedInventoryInlineTable({
               </td>
               <td>
                 {editing ? (
-                  <input form={formId} name="ubicacion" defaultValue={item.ubicacion ?? ""} className={tableInputClass} />
+                  <div className="table-edit-card">
+                    <InlineField label="Ubicacion">
+                      <input form={formId} name="ubicacion" defaultValue={item.ubicacion ?? ""} className={tableInputClass} />
+                    </InlineField>
+                  </div>
                 ) : (
                   item.ubicacion || "-"
                 )}
               </td>
               <td>
                 {editing ? (
-                  <div className="table-edit-stack table-cell-edit">
-                    <input form={formId} name="costeUnitario" type="number" min="0" step="0.01" defaultValue={item.coste_unitario} className={tableInputClass} />
-                    <input form={formId} name="precioVenta" type="number" min="0" step="0.01" defaultValue={item.precio_venta} className={tableInputClass} />
+                  <div className="table-edit-stack table-cell-edit table-edit-card">
+                    <InlineField label="Coste unitario">
+                      <input form={formId} name="costeUnitario" type="number" min="0" step="0.01" defaultValue={item.coste_unitario} className={tableInputClass} />
+                    </InlineField>
+                    <InlineField label="Precio de venta">
+                      <input form={formId} name="precioVenta" type="number" min="0" step="0.01" defaultValue={item.precio_venta} className={tableInputClass} />
+                    </InlineField>
                   </div>
                 ) : (
                   <div>
@@ -1728,9 +1827,13 @@ export function PrintersInlineTable({ printers }: { printers: Printer[] }) {
               <td>{printer.codigo}</td>
               <td>
                 {editing ? (
-                  <div className="table-edit-stack table-cell-edit">
-                    <input form={formId} name="nombre" defaultValue={printer.nombre} className={tableInputClass} />
-                    <input form={formId} name="ubicacion" defaultValue={printer.ubicacion ?? ""} className={tableInputClass} />
+                  <div className="table-edit-stack table-cell-edit table-edit-card">
+                    <InlineField label="Nombre">
+                      <input form={formId} name="nombre" defaultValue={printer.nombre} className={tableInputClass} />
+                    </InlineField>
+                    <InlineField label="Ubicacion">
+                      <input form={formId} name="ubicacion" defaultValue={printer.ubicacion ?? ""} className={tableInputClass} />
+                    </InlineField>
                   </div>
                 ) : (
                   <div>
@@ -1744,11 +1847,15 @@ export function PrintersInlineTable({ printers }: { printers: Printer[] }) {
               </td>
               <td>
                 {editing ? (
-                  <select form={formId} name="estado" defaultValue={printer.estado} className={tableInputClass}>
-                    <option value="LIBRE">libre</option>
-                    <option value="IMPRIMIENDO">imprimiendo</option>
-                    <option value="MANTENIMIENTO">mantenimiento</option>
-                  </select>
+                  <div className="table-edit-card">
+                    <InlineField label="Estado">
+                      <select form={formId} name="estado" defaultValue={printer.estado} className={tableInputClass}>
+                        <option value="LIBRE">libre</option>
+                        <option value="IMPRIMIENDO">imprimiendo</option>
+                        <option value="MANTENIMIENTO">mantenimiento</option>
+                      </select>
+                    </InlineField>
+                  </div>
                 ) : (
                   <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(orderTone(printer.estado))}`}>
                     {printer.estado.toLowerCase()}
@@ -1757,14 +1864,22 @@ export function PrintersInlineTable({ printers }: { printers: Printer[] }) {
               </td>
               <td>
                 {editing ? (
-                  <input form={formId} name="horasUsoAcumuladas" type="number" min="0" step="0.1" defaultValue={printer.horas_uso_acumuladas} className={tableInputClass} />
+                  <div className="table-edit-card">
+                    <InlineField label="Horas de uso">
+                      <input form={formId} name="horasUsoAcumuladas" type="number" min="0" step="0.1" defaultValue={printer.horas_uso_acumuladas} className={tableInputClass} />
+                    </InlineField>
+                  </div>
                 ) : (
                   `${printer.horas_uso_acumuladas} h`
                 )}
               </td>
               <td>
                 {editing ? (
-                  <input form={formId} name="costeHora" type="number" min="0" step="0.01" defaultValue={printer.coste_hora} className={tableInputClass} />
+                  <div className="table-edit-card">
+                    <InlineField label="Coste por hora">
+                      <input form={formId} name="costeHora" type="number" min="0" step="0.01" defaultValue={printer.coste_hora} className={tableInputClass} />
+                    </InlineField>
+                  </div>
                 ) : (
                   `${printer.coste_hora.toFixed(2)} EUR`
                 )}
