@@ -522,19 +522,17 @@ export default async function Home({
     .filter((segment): segment is string => Boolean(segment))
     .join(" y ");
   const smartAlerts = [
-    ...(blockedOrders.length > 0 || blockedManufacturing.length > 0
+    ...(blockedOrders.length > 0
       ? [
           {
             tone: "critical" as const,
-            title: "Pedidos o fabricacion bloqueados",
+            title: "Pedidos con incidencia",
             description:
-              blockedOrders.length > 0 && blockedManufacturing.length > 0
-                ? `${blockedOrders.length} pedidos con incidencia y ${blockedManufacturing.length} ordenes de fabricacion bloqueadas. ${[blockedOrdersPreview, blockedManufacturingPreview].filter(Boolean).join(". ")}`
-                : blockedOrders.length > 0
-                  ? `${blockedOrders.length} pedidos con incidencia de stock. ${blockedOrdersPreview}`
-                  : `${blockedManufacturing.length} ordenes de fabricacion bloqueadas por stock. ${blockedManufacturingPreview}`,
-            href: blockedOrders.length > 0 ? "/?section=pedidos&orderStatus=INCIDENCIA_STOCK" : "/?section=fabricacion&manufacturingStatus=BLOQUEADA_POR_STOCK",
-            actionLabel: "Revisar bloqueo",
+              blockedOrders.length === 1
+                ? `Hay 1 pedido con incidencia de stock. ${blockedOrdersPreview}`
+                : `Hay ${blockedOrders.length} pedidos con incidencia de stock. ${blockedOrdersPreview}`,
+            href: "/?section=pedidos&orderStatus=INCIDENCIA_STOCK",
+            actionLabel: "Ver pedidos",
           },
         ]
       : []),
@@ -568,9 +566,12 @@ export default async function Home({
           {
             tone: blockedManufacturing.length > 0 ? ("warning" as const) : ("info" as const),
             title: "Fabricacion en curso o pendiente",
-            description: `Hay ${pendingManufacturingOrders.length} ordenes sin completar, de las cuales ${manufacturingOrders.filter((order) => order.estado === "PENDIENTE").length} estan pendientes de iniciar.`,
+            description:
+              blockedManufacturing.length > 0
+                ? `Hay ${pendingManufacturingOrders.length} ordenes sin completar, con ${blockedManufacturing.length} bloqueadas por stock. ${blockedManufacturingPreview}`
+                : `Hay ${pendingManufacturingOrders.length} ordenes sin completar, de las cuales ${manufacturingOrders.filter((order) => order.estado === "PENDIENTE").length} estan pendientes de iniciar.`,
             href: "/?section=fabricacion",
-            actionLabel: "Abrir fabricacion",
+            actionLabel: "Ver fabricacion",
           },
         ]
       : []),
