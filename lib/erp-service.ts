@@ -72,6 +72,15 @@ function calculateOrderFinancials(input: {
   };
 }
 
+function inferVatRateFromAmounts(subtotal: number, descuento: number, iva: number) {
+  const taxableBase = roundMoney(Math.max(subtotal - descuento, 0));
+  if (taxableBase <= 0) {
+    return DEFAULT_VAT_RATE;
+  }
+
+  return (iva / taxableBase) * 100;
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -1922,12 +1931,73 @@ export async function updateManufacturingOrderRecord(input: {
 
 export async function updateInvoiceRecord(input: {
   id: string;
-  estadoPago: string;
+  estadoPago?: string;
+  descuento?: number;
 }) {
   if (!input.id) {
     throw new Error("La factura necesita ID.");
   }
-  if (!["PENDIENTE", "PARCIAL", "PAGADA"].includes(input.estadoPago)) {
+  const wantsDiscountUpdate = input.descuento != null;
+  const wantsStatusUpdate = typeof input.estadoPago === "string" && input.estadoPago.length > 0;
+
+  if (!wantsDiscountUpdate && !wantsStatusUpdate) {
+    throw new Error("No hay cambios que aplicar en la factura.");
+  }
+
+  if (wantsDiscountUpdate) {
+    await syncInvoicePaymentSummary(input.id);
+    const invoice = await row<{
+      id: string;
+      subtotal: number;
+      descuento: number;
+      iva: number;
+      total: number;
+      total_pagado: number;
+      importe_pendiente: number;
+      estado_pago: string;
+    }>(
+      `SELECT id, subtotal, descuento, iva, total, total_pagado, importe_pendiente, estado_pago
+       FROM invoices
+       WHERE id = ?`,
+      input.id,
+    );
+
+    if (!invoice) {
+      throw new Error("La factura no existe.");
+    }
+    if (invoice.estado_pago === "PAGADA" || invoice.importe_pendiente <= 0) {
+      throw new Error("No se puede modificar el descuento de una factura ya pagada.");
+    }
+
+    const vatRate = inferVatRateFromAmounts(invoice.subtotal, invoice.descuento, invoice.iva);
+    const nextFinancials = calculateOrderFinancials({
+      subtotal: invoice.subtotal,
+      costeTotalPedido: 0,
+      vatRate,
+      discount: input.descuento,
+    });
+
+    if (roundMoney(invoice.total_pagado) > nextFinancials.total) {
+      throw new Error("El descuento no puede dejar el total final por debajo de lo ya cobrado.");
+    }
+
+    await transaction(async () => {
+      await run(
+        `UPDATE invoices
+         SET descuento = ?, iva = ?, total = ?
+         WHERE id = ?`,
+        nextFinancials.descuento,
+        nextFinancials.iva,
+        nextFinancials.total,
+        input.id,
+      );
+      await syncInvoicePaymentSummary(input.id);
+    });
+
+    return;
+  }
+
+  if (!["PENDIENTE", "PARCIAL", "PAGADA"].includes(input.estadoPago!)) {
     throw new Error("Estado de pago no valido.");
   }
 

@@ -25,6 +25,7 @@ import {
   setProductActiveState,
   startManufacturingOrder,
   updateManufacturingOrderRecord,
+  updateInvoiceRecord,
   updateMaterialRecord,
   updateProductRecord,
   updateOrderRecord,
@@ -869,6 +870,115 @@ test("los pagos usan el total final con descuento como pendiente", async () => {
   assert.equal(afterPayment.total_pagado, 20);
   assert.equal(afterPayment.importe_pendiente, 46.55);
   assert.equal(afterPayment.estado_pago, "PARCIAL");
+});
+
+test("permite editar el descuento de una factura no pagada y recalcula total y pendiente", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 2 }],
+  });
+
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{
+    id: string;
+    subtotal: number;
+    descuento: number;
+    iva: number;
+    total: number;
+    total_pagado: number;
+    importe_pendiente: number;
+  }>(`SELECT id, subtotal, descuento, iva, total, total_pagado, importe_pendiente FROM invoices WHERE pedido_id = ?`, orderId))!;
+
+  assert.equal(invoice.total, 72.6);
+  await updateInvoiceRecord({ id: invoice.id, descuento: 5 });
+
+  const updated = (await row<{
+    descuento: number;
+    iva: number;
+    total: number;
+    total_pagado: number;
+    importe_pendiente: number;
+    estado_pago: string;
+  }>(`SELECT descuento, iva, total, total_pagado, importe_pendiente, estado_pago FROM invoices WHERE id = ?`, invoice.id))!;
+
+  assert.equal(updated.descuento, 5);
+  assert.equal(updated.iva, 11.55);
+  assert.equal(updated.total, 66.55);
+  assert.equal(updated.total_pagado, 0);
+  assert.equal(updated.importe_pendiente, 66.55);
+  assert.equal(updated.estado_pago, "PENDIENTE");
+});
+
+test("bloquea descuentos en factura parcial si el nuevo total queda por debajo de lo ya cobrado", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 2 }],
+  });
+
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, orderId))!;
+
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "TRANSFERENCIA",
+    importe: 40,
+  });
+
+  await assert.rejects(
+    () => updateInvoiceRecord({ id: invoice.id, descuento: 30 }),
+    /total final por debajo de lo ya cobrado/i,
+  );
+});
+
+test("bloquea editar el descuento cuando la factura ya esta pagada", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 1 }],
+  });
+
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{ id: string; total: number }>(`SELECT id, total FROM invoices WHERE pedido_id = ?`, orderId))!;
+
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "TRANSFERENCIA",
+    importe: invoice.total,
+  });
+
+  await assert.rejects(
+    () => updateInvoiceRecord({ id: invoice.id, descuento: 1 }),
+    /factura ya pagada/i,
+  );
 });
 
 test("bloquea descuentos negativos o superiores al subtotal", async () => {

@@ -16,6 +16,7 @@ import {
   toggleProductActiveAction,
   updateFinishedInventoryAction,
   updateCustomerAction,
+  updateInvoiceAction,
   updateManufacturingAction,
   updateMaterialAction,
   updateOrderAction,
@@ -1589,6 +1590,7 @@ export function InvoicesInlineTable({
           const { total, totalPaid, pendingAmount, paymentStatus, canRegisterPayment } =
             deriveInvoicePaymentView(invoice);
           const taxableBase = deriveTaxableBase(invoice.subtotal, invoice.descuento);
+          const canEditDiscount = paymentStatus !== "PAGADA";
           const paymentCount = invoice.pagos.length;
           const highlight =
             paymentStatus === "PENDIENTE"
@@ -1730,14 +1732,68 @@ export function InvoicesInlineTable({
                       <div className="panel-muted p-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
-                            <p className="eyebrow">Registrar pago</p>
-                            <h4 className="mt-2 text-base font-semibold text-slate-900">Cobro sobre {invoice.codigo}</h4>
+                            <p className="eyebrow">Ajustes y cobro</p>
+                            <h4 className="mt-2 text-base font-semibold text-slate-900">Factura {invoice.codigo}</h4>
                           </div>
                           <div className="text-right text-xs text-[color:var(--muted)]">
                             <div>Total: {formatCurrency(total)}</div>
                             <div>Cobrado: {formatCurrency(totalPaid)}</div>
                             <div>Pendiente: {formatCurrency(pendingAmount)}</div>
                           </div>
+                        </div>
+
+                        <div className="mt-4 rounded-2xl border border-black/8 bg-white/92 p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="eyebrow">Descuento final</p>
+                              <h5 className="mt-2 text-sm font-semibold text-slate-900">Editar descuento de factura</h5>
+                            </div>
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(canEditDiscount ? "info" : "neutral")}`}>
+                              {canEditDiscount ? "editable" : "bloqueada"}
+                            </span>
+                          </div>
+                          {canEditDiscount ? (
+                            <form action={updateInvoiceAction} className="mt-4 space-y-3">
+                              <input type="hidden" name="id" value={invoice.id} />
+                              <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
+                                Puedes ajustar el descuento mientras la factura no este totalmente pagada. El total nunca puede quedar por debajo de lo ya cobrado.
+                              </div>
+                              <div className="table-edit-card">
+                                <InlineField label="Descuento (€)" hint="Importe a descontar antes de IVA">
+                                  <input
+                                    name="descuento"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    defaultValue={invoice.descuento.toFixed(2)}
+                                    className={tableInputClass}
+                                    required
+                                  />
+                                </InlineField>
+                              </div>
+                              <div className="grid gap-3 sm:grid-cols-3">
+                                <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                                  <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Base actual</p>
+                                  <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(taxableBase)}</p>
+                                </div>
+                                <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                                  <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Total actual</p>
+                                  <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(total)}</p>
+                                </div>
+                                <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                                  <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Cobrado</p>
+                                  <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(totalPaid)}</p>
+                                </div>
+                              </div>
+                              <SubmitButton variant="chip-dark" pendingText="Actualizando...">
+                                Guardar descuento
+                              </SubmitButton>
+                            </form>
+                          ) : (
+                            <div className="mt-4 rounded-2xl border border-black/8 bg-white/92 px-4 py-3 text-sm text-[color:var(--muted)]">
+                              La factura ya esta totalmente pagada. El descuento queda bloqueado para no alterar el cobro historico.
+                            </div>
+                          )}
                         </div>
 
                         {registeringPayment && canRegisterPayment ? (

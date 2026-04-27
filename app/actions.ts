@@ -468,11 +468,13 @@ export async function generateInvoiceAction(formData: FormData) {
 }
 
 export async function updateInvoiceAction(formData: FormData) {
+  const discountValue = asString(formData.get("descuento"));
   await executeAndRefresh(
     () =>
       updateInvoiceRecord({
         id: asString(formData.get("id")),
-        estadoPago: asString(formData.get("estadoPago")),
+        estadoPago: asString(formData.get("estadoPago")) || undefined,
+        descuento: discountValue ? asDefaultNumber(formData.get("descuento")) : undefined,
       }),
     "Factura actualizada.",
     "/?section=facturas",
