@@ -16,8 +16,8 @@ const appMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ERP V3",
-  description: "ERP V3 para impresion 3D con pedidos, produccion, inventario, impresoras y facturacion",
+  title: "Eli Print 3D",
+  description: "Producción 3D profesional: pedidos, stock y facturación",
 };
 
 export default function RootLayout({

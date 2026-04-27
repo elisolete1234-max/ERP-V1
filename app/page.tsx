@@ -628,10 +628,10 @@ export default async function Home({
       <div className="mx-auto grid max-w-[1500px] gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="panel self-start p-5 xl:sticky xl:top-5">
           <div className="hero-panel p-5 text-white">
-            <p className="text-xs uppercase tracking-[0.34em] text-white/70">Version V3</p>
-            <h1 className="mt-3 text-[2rem] font-semibold tracking-[-0.06em]">ERP V3</h1>
+            <p className="text-xs uppercase tracking-[0.34em] text-white/70">Produccion 3D profesional</p>
+            <h1 className="mt-3 text-[2rem] font-semibold tracking-[-0.06em]">Eli Print 3D</h1>
             <p className="mt-3 text-sm leading-6 text-white/80">
-              Operativa diaria de pedidos, produccion, inventario, impresoras y facturacion.
+              Produccion 3D profesional para pedidos, stock, impresoras y facturacion en una sola vista.
             </p>
             <div className="mt-5 grid grid-cols-2 gap-3">
               <div className="rounded-2xl border border-white/12 bg-white/10 px-3 py-3">
@@ -647,7 +647,7 @@ export default async function Home({
           <div className="mt-5 rounded-[22px] border border-black/6 bg-[color:var(--surface-muted)] px-4 py-4">
             <p className="eyebrow">Jornada</p>
             <p className="mt-2 text-sm font-medium text-slate-800">{todayLabelText}</p>
-            <p className="mt-1 text-sm text-[color:var(--muted)]">ERP V3 operativa, stock sincronizado y trazabilidad activa.</p>
+            <p className="mt-1 text-sm text-[color:var(--muted)]">Eli Print 3D operativa, stock sincronizado y trazabilidad activa.</p>
           </div>
           <nav className="mt-5 space-y-2">
             {sectionKeys.map((key) => (
@@ -681,12 +681,12 @@ export default async function Home({
           <div className="panel overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-5 px-6 py-5">
               <div>
-                <p className="eyebrow">Panel de control V3</p>
+                <p className="eyebrow">Eli Print 3D</p>
                 <h2 className="mt-3 text-[clamp(2rem,3vw,2.8rem)] font-semibold tracking-[-0.07em] text-slate-950">
-                  Opera el taller con ERP V3 y una vista clara y accionable
+                  Opera Eli Print 3D con una vista clara y accionable
                 </h2>
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-[color:var(--muted)]">
-                  Pedidos, stock, fabricacion, impresoras y facturas en una misma interfaz V3, con foco en velocidad y lectura rapida.
+                  Produccion 3D profesional con pedidos, stock, fabricacion, impresoras y facturas en una misma interfaz.
                 </p>
               </div>
               <div className="grid min-w-[260px] flex-1 gap-3 sm:grid-cols-2 xl:max-w-md">
@@ -789,7 +789,7 @@ export default async function Home({
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="eyebrow">Alertas inteligentes</p>
-                    <h3 className="mt-3 text-xl font-semibold">Prioridades operativas del ERP V3</h3>
+                    <h3 className="mt-3 text-xl font-semibold">Prioridades operativas de Eli Print 3D</h3>
                   </div>
                   <StatusPill
                     label={smartAlerts.length === 0 ? "Todo en orden" : `${smartAlerts.length} alertas activas`}
