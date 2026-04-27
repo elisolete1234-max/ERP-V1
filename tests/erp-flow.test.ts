@@ -738,6 +738,163 @@ test("la factura arranca pendiente y sincroniza pagos parciales y totales con el
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoice_payments WHERE factura_id = ?`, invoice.id))!.total, 2);
 });
 
+test("pedido y factura sin descuento mantienen el comportamiento actual", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 1 }],
+  });
+
+  const order = (await row<{
+    subtotal: number;
+    descuento: number;
+    iva: number;
+    total: number;
+  }>(`SELECT subtotal, descuento, iva, total FROM orders WHERE id = ?`, orderId))!;
+
+  assert.equal(order.subtotal, 30);
+  assert.equal(order.descuento, 0);
+  assert.equal(order.iva, 6.3);
+  assert.equal(order.total, 36.3);
+
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{
+    subtotal: number;
+    descuento: number;
+    iva: number;
+    total: number;
+  }>(`SELECT subtotal, descuento, iva, total FROM invoices WHERE pedido_id = ?`, orderId))!;
+
+  assert.equal(invoice.subtotal, 30);
+  assert.equal(invoice.descuento, 0);
+  assert.equal(invoice.iva, 6.3);
+  assert.equal(invoice.total, 36.3);
+});
+
+test("pedido y factura con descuento calculan base, IVA y total final correctamente", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({
+    clienteId: customerId,
+    descuento: 5,
+    lines: [{ productId, quantity: 2 }],
+  });
+
+  const order = (await row<{
+    subtotal: number;
+    descuento: number;
+    iva: number;
+    total: number;
+    beneficio_total: number;
+  }>(`SELECT subtotal, descuento, iva, total, beneficio_total FROM orders WHERE id = ?`, orderId))!;
+
+  assert.equal(order.subtotal, 60);
+  assert.equal(order.descuento, 5);
+  assert.equal(order.iva, 11.55);
+  assert.equal(order.total, 66.55);
+  assert.equal(order.beneficio_total, 48);
+
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{
+    subtotal: number;
+    descuento: number;
+    iva: number;
+    total: number;
+  }>(`SELECT subtotal, descuento, iva, total FROM invoices WHERE pedido_id = ?`, orderId))!;
+
+  assert.equal(invoice.subtotal, 60);
+  assert.equal(invoice.descuento, 5);
+  assert.equal(invoice.iva, 11.55);
+  assert.equal(invoice.total, 66.55);
+});
+
+test("los pagos usan el total final con descuento como pendiente", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({
+    clienteId: customerId,
+    descuento: 5,
+    lines: [{ productId, quantity: 2 }],
+  });
+
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{
+    id: string;
+    total: number;
+    total_pagado: number;
+    importe_pendiente: number;
+  }>(`SELECT id, total, total_pagado, importe_pendiente FROM invoices WHERE pedido_id = ?`, orderId))!;
+
+  assert.equal(invoice.total, 66.55);
+  assert.equal(invoice.total_pagado, 0);
+  assert.equal(invoice.importe_pendiente, 66.55);
+
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "TRANSFERENCIA",
+    importe: 20,
+  });
+
+  const afterPayment = (await row<{
+    total_pagado: number;
+    importe_pendiente: number;
+    estado_pago: string;
+  }>(`SELECT total_pagado, importe_pendiente, estado_pago FROM invoices WHERE id = ?`, invoice.id))!;
+
+  assert.equal(afterPayment.total_pagado, 20);
+  assert.equal(afterPayment.importe_pendiente, 46.55);
+  assert.equal(afterPayment.estado_pago, "PARCIAL");
+});
+
+test("bloquea descuentos negativos o superiores al subtotal", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+
+  await assert.rejects(
+    () =>
+      createOrderRecord({
+        clienteId: customerId,
+        descuento: -1,
+        lines: [{ productId, quantity: 1 }],
+      }),
+    /descuento no puede ser negativo/i,
+  );
+
+  await assert.rejects(
+    () =>
+      createOrderRecord({
+        clienteId: customerId,
+        descuento: 31,
+        lines: [{ productId, quantity: 1 }],
+      }),
+    /descuento no puede superar el subtotal/i,
+  );
+});
+
 test("bloquea pagos invalidos o superiores al pendiente", async () => {
   const { customerId, productId } = await setupSingleProductFixture();
   const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });

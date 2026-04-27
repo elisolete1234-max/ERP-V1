@@ -108,6 +108,7 @@ type Invoice = {
   cliente_id: string;
   fecha: string;
   subtotal: number;
+  descuento: number;
   iva: number;
   total: number;
   total_pagado: number;
@@ -197,6 +198,9 @@ type OrderCard = {
   fecha_pedido: string;
   estado: string;
   estado_pago: string;
+  subtotal: number;
+  descuento: number;
+  iva: number;
   total: number;
   coste_total_pedido: number;
   beneficio_total: number;
@@ -275,6 +279,10 @@ function deriveInvoicePaymentView(invoice: Pick<Invoice, "total" | "total_pagado
     paymentStatus,
     canRegisterPayment,
   };
+}
+
+function deriveTaxableBase(subtotal: number, descuento: number) {
+  return Number(Math.max(subtotal - descuento, 0).toFixed(2));
 }
 
 function rowHighlight(level?: "danger" | "warn" | "attention" | null) {
@@ -643,6 +651,21 @@ export function OrdersInlineBoard({
                     </select>
                   </InlineField>
                 </div>
+                <div className="table-edit-card">
+                  <InlineField
+                    label="Descuento"
+                    hint="Importe total a descontar sobre la base antes de IVA."
+                  >
+                    <input
+                      name="descuento"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      defaultValue={order.descuento.toFixed(2)}
+                      className={tableInputClass}
+                    />
+                  </InlineField>
+                </div>
                 {lineDraft.map((line, index) => (
                   <div key={`${order.id}-line-${index}`} className="table-edit-card">
                     <p className="table-inline-label">Linea {index + 1}</p>
@@ -697,36 +720,62 @@ export function OrdersInlineBoard({
               </form>
             ) : (
               <>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{order.codigo}</p>
-                    <h4 className="mt-2 text-lg font-semibold">{order.cliente_nombre}</h4>
-                    <p className="mt-2 text-sm text-[color:var(--muted)]">{formatDate(order.fecha_pedido)}</p>
-                  </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(orderStatusTone(order.estado))}`}>
-                      {orderStatusLabel(order.estado)}
-                    </span>
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_pago === "PAGADA" ? "success" : "neutral")}`}>
-                      pago: {order.estado_pago.toLowerCase()}
-                    </span>
-                  </div>
-                </div>
+                {(() => {
+                  const baseImponible = deriveTaxableBase(order.subtotal, order.descuento);
+                  return (
+                    <>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{order.codigo}</p>
+                          <h4 className="mt-2 text-lg font-semibold">{order.cliente_nombre}</h4>
+                          <p className="mt-2 text-sm text-[color:var(--muted)]">{formatDate(order.fecha_pedido)}</p>
+                        </div>
+                        <div className="flex flex-col items-end gap-2">
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(orderStatusTone(order.estado))}`}>
+                            {orderStatusLabel(order.estado)}
+                          </span>
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_pago === "PAGADA" ? "success" : "neutral")}`}>
+                            pago: {order.estado_pago.toLowerCase()}
+                          </span>
+                        </div>
+                      </div>
 
-                <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
-                    <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Total pedido</p>
-                    <p className="mt-2 text-lg font-semibold">{formatCurrency(order.total)}</p>
-                  </div>
-                  <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
-                    <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Coste</p>
-                    <p className="mt-2 text-sm font-semibold">{formatCurrency(order.coste_total_pedido)}</p>
-                  </div>
-                  <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
-                    <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Beneficio</p>
-                    <p className="mt-2 text-sm font-semibold">{formatCurrency(order.beneficio_total)}</p>
-                  </div>
-                </div>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-5">
+                        <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Subtotal</p>
+                          <p className="mt-2 text-sm font-semibold">{formatCurrency(order.subtotal)}</p>
+                        </div>
+                        <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Descuento</p>
+                          <p className="mt-2 text-sm font-semibold">{formatCurrency(order.descuento)}</p>
+                        </div>
+                        <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Base imponible</p>
+                          <p className="mt-2 text-sm font-semibold">{formatCurrency(baseImponible)}</p>
+                        </div>
+                        <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">IVA</p>
+                          <p className="mt-2 text-sm font-semibold">{formatCurrency(order.iva)}</p>
+                        </div>
+                        <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Total pedido</p>
+                          <p className="mt-2 text-lg font-semibold">{formatCurrency(order.total)}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Coste</p>
+                          <p className="mt-2 text-sm font-semibold">{formatCurrency(order.coste_total_pedido)}</p>
+                        </div>
+                        <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Beneficio</p>
+                          <p className="mt-2 text-sm font-semibold">{formatCurrency(order.beneficio_total)}</p>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
 
                 <div className="mt-3 space-y-2.5">
                   {order.lineas.map((line) => (
@@ -1524,6 +1573,8 @@ export function InvoicesInlineTable({
           <th>Pedido</th>
           <th>Cliente</th>
           <th>Subtotal</th>
+          <th>Descuento</th>
+          <th>Base</th>
           <th>IVA</th>
           <th>Total</th>
           <th>Pagado</th>
@@ -1537,6 +1588,7 @@ export function InvoicesInlineTable({
           const registeringPayment = paymentId === invoice.id;
           const { total, totalPaid, pendingAmount, paymentStatus, canRegisterPayment } =
             deriveInvoicePaymentView(invoice);
+          const taxableBase = deriveTaxableBase(invoice.subtotal, invoice.descuento);
           const paymentCount = invoice.pagos.length;
           const highlight =
             paymentStatus === "PENDIENTE"
@@ -1587,6 +1639,8 @@ export function InvoicesInlineTable({
                 <td>{invoice.pedido_codigo}</td>
                 <td>{invoice.cliente_nombre}</td>
                 <td>{formatCurrency(invoice.subtotal)}</td>
+                <td>{formatCurrency(invoice.descuento)}</td>
+                <td>{formatCurrency(taxableBase)}</td>
                 <td>{formatCurrency(invoice.iva)}</td>
                 <td>{formatCurrency(total)}</td>
                 <td>{formatCurrency(totalPaid)}</td>
@@ -1599,7 +1653,7 @@ export function InvoicesInlineTable({
               </tr>,
               expanded ? (
                 <tr key={`invoice-detail-${invoice.id}`} className={rowHighlight(highlight)}>
-                  <td colSpan={10} className="bg-[color:var(--surface-strong)]">
+                  <td colSpan={12} className="bg-[color:var(--surface-strong)]">
                     <div className="grid gap-4 px-2 py-4 xl:grid-cols-[1.1fr_0.9fr]">
                       <div className="panel-muted p-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1611,11 +1665,29 @@ export function InvoicesInlineTable({
                             {paymentStatus.toLowerCase()}
                           </span>
                         </div>
-                        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                        <div className="mt-4 grid gap-3 sm:grid-cols-5">
                           <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Total</p>
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Subtotal</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.subtotal)}</p>
+                          </div>
+                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Descuento</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.descuento)}</p>
+                          </div>
+                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Base</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(taxableBase)}</p>
+                          </div>
+                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">IVA</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.iva)}</p>
+                          </div>
+                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Total final</p>
                             <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(total)}</p>
                           </div>
+                        </div>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-3">
                           <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
                             <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Cobrado</p>
                             <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(totalPaid)}</p>

@@ -14,6 +14,8 @@ export async function GET(request: Request) {
       { header: "cliente", value: (row) => row.cliente },
       { header: "fecha_factura", value: (row) => formatCsvDateTime(row.fechaFactura) },
       { header: "subtotal", value: (row) => formatCsvMoney(row.subtotal) },
+      { header: "descuento", value: (row) => formatCsvMoney(row.descuento) },
+      { header: "base_imponible", value: (row) => formatCsvMoney(row.baseImponible) },
       { header: "iva", value: (row) => formatCsvMoney(row.iva) },
       { header: "total", value: (row) => formatCsvMoney(row.total) },
       { header: "total_pagado", value: (row) => formatCsvMoney(row.totalPagado) },

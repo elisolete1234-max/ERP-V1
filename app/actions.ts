@@ -277,6 +277,7 @@ export async function createOrderAction(formData: FormData) {
       createOrderRecord({
         clienteId: asString(formData.get("clienteId")),
         observaciones: asString(formData.get("observaciones")),
+        descuento: asDefaultNumber(formData.get("descuento")),
         lines,
       }),
     "Pedido creado en borrador.",
@@ -300,6 +301,7 @@ export async function updateOrderAction(formData: FormData) {
         clienteId: asString(formData.get("clienteId")),
         observaciones: asString(formData.get("observaciones")),
         estado: asString(formData.get("estado")),
+        descuento: asDefaultNumber(formData.get("descuento")),
         lines,
       }),
     "Pedido actualizado.",

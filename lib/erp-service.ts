@@ -19,6 +19,59 @@ function roundMoney(value: number) {
   return Number(value.toFixed(2));
 }
 
+function normalizeDiscount(input: number | undefined, subtotal: number) {
+  if (input == null) {
+    return 0;
+  }
+
+  if (!Number.isFinite(input)) {
+    throw new Error("El descuento no es valido.");
+  }
+
+  const discount = roundMoney(input);
+  if (discount < 0) {
+    throw new Error("El descuento no puede ser negativo.");
+  }
+  if (discount > subtotal) {
+    throw new Error("El descuento no puede superar el subtotal.");
+  }
+
+  return discount;
+}
+
+function clampStoredDiscount(input: number | null | undefined, subtotal: number) {
+  if (!Number.isFinite(input ?? 0)) {
+    return 0;
+  }
+
+  return roundMoney(Math.min(Math.max(input ?? 0, 0), subtotal));
+}
+
+function calculateOrderFinancials(input: {
+  subtotal: number;
+  costeTotalPedido: number;
+  vatRate?: number;
+  discount?: number;
+}) {
+  const subtotal = roundMoney(input.subtotal);
+  const descuento = normalizeDiscount(input.discount, subtotal);
+  const baseImponible = roundMoney(subtotal - descuento);
+  const iva = roundMoney((baseImponible * (input.vatRate ?? DEFAULT_VAT_RATE)) / 100);
+  const total = roundMoney(baseImponible + iva);
+  const costeTotalPedido = roundMoney(input.costeTotalPedido);
+  const beneficioTotal = roundMoney(baseImponible - costeTotalPedido);
+
+  return {
+    subtotal,
+    descuento,
+    baseImponible,
+    iva,
+    total,
+    costeTotalPedido,
+    beneficioTotal,
+  };
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -222,6 +275,10 @@ async function syncFinishedInventoryMetricsForOrder(orderId: string) {
 }
 
 async function recalculateOrderTotals(orderId: string, vatRate = DEFAULT_VAT_RATE) {
+  const order = await row<{ descuento: number | null }>(
+    `SELECT descuento FROM orders WHERE id = ?`,
+    orderId,
+  );
   const totals = await row<{
     subtotal: number;
     coste_total: number;
@@ -237,16 +294,19 @@ async function recalculateOrderTotals(orderId: string, vatRate = DEFAULT_VAT_RAT
   );
 
   const subtotal = roundMoney(totals?.subtotal ?? 0);
-  const iva = roundMoney((subtotal * vatRate) / 100);
-  const total = roundMoney(subtotal + iva);
   const costeTotal = roundMoney(totals?.coste_total ?? 0);
-  const beneficio = roundMoney(totals?.beneficio ?? 0);
+  const descuento = clampStoredDiscount(order?.descuento, subtotal);
+  const baseImponible = roundMoney(subtotal - descuento);
+  const iva = roundMoney((baseImponible * vatRate) / 100);
+  const total = roundMoney(baseImponible + iva);
+  const beneficio = roundMoney(baseImponible - costeTotal);
 
   await run(
     `UPDATE orders
-     SET subtotal = ?, iva = ?, total = ?, coste_total_pedido = ?, beneficio_total = ?
+     SET subtotal = ?, descuento = ?, iva = ?, total = ?, coste_total_pedido = ?, beneficio_total = ?
      WHERE id = ?`,
     subtotal,
+    descuento,
     iva,
     total,
     costeTotal,
@@ -254,7 +314,7 @@ async function recalculateOrderTotals(orderId: string, vatRate = DEFAULT_VAT_RAT
     orderId,
   );
 
-  return { subtotal, iva, total, costeTotal, beneficio };
+  return { subtotal, descuento, iva, total, costeTotal, beneficio };
 }
 
 async function registerOrderHistory(pedidoId: string, estado: string, nota: string) {
@@ -836,6 +896,7 @@ export async function getAppSnapshot() {
     estado: string;
     estado_pago: string;
     subtotal: number;
+    descuento: number;
     iva: number;
     total: number;
     coste_total_pedido: number;
@@ -974,6 +1035,7 @@ export async function getAppSnapshot() {
     cliente_id: string;
     fecha: string;
     subtotal: number;
+    descuento: number;
     iva: number;
     total: number;
     total_pagado: number;
@@ -1107,6 +1169,8 @@ export async function getInvoicesExportRows(status?: string, fromDate?: string, 
     cliente: string;
     fechaFactura: string;
     subtotal: number;
+    descuento: number;
+    baseImponible: number;
     iva: number;
     total: number;
     totalPagado: number;
@@ -1119,6 +1183,8 @@ export async function getInvoicesExportRows(status?: string, fromDate?: string, 
        c.nombre AS cliente,
        i.fecha AS fechaFactura,
        i.subtotal AS subtotal,
+       i.descuento AS descuento,
+       ROUND(i.subtotal - i.descuento, 2) AS baseImponible,
        i.iva AS iva,
        i.total AS total,
        i.total_pagado AS totalPagado,
@@ -1710,6 +1776,7 @@ export async function createOrderRecord(input: {
   clienteId: string;
   observaciones?: string;
   vatRate?: number;
+  descuento?: number;
   lines: LineInput[];
 }) {
   if (!input.clienteId) {
@@ -1749,27 +1816,31 @@ export async function createOrderRecord(input: {
   const costeTotalPedido = roundMoney(
     calculations.reduce((sum, item) => sum + item.values.costeTotal, 0),
   );
-  const iva = roundMoney((subtotal * (input.vatRate ?? DEFAULT_VAT_RATE)) / 100);
-  const total = roundMoney(subtotal + iva);
-  const beneficioTotal = roundMoney(subtotal - costeTotalPedido);
+  const financials = calculateOrderFinancials({
+    subtotal,
+    costeTotalPedido,
+    vatRate: input.vatRate,
+    discount: input.descuento,
+  });
   const orderId = randomUUID();
 
   await transaction(async () => {
     await run(
       `INSERT INTO orders
-        (id, codigo, cliente_id, fecha_pedido, estado, estado_pago, subtotal, iva, total, coste_total_pedido, beneficio_total, observaciones)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, codigo, cliente_id, fecha_pedido, estado, estado_pago, subtotal, descuento, iva, total, coste_total_pedido, beneficio_total, observaciones)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       orderId,
       codigo,
       input.clienteId,
       nowIso(),
       "BORRADOR",
       "NO_FACTURADO",
-      subtotal,
-      iva,
-      total,
-      costeTotalPedido,
-      beneficioTotal,
+      financials.subtotal,
+      financials.descuento,
+      financials.iva,
+      financials.total,
+      financials.costeTotalPedido,
+      financials.beneficioTotal,
       input.observaciones?.trim() || null,
     );
 
@@ -2371,6 +2442,7 @@ export async function updateOrderRecord(input: {
   clienteId: string;
   observaciones?: string;
   estado?: string;
+  descuento?: number;
   lines: LineInput[];
 }) {
   if (!input.id || !input.clienteId) {
@@ -2416,9 +2488,12 @@ export async function updateOrderRecord(input: {
   const costeTotalPedido = roundMoney(
     calculations.reduce((sum, item) => sum + item.values.costeTotal, 0),
   );
-  const iva = roundMoney((subtotal * DEFAULT_VAT_RATE) / 100);
-  const total = roundMoney(subtotal + iva);
-  const beneficioTotal = roundMoney(subtotal - costeTotalPedido);
+  const financials = calculateOrderFinancials({
+    subtotal,
+    costeTotalPedido,
+    vatRate: DEFAULT_VAT_RATE,
+    discount: input.descuento,
+  });
   const nextStatus = current.estado === "INCIDENCIA_STOCK" ? "INCIDENCIA_STOCK" : "BORRADOR";
 
   await transaction(async () => {
@@ -2426,16 +2501,17 @@ export async function updateOrderRecord(input: {
     await run(`DELETE FROM order_lines WHERE pedido_id = ?`, input.id);
     await run(
       `UPDATE orders
-       SET cliente_id = ?, observaciones = ?, estado = ?, subtotal = ?, iva = ?, total = ?, coste_total_pedido = ?, beneficio_total = ?
+       SET cliente_id = ?, observaciones = ?, estado = ?, subtotal = ?, descuento = ?, iva = ?, total = ?, coste_total_pedido = ?, beneficio_total = ?
        WHERE id = ?`,
       input.clienteId,
       input.observaciones?.trim() || null,
       nextStatus,
-      subtotal,
-      iva,
-      total,
-      costeTotalPedido,
-      beneficioTotal,
+      financials.subtotal,
+      financials.descuento,
+      financials.iva,
+      financials.total,
+      financials.costeTotalPedido,
+      financials.beneficioTotal,
       input.id,
     );
 
@@ -2835,6 +2911,7 @@ export async function generateInvoiceForOrder(orderId: string) {
     cliente_id: string;
     estado: string;
     subtotal: number;
+    descuento: number;
     iva: number;
     total: number;
   }>(`SELECT * FROM orders WHERE id = ?`, orderId);
@@ -2858,14 +2935,15 @@ export async function generateInvoiceForOrder(orderId: string) {
     const codigo = await nextCode("invoices", "FAC-");
     await run(
       `INSERT INTO invoices
-        (id, codigo, pedido_id, cliente_id, fecha, subtotal, iva, total, total_pagado, importe_pendiente, estado_pago)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, codigo, pedido_id, cliente_id, fecha, subtotal, descuento, iva, total, total_pagado, importe_pendiente, estado_pago)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       randomUUID(),
       codigo,
       order.id,
       order.cliente_id,
       nowIso(),
       order.subtotal,
+      order.descuento ?? 0,
       order.iva,
       order.total,
       0,

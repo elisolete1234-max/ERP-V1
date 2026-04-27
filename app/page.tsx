@@ -918,6 +918,20 @@ export default async function Home({
                     </div>
                   </div>
                 ))}
+                <Field
+                  label="Descuento"
+                  hint="Importe total a descontar sobre la base antes de IVA. Si no aplica, deja 0."
+                >
+                  <input
+                    name="descuento"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    defaultValue="0"
+                    placeholder="0,00"
+                    className="input"
+                  />
+                </Field>
                 <Field label="Observaciones" hint="Notas opcionales para el seguimiento del pedido.">
                   <textarea name="observaciones" rows={3} placeholder="Observaciones" className="input" />
                 </Field>

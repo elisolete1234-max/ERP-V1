@@ -254,6 +254,7 @@ async function migrateDatabase() {
   await ensureColumn("order_lines", "coste_impresora_total", "REAL DEFAULT 0");
   await ensureColumn("order_lines", "precio_total_linea", "REAL DEFAULT 0");
   await ensureColumn("orders", "estado_pago", "TEXT DEFAULT 'NO_FACTURADO'");
+  await ensureColumn("orders", "descuento", "REAL DEFAULT 0");
   await ensureColumn("orders", "coste_total_pedido", "REAL DEFAULT 0");
   await ensureColumn("orders", "beneficio_total", "REAL DEFAULT 0");
   await ensureColumn("stock_movements", "codigo", "TEXT");
@@ -262,6 +263,7 @@ async function migrateDatabase() {
   await ensureColumn("manufacturing_orders", "tiempo_estimado_horas", "REAL");
   await ensureColumn("invoices", "total_pagado", "REAL DEFAULT 0");
   await ensureColumn("invoices", "importe_pendiente", "REAL DEFAULT 0");
+  await ensureColumn("invoices", "descuento", "REAL DEFAULT 0");
   await ensureColumn("finished_product_inventory", "unidades_stock", "INTEGER DEFAULT 0");
   await ensureColumn("finished_product_inventory", "unidades_reservadas", "INTEGER DEFAULT 0");
   await ensureColumn("finished_product_inventory", "unidades_disponibles", "INTEGER DEFAULT 0");
@@ -342,6 +344,7 @@ async function createSchema() {
       estado TEXT NOT NULL,
       estado_pago TEXT NOT NULL DEFAULT 'NO_FACTURADO',
       subtotal REAL NOT NULL,
+      descuento REAL NOT NULL DEFAULT 0,
       iva REAL NOT NULL,
       total REAL NOT NULL,
       coste_total_pedido REAL NOT NULL DEFAULT 0,
@@ -411,6 +414,7 @@ async function createSchema() {
       cliente_id TEXT NOT NULL,
       fecha TEXT NOT NULL,
       subtotal REAL NOT NULL,
+      descuento REAL NOT NULL DEFAULT 0,
       iva REAL NOT NULL,
       total REAL NOT NULL,
       total_pagado REAL NOT NULL DEFAULT 0,
