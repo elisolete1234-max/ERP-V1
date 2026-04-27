@@ -1585,6 +1585,18 @@ export default async function Home({
                     <input name="pvp" type="number" min="0.01" step="0.01" placeholder="PVP" className="input" />
                   </Field>
                 </div>
+                <Field label="IVA producto (%)" hint="Se usa en el pedido/factura al crear la linea. Si queda vacio, se aplica 21.">
+                  <input
+                    name="ivaPorcentaje"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    defaultValue="21"
+                    placeholder="21"
+                    className="input"
+                  />
+                </Field>
                 <label className="form-checkbox">
                   <input type="checkbox" name="activo" defaultChecked /> Producto activo
                 </label>

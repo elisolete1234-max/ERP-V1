@@ -53,6 +53,7 @@ async function setupSingleProductFixture(input?: {
   hours?: number;
   electricity?: number;
   pvp?: number;
+  ivaPercentage?: number;
 }) {
   await createCustomerRecord({ nombre: "Cliente Test" });
   await createMaterialRecord({
@@ -72,6 +73,7 @@ async function setupSingleProductFixture(input?: {
     costeElectricidad: input?.electricity ?? 1.5,
     margen: 10,
     pvp: input?.pvp ?? 30,
+    ivaPorcentaje: input?.ivaPercentage,
     materialId,
   });
   await createPrinterRecord({ nombre: "Impresora 1", costeHora: 2, horasUsoAcumuladas: 0, estado: "LIBRE" });
@@ -821,6 +823,35 @@ test("desglosa correctamente un PVP con IVA incluido y un descuento final con IV
   assert.equal(discountedOrder.iva, 1.39);
 });
 
+test("aplica el IVA propio del producto en 21, 10, 4 y 0 por ciento", async () => {
+  const vatCases = [
+    { vat: 21, expectedBase: 4.13, expectedIva: 0.87 },
+    { vat: 10, expectedBase: 4.55, expectedIva: 0.45 },
+    { vat: 4, expectedBase: 4.81, expectedIva: 0.19 },
+    { vat: 0, expectedBase: 5, expectedIva: 0 },
+  ];
+
+  for (const vatCase of vatCases) {
+    await resetDatabase();
+    const { customerId, productId } = await setupSingleProductFixture({ pvp: 5, ivaPercentage: vatCase.vat });
+    const orderId = await createOrderRecord({
+      clienteId: customerId,
+      lines: [{ productId, quantity: 1 }],
+    });
+
+    const order = (await row<{
+      subtotal: number;
+      iva: number;
+      total: number;
+    }>(`SELECT subtotal, iva, total FROM orders WHERE id = ?`, orderId))!;
+
+    assert.equal(order.subtotal, 5);
+    assert.equal(order.total, 5);
+    assert.equal(Number((order.total - order.iva).toFixed(2)), vatCase.expectedBase);
+    assert.equal(order.iva, vatCase.expectedIva);
+  }
+});
+
 test("pedido y factura con descuento calculan base, IVA y total final correctamente", async () => {
   const { customerId, productId } = await setupSingleProductFixture();
   const orderId = await createOrderRecord({
@@ -957,6 +988,52 @@ test("permite editar el descuento de una factura no pagada y recalcula total y p
   assert.equal(updated.total_pagado, 0);
   assert.equal(updated.importe_pendiente, 55);
   assert.equal(updated.estado_pago, "PENDIENTE");
+});
+
+test("la factura historica conserva el IVA aplicado aunque el producto cambie despues", async () => {
+  const { customerId, productId, materialId } = await setupSingleProductFixture({ pvp: 5, ivaPercentage: 10 });
+  const orderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 1 }],
+  });
+
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const beforeChange = (await row<{ iva: number; total: number }>(
+    `SELECT iva, total FROM invoices WHERE pedido_id = ?`,
+    orderId,
+  ))!;
+
+  await updateProductRecord({
+    id: productId,
+    nombre: "Producto Test",
+    gramosEstimados: 100,
+    tiempoImpresionHoras: 2,
+    costeElectricidad: 1.5,
+    margen: 10,
+    pvp: 5,
+    ivaPorcentaje: 21,
+    materialId,
+    activo: true,
+  });
+
+  const afterChange = (await row<{ iva: number; total: number }>(
+    `SELECT iva, total FROM invoices WHERE pedido_id = ?`,
+    orderId,
+  ))!;
+
+  assert.equal(beforeChange.total, 5);
+  assert.equal(beforeChange.iva, 0.45);
+  assert.equal(afterChange.total, 5);
+  assert.equal(afterChange.iva, 0.45);
 });
 
 test("bloquea descuentos en factura parcial si el nuevo total queda por debajo de lo ya cobrado", async () => {

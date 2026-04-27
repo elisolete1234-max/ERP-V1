@@ -76,6 +76,7 @@ type Product = {
   coste_total_producto: number;
   margen: number;
   pvp: number;
+  iva_porcentaje: number;
   material_id: string;
   activo: boolean;
   material_nombre: string;
@@ -1118,7 +1119,7 @@ export function ProductsInlineTable({
           <th>Producto</th>
           <th>Material</th>
           <th>Costes</th>
-          <th>PVP</th>
+          <th>PVP / IVA</th>
         </tr>
       </thead>
       <tbody>
@@ -1394,6 +1395,23 @@ export function ProductsInlineTable({
                           placeholder="2.20"
                         />
                       </div>
+
+                      <div className="mt-3">
+                        <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                          IVA producto (%)
+                        </label>
+                        <input
+                          form={formId}
+                          name="ivaPorcentaje"
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.01"
+                          defaultValue={product.iva_porcentaje}
+                          className={tableInputClass}
+                          placeholder="21"
+                        />
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -1427,7 +1445,10 @@ export function ProductsInlineTable({
                     />
                   </div>
                 ) : (
-                  formatCurrency(product.pvp)
+                  <div>
+                    <div>{formatCurrency(product.pvp)}</div>
+                    <div className="text-xs text-[color:var(--muted)]">IVA: {product.iva_porcentaje}%</div>
+                  </div>
                 )}
               </td>
             </tr>

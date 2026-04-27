@@ -245,12 +245,14 @@ async function migrateDatabase() {
   await ensureColumn("materials", "activo", "INTEGER DEFAULT 1");
   await ensureColumn("products", "codigo", "TEXT");
   await ensureColumn("products", "activo", "INTEGER DEFAULT 1");
+  await ensureColumn("products", "iva_porcentaje", "REAL DEFAULT 21");
   await ensureColumn("products", "coste_maquina", "REAL DEFAULT 0");
   await ensureColumn("products", "coste_mano_obra", "REAL DEFAULT 0");
   await ensureColumn("products", "coste_postprocesado", "REAL DEFAULT 0");
   await ensureColumn("order_lines", "codigo", "TEXT");
   await ensureColumn("order_lines", "cantidad_desde_stock", "INTEGER DEFAULT 0");
   await ensureColumn("order_lines", "cantidad_a_fabricar", "INTEGER DEFAULT 0");
+  await ensureColumn("order_lines", "iva_porcentaje", "REAL DEFAULT 21");
   await ensureColumn("order_lines", "coste_impresora_total", "REAL DEFAULT 0");
   await ensureColumn("order_lines", "precio_total_linea", "REAL DEFAULT 0");
   await ensureColumn("orders", "estado_pago", "TEXT DEFAULT 'NO_FACTURADO'");
@@ -331,6 +333,7 @@ async function createSchema() {
       coste_postprocesado REAL NOT NULL DEFAULT 0,
       margen REAL NOT NULL,
       pvp REAL NOT NULL,
+      iva_porcentaje REAL NOT NULL DEFAULT 21,
       material_id TEXT NOT NULL,
       activo INTEGER NOT NULL DEFAULT 1,
       FOREIGN KEY(material_id) REFERENCES materials(id) ON DELETE RESTRICT
@@ -364,6 +367,7 @@ async function createSchema() {
       cantidad_a_fabricar INTEGER NOT NULL DEFAULT 0,
       precio_unitario REAL NOT NULL,
       precio_total_linea REAL NOT NULL DEFAULT 0,
+      iva_porcentaje REAL NOT NULL DEFAULT 21,
       gramos_totales INTEGER NOT NULL,
       coste_material REAL NOT NULL,
       coste_electricidad_total REAL NOT NULL,

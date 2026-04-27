@@ -19,6 +19,22 @@ function roundMoney(value: number) {
   return Number(value.toFixed(2));
 }
 
+function normalizeVatRate(input: number | undefined) {
+  if (input == null || !Number.isFinite(input)) {
+    return DEFAULT_VAT_RATE;
+  }
+
+  const vatRate = roundMoney(input);
+  if (vatRate < 0) {
+    throw new Error("El IVA del producto no puede ser negativo.");
+  }
+  if (vatRate > 100) {
+    throw new Error("El IVA del producto no puede superar el 100%.");
+  }
+
+  return vatRate;
+}
+
 function normalizeDiscount(input: number | undefined, subtotal: number) {
   if (input == null) {
     return 0;
@@ -48,16 +64,42 @@ function clampStoredDiscount(input: number | null | undefined, subtotal: number)
 }
 
 function calculateOrderFinancials(input: {
-  subtotal: number;
+  lineTotals: Array<{ grossTotal: number; vatRate?: number }>;
   costeTotalPedido: number;
-  vatRate?: number;
   discount?: number;
 }) {
-  const subtotal = roundMoney(input.subtotal);
+  const lineTotals = input.lineTotals.map((line) => ({
+    grossTotal: roundMoney(line.grossTotal),
+    vatRate: normalizeVatRate(line.vatRate),
+  }));
+  const subtotal = roundMoney(lineTotals.reduce((sum, line) => sum + line.grossTotal, 0));
   const descuento = normalizeDiscount(input.discount, subtotal);
   const total = roundMoney(subtotal - descuento);
-  const vatMultiplier = 1 + (input.vatRate ?? DEFAULT_VAT_RATE) / 100;
-  const baseImponible = roundMoney(total / vatMultiplier);
+  if (subtotal <= 0 || lineTotals.length === 0) {
+    const costeTotalPedido = roundMoney(input.costeTotalPedido);
+    return {
+      subtotal,
+      descuento,
+      baseImponible: 0,
+      iva: 0,
+      total,
+      costeTotalPedido,
+      beneficioTotal: roundMoney(-costeTotalPedido),
+    };
+  }
+
+  let remainingDiscountedTotal = total;
+  let baseImponible = 0;
+
+  lineTotals.forEach((line, index) => {
+    const lineTotalWithDiscount =
+      index === lineTotals.length - 1
+        ? remainingDiscountedTotal
+        : roundMoney(total * (line.grossTotal / subtotal));
+    remainingDiscountedTotal = roundMoney(remainingDiscountedTotal - lineTotalWithDiscount);
+    baseImponible = roundMoney(baseImponible + lineTotalWithDiscount / (1 + line.vatRate / 100));
+  });
+
   const iva = roundMoney(total - baseImponible);
   const costeTotalPedido = roundMoney(input.costeTotalPedido);
   const beneficioTotal = roundMoney(baseImponible - costeTotalPedido);
@@ -109,6 +151,7 @@ async function getProductOrThrow(productId: string) {
     coste_mano_obra: number;
     coste_postprocesado: number;
     pvp: number;
+    iva_porcentaje: number;
     precio_kg: number;
     activo: number;
     material_activo: number;
@@ -123,6 +166,7 @@ async function getProductOrThrow(productId: string) {
        p.coste_mano_obra,
        p.coste_postprocesado,
        p.pvp,
+       p.iva_porcentaje,
        p.activo,
        m.precio_kg,
        m.activo AS material_activo
@@ -194,6 +238,7 @@ function draftLineCalculations(product: Awaited<ReturnType<typeof getProductOrTh
   return {
     gramosTotales: costs.gramosTotales,
     precioUnitario,
+    ivaPorcentaje: normalizeVatRate(product.iva_porcentaje),
     precioTotalLinea: roundMoney(precioUnitario * quantity),
     costeMaterial: costs.costeMaterial,
     costeElectricidadTotal: costs.costeElectricidadTotal,
@@ -280,43 +325,50 @@ async function recalculateOrderTotals(orderId: string, vatRate = DEFAULT_VAT_RAT
     `SELECT descuento FROM orders WHERE id = ?`,
     orderId,
   );
-  const totals = await row<{
-    subtotal: number;
+  const lines = await rows<{
+    precio_total_linea: number;
     coste_total: number;
-    beneficio: number;
+    iva_porcentaje: number | null;
   }>(
-    `SELECT
-       COALESCE(SUM(precio_total_linea), 0) AS subtotal,
-       COALESCE(SUM(coste_total), 0) AS coste_total,
-       COALESCE(SUM(beneficio), 0) AS beneficio
+    `SELECT precio_total_linea, coste_total, iva_porcentaje
      FROM order_lines
      WHERE pedido_id = ?`,
     orderId,
   );
 
-  const subtotal = roundMoney(totals?.subtotal ?? 0);
-  const costeTotal = roundMoney(totals?.coste_total ?? 0);
-  const descuento = clampStoredDiscount(order?.descuento, subtotal);
-  const total = roundMoney(subtotal - descuento);
-  const vatMultiplier = 1 + vatRate / 100;
-  const baseImponible = roundMoney(total / vatMultiplier);
-  const iva = roundMoney(total - baseImponible);
-  const beneficio = roundMoney(baseImponible - costeTotal);
+  const subtotal = roundMoney(lines.reduce((sum, line) => sum + line.precio_total_linea, 0));
+  const costeTotal = roundMoney(lines.reduce((sum, line) => sum + line.coste_total, 0));
+  const financials = calculateOrderFinancials({
+    lineTotals: lines.map((line) => ({
+      grossTotal: line.precio_total_linea,
+      vatRate: line.iva_porcentaje ?? vatRate,
+    })),
+    costeTotalPedido: costeTotal,
+    discount: clampStoredDiscount(order?.descuento, subtotal),
+  });
+  const beneficio = financials.beneficioTotal;
 
   await run(
     `UPDATE orders
      SET subtotal = ?, descuento = ?, iva = ?, total = ?, coste_total_pedido = ?, beneficio_total = ?
      WHERE id = ?`,
-    subtotal,
-    descuento,
-    iva,
-    total,
-    costeTotal,
+    financials.subtotal,
+    financials.descuento,
+    financials.iva,
+    financials.total,
+    financials.costeTotalPedido,
     beneficio,
     orderId,
   );
 
-  return { subtotal, descuento, iva, total, costeTotal, beneficio };
+  return {
+    subtotal: financials.subtotal,
+    descuento: financials.descuento,
+    iva: financials.iva,
+    total: financials.total,
+    costeTotal: financials.costeTotalPedido,
+    beneficio,
+  };
 }
 
 async function registerOrderHistory(pedidoId: string, estado: string, nota: string) {
@@ -861,6 +913,7 @@ export async function getAppSnapshot() {
     coste_postprocesado: number;
     margen: number;
     pvp: number;
+    iva_porcentaje: number;
     material_id: string;
     activo: number;
     material_nombre: string;
@@ -925,6 +978,7 @@ export async function getAppSnapshot() {
       cantidad_a_fabricar: number;
       precio_unitario: number;
       precio_total_linea: number;
+      iva_porcentaje: number;
       gramos_totales: number;
       coste_material: number;
       coste_electricidad_total: number;
@@ -1562,6 +1616,7 @@ export async function createProductRecord(input: {
   costePostprocesado?: number;
   margen?: number;
   pvp?: number;
+  ivaPorcentaje?: number;
   materialId: string;
   activo?: boolean;
 }) {
@@ -1571,6 +1626,7 @@ export async function createProductRecord(input: {
   const costeElectricidad = roundMoney(input.costeElectricidad ?? 0);
   const margen = roundMoney(input.margen ?? 0);
   const pvp = roundMoney(input.pvp ?? 0);
+  const ivaPorcentaje = normalizeVatRate(input.ivaPorcentaje);
 
   if (!nombre) {
     throw new Error("El producto necesita al menos un nombre.");
@@ -1604,8 +1660,8 @@ export async function createProductRecord(input: {
   await transaction(async () => {
     await run(
       `INSERT INTO products
-        (id, codigo, nombre, descripcion, enlace_modelo, gramos_estimados, tiempo_impresion_horas, coste_electricidad, coste_maquina, coste_mano_obra, coste_postprocesado, margen, pvp, material_id, activo)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, codigo, nombre, descripcion, enlace_modelo, gramos_estimados, tiempo_impresion_horas, coste_electricidad, coste_maquina, coste_mano_obra, coste_postprocesado, margen, pvp, iva_porcentaje, material_id, activo)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       productId,
       await nextCode("products", "PRO-"),
       nombre,
@@ -1619,6 +1675,7 @@ export async function createProductRecord(input: {
       roundMoney(input.costePostprocesado ?? 0),
       margen,
       pvp,
+      ivaPorcentaje,
       input.materialId,
       input.activo === false ? 0 : 1,
     );
@@ -1647,6 +1704,7 @@ export async function updateProductRecord(input: {
   costePostprocesado?: number;
   margen?: number;
   pvp?: number;
+  ivaPorcentaje?: number;
   materialId: string;
   activo?: boolean;
 }) {
@@ -1656,6 +1714,7 @@ export async function updateProductRecord(input: {
   const costeElectricidad = roundMoney(input.costeElectricidad ?? 0);
   const margen = roundMoney(input.margen ?? 0);
   const pvp = roundMoney(input.pvp ?? 0);
+  const ivaPorcentaje = normalizeVatRate(input.ivaPorcentaje);
 
   if (!input.id || !input.materialId || !nombre) {
     throw new Error("Producto incompleto.");
@@ -1715,7 +1774,7 @@ export async function updateProductRecord(input: {
   await transaction(async () => {
     await run(
       `UPDATE products
-       SET nombre = ?, descripcion = ?, enlace_modelo = ?, gramos_estimados = ?, tiempo_impresion_horas = ?, coste_electricidad = ?, coste_maquina = ?, coste_mano_obra = ?, coste_postprocesado = ?, margen = ?, pvp = ?, material_id = ?, activo = ?
+       SET nombre = ?, descripcion = ?, enlace_modelo = ?, gramos_estimados = ?, tiempo_impresion_horas = ?, coste_electricidad = ?, coste_maquina = ?, coste_mano_obra = ?, coste_postprocesado = ?, margen = ?, pvp = ?, iva_porcentaje = ?, material_id = ?, activo = ?
        WHERE id = ?`,
       nombre,
       input.descripcion?.trim() || null,
@@ -1728,6 +1787,7 @@ export async function updateProductRecord(input: {
       roundMoney(input.costePostprocesado ?? 0),
       margen,
       pvp,
+      ivaPorcentaje,
       input.materialId,
       input.activo === false ? 0 : 1,
       input.id,
@@ -1779,7 +1839,6 @@ export async function setProductActiveState(productId: string, active: boolean) 
 export async function createOrderRecord(input: {
   clienteId: string;
   observaciones?: string;
-  vatRate?: number;
   descuento?: number;
   lines: LineInput[];
 }) {
@@ -1796,10 +1855,6 @@ export async function createOrderRecord(input: {
   if (!parseBoolean(customer.activo)) {
     throw new Error("El cliente seleccionado esta inactivo. Reactivalo antes de crear pedidos nuevos.");
   }
-  if (input.vatRate != null && (input.vatRate < 0 || input.vatRate > 100)) {
-    throw new Error("El IVA debe estar entre 0 y 100.");
-  }
-
   const validLines = input.lines.filter((line) => line.productId && line.quantity > 0);
   if (validLines.length === 0) {
     throw new Error("Debes añadir al menos una linea valida al pedido.");
@@ -1814,16 +1869,15 @@ export async function createOrderRecord(input: {
     }),
   );
 
-  const subtotal = roundMoney(
-    calculations.reduce((sum, item) => sum + item.values.precioUnitario * item.line.quantity, 0),
-  );
   const costeTotalPedido = roundMoney(
     calculations.reduce((sum, item) => sum + item.values.costeTotal, 0),
   );
   const financials = calculateOrderFinancials({
-    subtotal,
+    lineTotals: calculations.map((item) => ({
+      grossTotal: item.values.precioTotalLinea,
+      vatRate: item.values.ivaPorcentaje,
+    })),
     costeTotalPedido,
-    vatRate: input.vatRate,
     discount: input.descuento,
   });
   const orderId = randomUUID();
@@ -1851,8 +1905,8 @@ export async function createOrderRecord(input: {
     for (const item of calculations) {
       await run(
         `INSERT INTO order_lines
-          (id, codigo, pedido_id, producto_id, cantidad, cantidad_desde_stock, cantidad_a_fabricar, precio_unitario, precio_total_linea, gramos_totales, coste_material, coste_electricidad_total, coste_impresora_total, coste_total, beneficio)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, codigo, pedido_id, producto_id, cantidad, cantidad_desde_stock, cantidad_a_fabricar, precio_unitario, precio_total_linea, iva_porcentaje, gramos_totales, coste_material, coste_electricidad_total, coste_impresora_total, coste_total, beneficio)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         randomUUID(),
         await nextCode("order_lines", "LIN-"),
         orderId,
@@ -1862,6 +1916,7 @@ export async function createOrderRecord(input: {
         0,
         item.values.precioUnitario,
         item.values.precioTotalLinea,
+        item.values.ivaPorcentaje,
         item.values.gramosTotales,
         item.values.costeMaterial,
         item.values.costeElectricidadTotal,
@@ -1872,7 +1927,7 @@ export async function createOrderRecord(input: {
     }
 
     await registerOrderHistory(orderId, "BORRADOR", "Pedido creado en borrador.");
-    await recalculateOrderTotals(orderId, input.vatRate ?? DEFAULT_VAT_RATE);
+    await recalculateOrderTotals(orderId);
   });
 
   return orderId;
@@ -1943,6 +1998,7 @@ export async function updateInvoiceRecord(input: {
     await syncInvoicePaymentSummary(input.id);
     const invoice = await row<{
       id: string;
+      pedido_id: string;
       subtotal: number;
       descuento: number;
       iva: number;
@@ -1951,7 +2007,7 @@ export async function updateInvoiceRecord(input: {
       importe_pendiente: number;
       estado_pago: string;
     }>(
-      `SELECT id, subtotal, descuento, iva, total, total_pagado, importe_pendiente, estado_pago
+      `SELECT id, pedido_id, subtotal, descuento, iva, total, total_pagado, importe_pendiente, estado_pago
        FROM invoices
        WHERE id = ?`,
       input.id,
@@ -1964,11 +2020,21 @@ export async function updateInvoiceRecord(input: {
       throw new Error("No se puede modificar el descuento de una factura ya pagada.");
     }
 
-    const grossSubtotal = roundMoney(invoice.total + (invoice.descuento ?? 0));
+    const invoiceLines = await rows<{ precio_total_linea: number; iva_porcentaje: number | null }>(
+      `SELECT precio_total_linea, iva_porcentaje
+       FROM order_lines
+       WHERE pedido_id = ?`,
+      invoice.pedido_id,
+    );
     const nextFinancials = calculateOrderFinancials({
-      subtotal: grossSubtotal,
+      lineTotals:
+        invoiceLines.length > 0
+          ? invoiceLines.map((line) => ({
+              grossTotal: line.precio_total_linea,
+              vatRate: line.iva_porcentaje ?? DEFAULT_VAT_RATE,
+            }))
+          : [{ grossTotal: roundMoney(invoice.total + (invoice.descuento ?? 0)), vatRate: DEFAULT_VAT_RATE }],
       costeTotalPedido: 0,
-      vatRate: DEFAULT_VAT_RATE,
       discount: input.descuento,
     });
 
@@ -2547,16 +2613,15 @@ export async function updateOrderRecord(input: {
       return { line, values };
     }),
   );
-  const subtotal = roundMoney(
-    calculations.reduce((sum, item) => sum + item.values.precioUnitario * item.line.quantity, 0),
-  );
   const costeTotalPedido = roundMoney(
     calculations.reduce((sum, item) => sum + item.values.costeTotal, 0),
   );
   const financials = calculateOrderFinancials({
-    subtotal,
+    lineTotals: calculations.map((item) => ({
+      grossTotal: item.values.precioTotalLinea,
+      vatRate: item.values.ivaPorcentaje,
+    })),
     costeTotalPedido,
-    vatRate: DEFAULT_VAT_RATE,
     discount: input.descuento,
   });
   const nextStatus = current.estado === "INCIDENCIA_STOCK" ? "INCIDENCIA_STOCK" : "BORRADOR";
@@ -2582,9 +2647,9 @@ export async function updateOrderRecord(input: {
 
     for (const item of calculations) {
       await run(
-        `INSERT INTO order_lines
-          (id, codigo, pedido_id, producto_id, cantidad, cantidad_desde_stock, cantidad_a_fabricar, precio_unitario, precio_total_linea, gramos_totales, coste_material, coste_electricidad_total, coste_impresora_total, coste_total, beneficio)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO order_lines
+          (id, codigo, pedido_id, producto_id, cantidad, cantidad_desde_stock, cantidad_a_fabricar, precio_unitario, precio_total_linea, iva_porcentaje, gramos_totales, coste_material, coste_electricidad_total, coste_impresora_total, coste_total, beneficio)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         randomUUID(),
         await nextCode("order_lines", "LIN-"),
         input.id,
@@ -2594,6 +2659,7 @@ export async function updateOrderRecord(input: {
         0,
         item.values.precioUnitario,
         item.values.precioTotalLinea,
+        item.values.ivaPorcentaje,
         item.values.gramosTotales,
         item.values.costeMaterial,
         item.values.costeElectricidadTotal,
