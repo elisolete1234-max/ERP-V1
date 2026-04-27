@@ -260,6 +260,23 @@ function paymentMethodLabel(method: string) {
   return method.toLowerCase().replaceAll("_", " ");
 }
 
+function deriveInvoicePaymentView(invoice: Pick<Invoice, "total" | "total_pagado">) {
+  const total = Number(invoice.total.toFixed(2));
+  const totalPaid = Number(invoice.total_pagado.toFixed(2));
+  const pendingAmount = Number(Math.max(total - totalPaid, 0).toFixed(2));
+  const paymentStatus =
+    totalPaid <= 0 ? "PENDIENTE" : totalPaid < total ? "PARCIAL" : "PAGADA";
+  const canRegisterPayment = pendingAmount > 0 && totalPaid < total;
+
+  return {
+    total,
+    totalPaid,
+    pendingAmount,
+    paymentStatus,
+    canRegisterPayment,
+  };
+}
+
 function rowHighlight(level?: "danger" | "warn" | "attention" | null) {
   if (level === "danger") return "row-danger";
   if (level === "warn") return "row-warn";
@@ -1518,11 +1535,8 @@ export function InvoicesInlineTable({
         {invoices.map((invoice) => {
           const expanded = detailId === invoice.id;
           const registeringPayment = paymentId === invoice.id;
-          const totalPaid = Number(invoice.total_pagado.toFixed(2));
-          const pendingAmount = Number(Math.max(invoice.total - totalPaid, 0).toFixed(2));
-          const paymentStatus =
-            totalPaid <= 0 ? "PENDIENTE" : totalPaid < invoice.total ? "PARCIAL" : "PAGADA";
-          const canRegisterPayment = pendingAmount > 0 && paymentStatus !== "PAGADA";
+          const { total, totalPaid, pendingAmount, paymentStatus, canRegisterPayment } =
+            deriveInvoicePaymentView(invoice);
           const paymentCount = invoice.pagos.length;
           const highlight =
             paymentStatus === "PENDIENTE"
@@ -1552,8 +1566,8 @@ export function InvoicesInlineTable({
                     </button>
                     <button
                       type="button"
-                      title={canRegisterPayment ? "Registrar pago" : "Factura pagada"}
-                      aria-label={canRegisterPayment ? "Registrar pago" : "Factura pagada"}
+                      title={canRegisterPayment ? "Registrar pago" : "Factura totalmente pagada"}
+                      aria-label={canRegisterPayment ? "Registrar pago" : "Factura totalmente pagada"}
                       disabled={!canRegisterPayment}
                       className={`icon-action-button ${
                         canRegisterPayment ? "icon-action-button--dark" : "icon-action-button"
@@ -1574,7 +1588,7 @@ export function InvoicesInlineTable({
                 <td>{invoice.cliente_nombre}</td>
                 <td>{formatCurrency(invoice.subtotal)}</td>
                 <td>{formatCurrency(invoice.iva)}</td>
-                <td>{formatCurrency(invoice.total)}</td>
+                <td>{formatCurrency(total)}</td>
                 <td>{formatCurrency(totalPaid)}</td>
                 <td>{formatCurrency(pendingAmount)}</td>
                 <td>
@@ -1600,7 +1614,7 @@ export function InvoicesInlineTable({
                         <div className="mt-4 grid gap-3 sm:grid-cols-4">
                           <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
                             <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Total</p>
-                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.total)}</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(total)}</p>
                           </div>
                           <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
                             <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Cobrado</p>
@@ -1648,7 +1662,7 @@ export function InvoicesInlineTable({
                             <h4 className="mt-2 text-base font-semibold text-slate-900">Cobro sobre {invoice.codigo}</h4>
                           </div>
                           <div className="text-right text-xs text-[color:var(--muted)]">
-                            <div>Total: {formatCurrency(invoice.total)}</div>
+                            <div>Total: {formatCurrency(total)}</div>
                             <div>Cobrado: {formatCurrency(totalPaid)}</div>
                             <div>Pendiente: {formatCurrency(pendingAmount)}</div>
                           </div>
