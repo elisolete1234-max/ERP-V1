@@ -919,8 +919,8 @@ export default async function Home({
                   </div>
                 ))}
                 <Field
-                  label="Descuento"
-                  hint="Importe total a descontar sobre la base antes de IVA. Si no aplica, deja 0."
+                  label="Descuento (€)"
+                  hint="Importe a descontar antes de IVA"
                 >
                   <input
                     name="descuento"

@@ -653,8 +653,8 @@ export function OrdersInlineBoard({
                 </div>
                 <div className="table-edit-card">
                   <InlineField
-                    label="Descuento"
-                    hint="Importe total a descontar sobre la base antes de IVA."
+                    label="Descuento (€)"
+                    hint="Importe a descontar antes de IVA"
                   >
                     <input
                       name="descuento"
