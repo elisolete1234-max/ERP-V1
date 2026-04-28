@@ -1321,7 +1321,7 @@ test("el PDF de factura usa los importes reales y se descarga como adjunto", asy
   assert.equal(pdfData.lineas[0]?.iva_porcentaje, 10);
 
   const response = await getInvoicePdfRoute(new Request(`http://localhost/api/exports/invoices/${invoice.id}/pdf`), {
-    params: { id: invoice.id },
+    params: Promise.resolve({ id: invoice.id }),
   });
   const pdfText = Buffer.from(await response.arrayBuffer()).toString("latin1");
 

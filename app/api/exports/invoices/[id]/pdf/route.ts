@@ -4,10 +4,6 @@ import { getInvoicePdfData } from "../../../../../../lib/erp-service";
 
 export const runtime = "nodejs";
 
-type RouteContext = {
-  params: Promise<{ id: string }> | { id: string };
-};
-
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("es-ES", {
     style: "currency",
@@ -32,6 +28,14 @@ function normalizeFileName(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9-]+/gi, "-").replace(/^-+|-+$/g, "");
 }
 
+function truncate(value: string | null | undefined, maxChars: number) {
+  const text = (value ?? "-").replace(/\s+/g, " ").trim();
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
 function collectPdfBuffer(doc: PDFKit.PDFDocument) {
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -41,100 +45,12 @@ function collectPdfBuffer(doc: PDFKit.PDFDocument) {
   });
 }
 
-function drawSectionTitle(doc: PDFKit.PDFDocument, title: string, x: number, y: number, width: number, fontPath: string, ink: string) {
-  doc.font(fontPath).fontSize(12).fillColor(ink).text(title, x, y, {
-    width,
-    lineBreak: false,
-  });
-}
-
-function drawKeyValue(
-  doc: PDFKit.PDFDocument,
-  label: string,
-  value: string,
-  x: number,
-  y: number,
-  width: number,
-  fontPath: string,
-  muted: string,
-  ink: string,
-) {
-  doc.font(fontPath).fontSize(8).fillColor(muted).text(label, x, y, { width });
-  doc.font(fontPath).fontSize(10).fillColor(ink).text(value || "-", x, y + 11, { width });
-}
-
-function ensureSpace(doc: PDFKit.PDFDocument, heightNeeded: number, footerReserve = 36) {
-  if (doc.y + heightNeeded > doc.page.height - doc.page.margins.bottom - footerReserve) {
-    doc.addPage();
-    doc.y = doc.page.margins.top;
-  }
-}
-
-function drawTableRow(
-  doc: PDFKit.PDFDocument,
-  input: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    line: string;
-    fill: string;
-    textColor: string;
-    muted: string;
-    fontPath: string;
-    product: string;
-    lineCode: string;
-    quantity: string;
-    vat: string;
-    unitPrice: string;
-    lineTotal: string;
-  },
-) {
-  const columns = {
-    product: input.x + 12,
-    lineCode: input.x + 268,
-    quantity: input.x + 334,
-    vat: input.x + 384,
-    unitPrice: input.x + 438,
-    lineTotal: input.x + 512,
-  };
-
-  doc.roundedRect(input.x, input.y, input.width, input.height, 8).fillAndStroke(input.fill, input.line);
-  doc.font(input.fontPath).fontSize(10).fillColor(input.textColor).text(input.product, columns.product, input.y + 10, {
-    width: 244,
-    lineBreak: false,
-    ellipsis: true,
-  });
-  doc.font(input.fontPath).fontSize(9).fillColor(input.muted).text(input.lineCode, columns.lineCode, input.y + 10, {
-    width: 56,
-    lineBreak: false,
-    ellipsis: true,
-  });
-  doc.font(input.fontPath).fontSize(10).fillColor(input.textColor).text(input.quantity, columns.quantity, input.y + 10, {
-    width: 42,
-    align: "right",
-    lineBreak: false,
-  });
-  doc.font(input.fontPath).fontSize(10).fillColor(input.textColor).text(input.vat, columns.vat, input.y + 10, {
-    width: 42,
-    align: "right",
-    lineBreak: false,
-  });
-  doc.font(input.fontPath).fontSize(10).fillColor(input.textColor).text(input.unitPrice, columns.unitPrice, input.y + 10, {
-    width: 64,
-    align: "right",
-    lineBreak: false,
-  });
-  doc.font(input.fontPath).fontSize(10).fillColor(input.textColor).text(input.lineTotal, columns.lineTotal, input.y + 10, {
-    width: 64,
-    align: "right",
-    lineBreak: false,
-  });
-}
-
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(
+  _request: Request,
+  context: { params: Promise<{ id: string }> },
+): Promise<Response> {
   try {
-    const params = await Promise.resolve(context.params);
+    const params = await context.params;
     const invoice = await getInvoicePdfData(params.id);
     const fontPath = path.join(process.cwd(), "public", "fonts", "Geist-Regular.ttf");
 
@@ -151,246 +67,256 @@ export async function GET(_request: Request, context: RouteContext) {
     });
     const pdfBufferPromise = collectPdfBuffer(doc);
 
-    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
     const accent = "#2563EB";
-    const accentSoft = "#DBEAFE";
-    const accentLine = "#93C5FD";
     const ink = "#0F172A";
     const muted = "#64748B";
-    const line = "#DCE6F2";
+    const line = "#D8E2EF";
     const soft = "#F8FAFC";
-    const footerReserve = 34;
+    const margin = 42;
+    const contentWidth = doc.page.width - margin * 2;
+    const bottomLimit = doc.page.height - 80;
+    const footerY = doc.page.height - 58;
+    let y = margin;
 
-    const drawFooter = () => {
-      const footerY = doc.page.height - doc.page.margins.bottom + 6;
-      doc.moveTo(doc.page.margins.left, footerY - 8).lineTo(doc.page.width - doc.page.margins.right, footerY - 8).strokeColor(line).stroke();
-      doc.font(fontPath).fontSize(8.5).fillColor(muted).text(
-        "Documento generado desde Eli Print 3D con importes reales de la factura.",
-        doc.page.margins.left,
-        footerY,
-        {
-          width: pageWidth,
-          align: "center",
-          lineBreak: false,
-        },
-      );
-    };
+    function addPageOnlyIfNeeded(requiredHeight: number) {
+      if (y + requiredHeight > bottomLimit) {
+        doc.addPage();
+        y = margin;
+      }
+    }
 
-    const startNewPage = () => {
-      doc.addPage();
-      doc.y = doc.page.margins.top;
-    };
+    const paymentState = truncate(`Estado: ${invoice.resumen.estadoPago}`, 24);
 
-    doc.roundedRect(doc.page.margins.left, doc.y, pageWidth, 92, 18).fillAndStroke("#FFFFFF", line);
-    doc.roundedRect(doc.page.margins.left, doc.y, 6, 92, 18).fill(accent);
-
-    doc.font(fontPath).fontSize(24).fillColor(ink).text("Eli Print 3D", doc.page.margins.left + 18, doc.y + 16, {
+    doc.font(fontPath).fontSize(22).fillColor(ink).text("Eli Print 3D", 42, 40, {
+      width: 220,
+      lineBreak: false,
+    });
+    doc.font(fontPath).fontSize(10.5).fillColor(accent).text("Produccion 3D profesional", 42, 66, {
       width: 240,
       lineBreak: false,
     });
-    doc.font(fontPath).fontSize(11).fillColor(accent).text("Produccion 3D profesional", doc.page.margins.left + 18, doc.y + 46, {
-      width: 250,
-      lineBreak: false,
-    });
 
-    const headerRightX = doc.page.margins.left + pageWidth - 210;
-    doc.font(fontPath).fontSize(10).fillColor(muted).text("FACTURA", headerRightX, doc.y + 16, {
-      width: 210,
+    doc.font(fontPath).fontSize(10).fillColor(muted).text("FACTURA", 360, 42, {
+      width: 195,
       align: "right",
       lineBreak: false,
     });
-    doc.font(fontPath).fontSize(18).fillColor(ink).text(invoice.codigo, headerRightX, doc.y + 32, {
-      width: 210,
+    doc.font(fontPath).fontSize(18).fillColor(ink).text(invoice.codigo, 360, 60, {
+      width: 195,
       align: "right",
       lineBreak: false,
     });
-    doc.font(fontPath).fontSize(10).fillColor(accent).text(`Estado: ${invoice.resumen.estadoPago}`, headerRightX, doc.y + 58, {
-      width: 210,
+    doc.font(fontPath).fontSize(10).fillColor(accent).text(paymentState, 360, 84, {
+      width: 195,
       align: "right",
       lineBreak: false,
     });
 
-    doc.y += 110;
+    doc.roundedRect(42, 120, 245, 82, 10).fillAndStroke("#FFFFFF", line);
+    doc.roundedRect(310, 120, 245, 82, 10).fillAndStroke("#FFFFFF", line);
 
-    ensureSpace(doc, 108, footerReserve);
-    const cardY = doc.y;
-    const cardGap = 18;
-    const cardWidth = (pageWidth - cardGap) / 2;
+    doc.font(fontPath).fontSize(12).fillColor(ink).text("Cliente", 56, 134, {
+      width: 140,
+      lineBreak: false,
+    });
+    doc.font(fontPath).fontSize(8.5).fillColor(muted).text("Nombre", 56, 158, {
+      width: 80,
+      lineBreak: false,
+    });
+    doc.font(fontPath).fontSize(10).fillColor(ink).text(truncate(`${invoice.cliente.codigo} - ${invoice.cliente.nombre}`, 34), 56, 170, {
+      width: 215,
+      lineBreak: false,
+    });
+    doc.font(fontPath).fontSize(8.5).fillColor(muted).text("Contacto", 56, 186, {
+      width: 80,
+      lineBreak: false,
+    });
+    doc.font(fontPath).fontSize(10).fillColor(ink).text(truncate(invoice.cliente.telefono || invoice.cliente.email || "-", 34), 56, 198, {
+      width: 215,
+      lineBreak: false,
+    });
 
-    doc.roundedRect(doc.page.margins.left, cardY, cardWidth, 96, 14).fillAndStroke("#FFFFFF", line);
-    doc.roundedRect(doc.page.margins.left + cardWidth + cardGap, cardY, cardWidth, 96, 14).fillAndStroke("#FFFFFF", line);
+    doc.font(fontPath).fontSize(12).fillColor(ink).text("Pedido y factura", 324, 134, {
+      width: 180,
+      lineBreak: false,
+    });
+    doc.font(fontPath).fontSize(8.5).fillColor(muted).text("Pedido", 324, 158, {
+      width: 80,
+      lineBreak: false,
+    });
+    doc.font(fontPath).fontSize(10).fillColor(ink).text(truncate(invoice.pedido.codigo, 20), 324, 170, {
+      width: 215,
+      lineBreak: false,
+    });
+    doc.font(fontPath).fontSize(8.5).fillColor(muted).text("Fecha factura", 324, 186, {
+      width: 90,
+      lineBreak: false,
+    });
+    doc.font(fontPath).fontSize(10).fillColor(ink).text(truncate(formatDate(invoice.fecha), 24), 324, 198, {
+      width: 215,
+      lineBreak: false,
+    });
 
-    drawSectionTitle(doc, "Cliente", doc.page.margins.left + 14, cardY + 12, cardWidth - 28, fontPath, ink);
-    drawKeyValue(
-      doc,
-      "Nombre",
-      `${invoice.cliente.codigo} - ${invoice.cliente.nombre}`,
-      doc.page.margins.left + 14,
-      cardY + 34,
-      cardWidth - 28,
-      fontPath,
-      muted,
-      ink,
-    );
-    drawKeyValue(
-      doc,
-      "Contacto",
-      invoice.cliente.telefono || invoice.cliente.email || "-",
-      doc.page.margins.left + 14,
-      cardY + 58,
-      cardWidth - 28,
-      fontPath,
-      muted,
-      ink,
-    );
+    y = 230;
 
-    const rightCardX = doc.page.margins.left + cardWidth + cardGap;
-    drawSectionTitle(doc, "Pedido y factura", rightCardX + 14, cardY + 12, cardWidth - 28, fontPath, ink);
-    drawKeyValue(doc, "Pedido", invoice.pedido.codigo, rightCardX + 14, cardY + 34, cardWidth - 28, fontPath, muted, ink);
-    drawKeyValue(doc, "Fecha factura", formatDate(invoice.fecha), rightCardX + 14, cardY + 58, cardWidth - 28, fontPath, muted, ink);
+    doc.font(fontPath).fontSize(12).fillColor(ink).text("Productos", 42, y, {
+      width: 160,
+      lineBreak: false,
+    });
+    y += 16;
 
-    doc.y = cardY + 116;
-
-    ensureSpace(doc, 46, footerReserve);
-    drawSectionTitle(doc, "Productos", doc.page.margins.left, doc.y, pageWidth, fontPath, ink);
-    doc.y += 18;
-
-    const tableHeaderY = doc.y;
-    doc.roundedRect(doc.page.margins.left, tableHeaderY, pageWidth, 28, 10).fill(accent);
+    doc.roundedRect(42, y, contentWidth, 24, 8).fill(accent);
     doc.font(fontPath).fontSize(8.5).fillColor("#FFFFFF");
-    doc.text("Producto", doc.page.margins.left + 12, tableHeaderY + 9, { width: 244, lineBreak: false });
-    doc.text("Linea", doc.page.margins.left + 268, tableHeaderY + 9, { width: 56, lineBreak: false });
-    doc.text("Cant.", doc.page.margins.left + 334, tableHeaderY + 9, { width: 42, align: "right", lineBreak: false });
-    doc.text("IVA", doc.page.margins.left + 384, tableHeaderY + 9, { width: 42, align: "right", lineBreak: false });
-    doc.text("PVP unit.", doc.page.margins.left + 438, tableHeaderY + 9, { width: 64, align: "right", lineBreak: false });
-    doc.text("Total", doc.page.margins.left + 512, tableHeaderY + 9, { width: 64, align: "right", lineBreak: false });
-    doc.y += 36;
+    doc.text("Producto", 42, y + 8, { width: 180, lineBreak: false });
+    doc.text("Linea", 225, y + 8, { width: 75, lineBreak: false });
+    doc.text("Cant.", 305, y + 8, { width: 45, align: "right", lineBreak: false });
+    doc.text("IVA", 355, y + 8, { width: 45, align: "right", lineBreak: false });
+    doc.text("PVP unit.", 405, y + 8, { width: 75, align: "right", lineBreak: false });
+    doc.text("Total", 485, y + 8, { width: 70, align: "right", lineBreak: false });
+    y += 30;
 
     invoice.lineas.forEach((linea: (typeof invoice.lineas)[number], index) => {
-      ensureSpace(doc, 40, footerReserve);
-      if (doc.y === doc.page.margins.top) {
-        drawSectionTitle(doc, "Productos", doc.page.margins.left, doc.y, pageWidth, fontPath, ink);
-        doc.y += 18;
-        doc.roundedRect(doc.page.margins.left, doc.y, pageWidth, 28, 10).fill(accent);
-        doc.font(fontPath).fontSize(8.5).fillColor("#FFFFFF");
-        doc.text("Producto", doc.page.margins.left + 12, doc.y + 9, { width: 244, lineBreak: false });
-        doc.text("Linea", doc.page.margins.left + 268, doc.y + 9, { width: 56, lineBreak: false });
-        doc.text("Cant.", doc.page.margins.left + 334, doc.y + 9, { width: 42, align: "right", lineBreak: false });
-        doc.text("IVA", doc.page.margins.left + 384, doc.y + 9, { width: 42, align: "right", lineBreak: false });
-        doc.text("PVP unit.", doc.page.margins.left + 438, doc.y + 9, { width: 64, align: "right", lineBreak: false });
-        doc.text("Total", doc.page.margins.left + 512, doc.y + 9, { width: 64, align: "right", lineBreak: false });
-        doc.y += 36;
-      }
-
-      drawTableRow(doc, {
-        x: doc.page.margins.left,
-        y: doc.y,
-        width: pageWidth,
-        height: 34,
-        line,
-        fill: index % 2 === 0 ? "#FFFFFF" : soft,
-        textColor: ink,
-        muted,
-        fontPath,
-        product: `${linea.producto_codigo} - ${linea.producto_nombre}`,
-        lineCode: linea.codigo,
-        quantity: String(linea.cantidad),
-        vat: `${linea.iva_porcentaje}%`,
-        unitPrice: formatCurrency(linea.precio_unitario),
-        lineTotal: formatCurrency(linea.precio_total_linea),
-      });
-      doc.y += 40;
-    });
-
-    const summaryHeight = 198;
-    const paymentsRowHeight = invoice.pagos.length === 0 ? 34 : invoice.pagos.length * 26 + 34;
-    const paymentsHeight = Math.max(74, paymentsRowHeight);
-    const blockGap = 18;
-    const leftWidth = 260;
-    const rightWidth = pageWidth - leftWidth - blockGap;
-
-    ensureSpace(doc, Math.max(summaryHeight, paymentsHeight) + 18, footerReserve);
-    if (doc.y === doc.page.margins.top) {
-      startNewPage();
-    }
-
-    const blocksY = doc.y;
-    const paymentsX = doc.page.margins.left;
-    const summaryX = doc.page.margins.left + leftWidth + blockGap;
-
-    doc.roundedRect(paymentsX, blocksY, leftWidth, paymentsHeight, 14).fillAndStroke("#FFFFFF", line);
-    drawSectionTitle(doc, "Pagos registrados", paymentsX + 14, blocksY + 12, leftWidth - 28, fontPath, ink);
-
-    let paymentY = blocksY + 36;
-    if (invoice.pagos.length === 0) {
-      doc.font(fontPath).fontSize(9).fillColor(muted).text("No hay pagos registrados.", paymentsX + 14, paymentY, {
-        width: leftWidth - 28,
-      });
-    } else {
-      invoice.pagos.forEach((payment: (typeof invoice.pagos)[number], index) => {
-        if (index > 0) {
-          doc.moveTo(paymentsX + 14, paymentY - 6).lineTo(paymentsX + leftWidth - 14, paymentY - 6).strokeColor(line).stroke();
-        }
-        doc.font(fontPath).fontSize(9.5).fillColor(ink).text(payment.codigo, paymentsX + 14, paymentY, {
-          width: 78,
-          lineBreak: false,
-        });
-        doc.font(fontPath).fontSize(9).fillColor(muted).text(payment.metodo_pago.toLowerCase(), paymentsX + 94, paymentY, {
-          width: 68,
-          lineBreak: false,
-        });
-        doc.font(fontPath).fontSize(9).fillColor(muted).text(formatDateTime(payment.fecha_pago), paymentsX + 14, paymentY + 12, {
-          width: 146,
-          lineBreak: false,
-        });
-        doc.font(fontPath).fontSize(9.5).fillColor(ink).text(formatCurrency(payment.importe), paymentsX + 166, paymentY + 6, {
-          width: leftWidth - 180,
-          align: "right",
-          lineBreak: false,
-        });
-        paymentY += 26;
-      });
-    }
-
-    doc.roundedRect(summaryX, blocksY, rightWidth, summaryHeight, 14).fillAndStroke("#FFFFFF", line);
-    drawSectionTitle(doc, "Resumen economico", summaryX + 14, blocksY + 12, rightWidth - 28, fontPath, ink);
-
-    const summaryRows: Array<{ label: string; value: string; highlight?: boolean }> = [
-      { label: "Subtotal IVA incluido", value: formatCurrency(invoice.resumen.subtotal) },
-      { label: "Descuento IVA incluido", value: formatCurrency(invoice.resumen.descuento) },
-      { label: "Base imponible", value: formatCurrency(invoice.resumen.baseImponible) },
-      { label: "IVA incluido", value: formatCurrency(invoice.resumen.iva) },
-      { label: "Total", value: formatCurrency(invoice.resumen.total), highlight: true },
-      { label: "Pagado", value: formatCurrency(invoice.resumen.totalPagado) },
-      { label: "Pendiente", value: formatCurrency(invoice.resumen.importePendiente) },
-    ];
-
-    let summaryY = blocksY + 38;
-    summaryRows.forEach((row, index) => {
-      if (row.highlight) {
-        doc.roundedRect(summaryX + 10, summaryY - 6, rightWidth - 20, 28, 10).fillAndStroke(accentSoft, accentLine);
-      } else if (index > 0) {
-        doc.moveTo(summaryX + 14, summaryY - 6).lineTo(summaryX + rightWidth - 14, summaryY - 6).strokeColor(line).stroke();
-      }
-
-      doc.font(fontPath).fontSize(9).fillColor(muted).text(row.label, summaryX + 16, summaryY, {
-        width: rightWidth - 140,
+      addPageOnlyIfNeeded(26);
+      doc.roundedRect(42, y, contentWidth, 26, 6).fillAndStroke(index % 2 === 0 ? "#FFFFFF" : soft, line);
+      doc.font(fontPath).fontSize(9.5).fillColor(ink).text(truncate(`${linea.producto_codigo} - ${linea.producto_nombre}`, 30), 42, y + 8, {
+        width: 180,
         lineBreak: false,
       });
-      doc.font(fontPath).fontSize(row.highlight ? 12 : 10).fillColor(ink).text(row.value, summaryX + 160, summaryY - (row.highlight ? 1 : 0), {
-        width: rightWidth - 176,
+      doc.font(fontPath).fontSize(9).fillColor(muted).text(truncate(linea.codigo, 12), 225, y + 8, {
+        width: 75,
+        lineBreak: false,
+      });
+      doc.font(fontPath).fontSize(9.5).fillColor(ink).text(String(linea.cantidad), 305, y + 8, {
+        width: 45,
         align: "right",
         lineBreak: false,
       });
-      summaryY += row.highlight ? 34 : 22;
+      doc.font(fontPath).fontSize(9.5).fillColor(ink).text(`${linea.iva_porcentaje}%`, 355, y + 8, {
+        width: 45,
+        align: "right",
+        lineBreak: false,
+      });
+      doc.font(fontPath).fontSize(9.5).fillColor(ink).text(formatCurrency(linea.precio_unitario), 405, y + 8, {
+        width: 75,
+        align: "right",
+        lineBreak: false,
+      });
+      doc.font(fontPath).fontSize(9.5).fillColor(ink).text(formatCurrency(linea.precio_total_linea), 485, y + 8, {
+        width: 70,
+        align: "right",
+        lineBreak: false,
+      });
+      y += 30;
     });
 
-    doc.font(fontPath).fontSize(9.5).fillColor(accent).text(`Estado de pago: ${invoice.resumen.estadoPago}`, summaryX + 16, blocksY + summaryHeight - 24, {
-      width: rightWidth - 32,
+    y += 35;
+
+    const paymentTableHeight = 24 + Math.max(invoice.pagos.length, 1) * 26;
+    addPageOnlyIfNeeded(paymentTableHeight + 25 + 178);
+
+    doc.font(fontPath).fontSize(12).fillColor(ink).text("Pagos registrados", 42, y, {
+      width: 180,
+      lineBreak: false,
+    });
+    y += 16;
+
+    doc.roundedRect(42, y, 240, 24, 8).fill(accent);
+    doc.font(fontPath).fontSize(8.5).fillColor("#FFFFFF");
+    doc.text("Pago", 42, y + 8, { width: 80, lineBreak: false });
+    doc.text("Fecha", 126, y + 8, { width: 95, lineBreak: false });
+    doc.text("Importe", 225, y + 8, { width: 57, align: "right", lineBreak: false });
+    y += 30;
+
+    if (invoice.pagos.length === 0) {
+      doc.roundedRect(42, y, 240, 26, 6).fillAndStroke("#FFFFFF", line);
+      doc.font(fontPath).fontSize(9.5).fillColor(muted).text("Sin pagos registrados", 52, y + 8, {
+        width: 180,
+        lineBreak: false,
+      });
+      y += 30;
+    } else {
+      invoice.pagos.forEach((payment: (typeof invoice.pagos)[number], index) => {
+        addPageOnlyIfNeeded(26);
+        doc.roundedRect(42, y, 240, 26, 6).fillAndStroke(index % 2 === 0 ? "#FFFFFF" : soft, line);
+        doc.font(fontPath).fontSize(9.5).fillColor(ink).text(truncate(payment.codigo, 14), 52, y + 8, {
+          width: 70,
+          lineBreak: false,
+        });
+        doc.font(fontPath).fontSize(9).fillColor(muted).text(truncate(formatDateTime(payment.fecha_pago), 19), 126, y + 8, {
+          width: 95,
+          lineBreak: false,
+        });
+        doc.font(fontPath).fontSize(9.5).fillColor(ink).text(formatCurrency(payment.importe), 225, y + 8, {
+          width: 47,
+          align: "right",
+          lineBreak: false,
+        });
+        y += 30;
+      });
+    }
+
+    y += 25;
+
+    const summaryX = 330;
+    const summaryWidth = 225;
+    const labelWidth = 145;
+    const valueWidth = 70;
+    const summaryHeight = 174;
+
+    addPageOnlyIfNeeded(summaryHeight);
+
+    doc.roundedRect(summaryX, y, summaryWidth, summaryHeight, 10).fillAndStroke("#FFFFFF", line);
+    doc.font(fontPath).fontSize(12).fillColor(ink).text("Resumen economico", summaryX + 14, y + 12, {
+      width: 190,
       lineBreak: false,
     });
 
-    drawFooter();
+    const summaryRows = [
+      ["Subtotal IVA incluido", formatCurrency(invoice.resumen.subtotal)],
+      ["Descuento IVA incluido", formatCurrency(invoice.resumen.descuento)],
+      ["Base imponible", formatCurrency(invoice.resumen.baseImponible)],
+      ["IVA incluido", formatCurrency(invoice.resumen.iva)],
+      ["Total", formatCurrency(invoice.resumen.total)],
+      ["Pagado", formatCurrency(invoice.resumen.totalPagado)],
+      ["Pendiente", formatCurrency(invoice.resumen.importePendiente)],
+    ] as const;
+
+    let rowY = y + 38;
+    summaryRows.forEach(([label, value], index) => {
+      if (index > 0) {
+        doc.moveTo(summaryX + 14, rowY - 6).lineTo(summaryX + summaryWidth - 14, rowY - 6).strokeColor(line).stroke();
+      }
+      if (label === "Total") {
+        doc.roundedRect(summaryX + 8, rowY - 5, summaryWidth - 16, 24, 6).fillAndStroke("#DBEAFE", "#93C5FD");
+      }
+      doc.font(fontPath).fontSize(9).fillColor(muted).text(label, summaryX + 14, rowY, {
+        width: labelWidth,
+        lineBreak: false,
+      });
+      doc.font(fontPath).fontSize(label === "Total" ? 11 : 10).fillColor(label === "Total" ? accent : ink).text(value, summaryX + 145, rowY - (label === "Total" ? 1 : 0), {
+        width: valueWidth,
+        align: "right",
+        lineBreak: false,
+      });
+      rowY += 20;
+    });
+
+    doc.font(fontPath).fontSize(9.5).fillColor(accent).text(`Estado: ${invoice.resumen.estadoPago}`, summaryX + 14, y + summaryHeight - 20, {
+      width: 180,
+      lineBreak: false,
+    });
+
+    doc.moveTo(margin, footerY - 10).lineTo(margin + contentWidth, footerY - 10).strokeColor(line).stroke();
+    doc.font(fontPath).fontSize(8.5).fillColor(muted).text(
+      "Documento generado desde Eli Print 3D con importes reales de la factura.",
+      margin,
+      footerY,
+      {
+        width: contentWidth,
+        align: "center",
+        lineBreak: false,
+      },
+    );
 
     doc.end();
     const buffer = await pdfBufferPromise;
