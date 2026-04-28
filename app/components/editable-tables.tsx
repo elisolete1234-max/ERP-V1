@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import {
   completeManufacturingAction,
   confirmOrderAction,
@@ -537,6 +537,256 @@ export function CustomersInlineTable({
   invoices: CustomerInvoiceSummary[];
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [activeCustomerTab, setActiveCustomerTab] = useState<"orders" | "invoices" | "products">("orders");
+
+  const focusedCustomer = focusedCustomerCode ? customers.find((customer) => customer.codigo === focusedCustomerCode) ?? null : null;
+
+  if (focusedCustomer) {
+    const editing = editingId === focusedCustomer.id;
+    const formId = `customer-form-${focusedCustomer.id}`;
+    const customerOrders = orders.filter((order) => order.cliente_id === focusedCustomer.id);
+    const customerInvoices = invoices.filter((invoice) => invoice.cliente_id === focusedCustomer.id);
+    const purchasedProducts = Array.from(
+      customerOrders
+        .flatMap((order) => order.lineas)
+        .reduce((accumulator, line) => {
+          const current = accumulator.get(line.producto_nombre) ?? 0;
+          accumulator.set(line.producto_nombre, current + line.cantidad);
+          return accumulator;
+        }, new Map<string, number>())
+        .entries(),
+    ).sort((a, b) => a[0].localeCompare(b[0], "es"));
+
+    return (
+      <div className="odoo-page">
+        <article className="odoo-record">
+          <div className="odoo-record-header">
+            <div>
+              <p className="eyebrow">Cliente</p>
+              <h3 className="mt-2 text-[1.8rem] font-semibold tracking-[-0.04em] text-slate-950">
+                {focusedCustomer.nombre}
+              </h3>
+              <p className="mt-2 text-sm font-semibold text-sky-700">{focusedCustomer.codigo}</p>
+              <div className="mt-3 inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
+                Cliente abierto desde {focusOriginLabel ?? "pedido/factura/pago"}
+              </div>
+            </div>
+            <div className="table-action-group">
+              {editing ? (
+                <form id={formId} action={updateCustomerAction}>
+                  <input type="hidden" name="id" value={focusedCustomer.id} />
+                </form>
+              ) : null}
+              <ActionButtons
+                editing={editing}
+                onEdit={() => setEditingId(focusedCustomer.id)}
+                onCancel={() => setEditingId(null)}
+                formId={formId}
+              />
+              {!editing ? (
+                <form action={toggleCustomerActiveAction}>
+                  <input type="hidden" name="id" value={focusedCustomer.id} />
+                  <input type="hidden" name="active" value={focusedCustomer.activo ? "false" : "true"} />
+                  <SubmitButton
+                    variant={focusedCustomer.activo ? "icon-soft" : "icon-dark"}
+                    pendingText={<SpinnerIcon />}
+                    title={focusedCustomer.activo ? "Dar de baja" : "Reactivar"}
+                    aria-label={focusedCustomer.activo ? "Dar de baja" : "Reactivar"}
+                  >
+                    {focusedCustomer.activo ? <ArchiveIcon /> : <RestoreIcon />}
+                  </SubmitButton>
+                </form>
+              ) : null}
+            </div>
+          </div>
+
+          {editing ? (
+            <div className="odoo-record-body">
+              <form action={updateCustomerAction} id={formId} className="space-y-4">
+                <input type="hidden" name="id" value={focusedCustomer.id} />
+                <div className="odoo-record-grid">
+                  <InlineField label="Nombre">
+                    <input name="nombre" defaultValue={focusedCustomer.nombre} className={tableInputClass} />
+                  </InlineField>
+                  <InlineField label="Telefono">
+                    <input name="telefono" defaultValue={focusedCustomer.telefono ?? ""} className={tableInputClass} />
+                  </InlineField>
+                  <InlineField label="Email">
+                    <input name="email" type="email" defaultValue={focusedCustomer.email ?? ""} className={tableInputClass} />
+                  </InlineField>
+                  <InlineField label="Estado">
+                    <div className="odoo-field-value">{focusedCustomer.activo ? "Activo" : "Inactivo"}</div>
+                  </InlineField>
+                </div>
+                <div className="table-edit-card">
+                  <InlineField label="Direccion">
+                    <textarea name="direccion" defaultValue={focusedCustomer.direccion ?? ""} rows={3} className={tableTextareaClass} />
+                  </InlineField>
+                </div>
+              </form>
+            </div>
+          ) : (
+            <>
+              <div className="odoo-record-grid">
+                <div className="odoo-field">
+                  <span className="odoo-field-label">Codigo</span>
+                  <span className="odoo-field-value">{focusedCustomer.codigo}</span>
+                </div>
+                <div className="odoo-field">
+                  <span className="odoo-field-label">Estado</span>
+                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(focusedCustomer.activo ? "success" : "neutral")}`}>
+                    {focusedCustomer.activo ? "Activo" : "Inactivo"}
+                  </span>
+                </div>
+                <div className="odoo-field">
+                  <span className="odoo-field-label">Telefono</span>
+                  <span className="odoo-field-value">{focusedCustomer.telefono || "-"}</span>
+                </div>
+                <div className="odoo-field">
+                  <span className="odoo-field-label">Email</span>
+                  <span className="odoo-field-value">{focusedCustomer.email || "-"}</span>
+                </div>
+                <div className="odoo-field">
+                  <span className="odoo-field-label">Direccion</span>
+                  <span className="odoo-field-value">{focusedCustomer.direccion || "-"}</span>
+                </div>
+                <div className="odoo-field">
+                  <span className="odoo-field-label">Alta</span>
+                  <span className="odoo-field-value">{formatDate(focusedCustomer.fecha_creacion)}</span>
+                </div>
+              </div>
+
+              <div className="odoo-tabs">
+                <button
+                  type="button"
+                  onClick={() => setActiveCustomerTab("orders")}
+                  className={`odoo-tab ${activeCustomerTab === "orders" ? "is-active" : ""}`}
+                >
+                  Pedidos
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{customerOrders.length}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveCustomerTab("invoices")}
+                  className={`odoo-tab ${activeCustomerTab === "invoices" ? "is-active" : ""}`}
+                >
+                  Facturas
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{customerInvoices.length}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveCustomerTab("products")}
+                  className={`odoo-tab ${activeCustomerTab === "products" ? "is-active" : ""}`}
+                >
+                  Productos comprados
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{purchasedProducts.length}</span>
+                </button>
+              </div>
+
+              <div className="odoo-record-body">
+                {activeCustomerTab === "orders" ? (
+                  customerOrders.length === 0 ? (
+                    <div className="odoo-muted-box text-sm text-[color:var(--muted)]">Sin pedidos registrados.</div>
+                  ) : (
+                    <div className="table-wrap">
+                      <table className="odoo-list-table">
+                        <thead>
+                          <tr>
+                            <th>Pedido</th>
+                            <th>Fecha</th>
+                            <th>Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {customerOrders.map((order) => (
+                            <tr key={order.id}>
+                              <td>
+                                <a href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.codigo)}`} className="odoo-link">
+                                  {order.codigo}
+                                </a>
+                              </td>
+                              <td>{formatDate(order.fecha_pedido)}</td>
+                              <td>
+                                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(orderStatusTone(order.estado))}`}>
+                                  {orderStatusLabel(order.estado)}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                ) : null}
+
+                {activeCustomerTab === "invoices" ? (
+                  customerInvoices.length === 0 ? (
+                    <div className="odoo-muted-box text-sm text-[color:var(--muted)]">Sin facturas relacionadas.</div>
+                  ) : (
+                    <div className="table-wrap">
+                      <table className="odoo-list-table">
+                        <thead>
+                          <tr>
+                            <th>Factura</th>
+                            <th>Fecha</th>
+                            <th>Estado</th>
+                            <th>Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {customerInvoices.map((invoice) => (
+                            <tr key={invoice.id}>
+                              <td>
+                                <a href={`/?section=facturas&facturaId=${encodeURIComponent(invoice.codigo)}`} className="odoo-link">
+                                  {invoice.codigo}
+                                </a>
+                              </td>
+                              <td>{formatDate(invoice.fecha)}</td>
+                              <td>
+                                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>
+                                  {invoice.estado_pago.toLowerCase()}
+                                </span>
+                              </td>
+                              <td>{formatCurrency(invoice.total)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                ) : null}
+
+                {activeCustomerTab === "products" ? (
+                  purchasedProducts.length === 0 ? (
+                    <div className="odoo-muted-box text-sm text-[color:var(--muted)]">Sin productos comprados.</div>
+                  ) : (
+                    <div className="table-wrap">
+                      <table className="odoo-list-table">
+                        <thead>
+                          <tr>
+                            <th>Producto</th>
+                            <th>Cantidad total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {purchasedProducts.map(([productName, quantity]) => (
+                            <tr key={`${focusedCustomer.id}-${productName}`}>
+                              <td>{productName}</td>
+                              <td>{quantity} uds</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                ) : null}
+              </div>
+            </>
+          )}
+        </article>
+      </div>
+    );
+  }
 
   return (
     <table className="table">
@@ -561,7 +811,7 @@ export function CustomersInlineTable({
                 .entries(),
             ).sort((a, b) => a[0].localeCompare(b[0], "es"));
             return (
-              <>
+              <Fragment key={customer.id}>
                 <tr
                   key={customer.id}
                   className={`${
@@ -718,7 +968,7 @@ export function CustomersInlineTable({
                     </td>
                   </tr>
                 ) : null}
-              </>
+              </Fragment>
             );
           })}
       </tbody>
@@ -740,10 +990,12 @@ export function OrdersInlineBoard({
   focusedCustomerCode?: string | null;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const focusedOrder = focusedOrderCode ? orders.find((order) => order.codigo === focusedOrderCode) ?? null : null;
+  const visibleOrders = focusedOrder ? [focusedOrder] : orders;
 
   return (
-    <div className="space-y-3">
-      {orders.map((order) => {
+    <div className="odoo-page">
+      {visibleOrders.map((order) => {
         const editing = editingId === order.id;
         const focused = focusedOrderCode === order.codigo;
         const latestHistory = order.historial[0] ?? null;
@@ -753,7 +1005,7 @@ export function OrdersInlineBoard({
         return (
             <article
               key={order.id}
-              className={`erp-record-panel p-4 ${
+              className={`odoo-record ${
                 focused
                   ? "ring-2 ring-[color:var(--brand)] ring-offset-2 ring-offset-[color:var(--surface)] shadow-[0_22px_55px_rgba(37,99,235,0.18)]"
                 : order.estado === "INCIDENCIA_STOCK"
@@ -881,10 +1133,10 @@ export function OrdersInlineBoard({
                           Pedido relacionado abierto desde facturas
                         </div>
                       ) : null}
-                      <div className="erp-record-header">
+                      <div className="odoo-record-header">
                         <div>
                           <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{order.codigo}</p>
-                          <h4 className="mt-2 text-lg font-semibold">{order.cliente_nombre}</h4>
+                          <h4 className="mt-2 text-[1.55rem] font-semibold tracking-[-0.03em]">{order.cliente_nombre}</h4>
                           <a
                             href={`/?section=clientes&clienteId=${encodeURIComponent(order.cliente_codigo)}&origen=pedido`}
                             className="mt-2 inline-flex items-center text-sm font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900"
@@ -913,7 +1165,7 @@ export function OrdersInlineBoard({
                           </div>
                         </div>
 
-                        <div className="mt-3 erp-field-grid sm:grid-cols-5">
+                        <div className="odoo-record-grid">
                         <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
                           <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Subtotal IVA incluido</p>
                           <p className="mt-2 text-sm font-semibold">{formatCurrency(order.subtotal)}</p>
@@ -950,26 +1202,37 @@ export function OrdersInlineBoard({
                   );
                 })()}
 
-                <div className="mt-3 space-y-2.5">
-                  {order.lineas.map((line) => (
-                    <div key={line.id} className="rounded-2xl border border-black/8 px-3.5 py-3.5">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="font-semibold">
-                            {line.producto_nombre} x{line.cantidad}
-                          </p>
-                          <p className="mt-1 text-sm text-[color:var(--muted)]">
-                            Desde stock: {line.cantidad_desde_stock} uds - A fabricar: {line.cantidad_a_fabricar} uds
-                          </p>
-                        </div>
-                        <div className="text-right text-sm">
-                          <p>Venta linea: {formatCurrency(line.precio_total_linea)}</p>
-                          <p>Coste linea: {formatCurrency(line.coste_total)}</p>
-                          <p className="text-[color:var(--muted)]">Beneficio: {formatCurrency(line.beneficio)}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                <div className="odoo-record-body">
+                  <div className="table-wrap">
+                    <table className="odoo-list-table">
+                      <thead>
+                        <tr>
+                          <th>Producto</th>
+                          <th>Cantidad</th>
+                          <th>Desde stock</th>
+                          <th>A fabricar</th>
+                          <th>Precio unitario</th>
+                          <th>Venta linea</th>
+                          <th>Coste linea</th>
+                          <th>Beneficio</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {order.lineas.map((line) => (
+                          <tr key={line.id}>
+                            <td>{line.producto_nombre}</td>
+                            <td>{line.cantidad}</td>
+                            <td>{line.cantidad_desde_stock} uds</td>
+                            <td>{line.cantidad_a_fabricar} uds</td>
+                            <td>{formatCurrency(line.precio_unitario)}</td>
+                            <td>{formatCurrency(line.precio_total_linea)}</td>
+                            <td>{formatCurrency(line.coste_total)}</td>
+                            <td>{formatCurrency(line.beneficio)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
                 {latestHistory ? (
@@ -1758,6 +2021,8 @@ export function InvoicesInlineTable({
 }) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [paymentId, setPaymentId] = useState<string | null>(null);
+  const focusedInvoice = focusedInvoiceCode ? invoices.find((invoice) => invoice.codigo === focusedInvoiceCode) ?? null : null;
+  const visibleInvoices = focusedInvoice ? [focusedInvoice, ...invoices.filter((invoice) => invoice.codigo !== focusedInvoiceCode)] : invoices;
 
   return (
     <table className="table">
@@ -1778,15 +2043,14 @@ export function InvoicesInlineTable({
         </tr>
       </thead>
       <tbody>
-          {invoices.map((invoice) => {
+          {visibleInvoices.map((invoice) => {
             const focused = focusedInvoiceCode === invoice.codigo;
-            const expanded = detailId === invoice.id;
+            const expanded = detailId === invoice.id || focused;
           const registeringPayment = paymentId === invoice.id;
           const { total, totalPaid, pendingAmount, paymentStatus, canRegisterPayment } =
             deriveInvoicePaymentView(invoice);
           const taxableBase = deriveTaxableBase(total, invoice.iva);
           const canEditDiscount = paymentStatus !== "PAGADA";
-          const paymentCount = invoice.pagos.length;
           const highlight =
             paymentStatus === "PENDIENTE"
               ? "warn"
@@ -1877,132 +2141,103 @@ export function InvoicesInlineTable({
                 </td>
               </tr>,
               expanded ? (
-                <tr key={`invoice-detail-${invoice.id}`} className={rowHighlight(highlight)}>
+                <tr key={`invoice-detail-${invoice.id}`} className={focused ? "bg-sky-50/40" : rowHighlight(highlight)}>
                   <td colSpan={12} className="bg-[color:var(--surface-strong)]">
-                    <div className="grid gap-4 px-2 py-4 xl:grid-cols-[1.1fr_0.9fr]">
-                      <div className="erp-record-panel p-4">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="grid gap-4 px-2 py-4 xl:grid-cols-[1.25fr_0.95fr]">
+                      <div className="odoo-record">
+                        <div className="odoo-record-header">
                           <div>
-                            <p className="eyebrow">Trazabilidad de cobro</p>
-                            <h4 className="mt-2 text-base font-semibold text-slate-900">Historial de pagos</h4>
+                            <p className="eyebrow">Factura</p>
+                            <h4 className="mt-2 text-[1.45rem] font-semibold tracking-[-0.03em] text-slate-950">
+                              {invoice.codigo}
+                            </h4>
+                            <p className="mt-2 text-sm text-[color:var(--muted)]">
+                              Pedido{" "}
+                              <a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="odoo-link">
+                                {invoice.pedido_codigo}
+                              </a>
+                              {" · "}
+                              Cliente{" "}
+                              <a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`} className="odoo-link">
+                                {invoice.cliente_codigo}
+                              </a>
+                            </p>
                           </div>
                           <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(paymentStatus))}`}>
                             {paymentStatus.toLowerCase()}
                           </span>
                         </div>
-                        <div className="mt-4 grid gap-3 sm:grid-cols-5">
-                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Subtotal IVA incluido</p>
-                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.subtotal)}</p>
+                        <div className="odoo-record-body">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="eyebrow">Trazabilidad de cobro</p>
+                            <h4 className="mt-2 text-base font-semibold text-slate-900">Historial de pagos</h4>
                           </div>
-                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Descuento IVA incluido</p>
-                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.descuento)}</p>
-                          </div>
-                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Base</p>
-                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(taxableBase)}</p>
-                          </div>
-                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">IVA incluido</p>
-                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(invoice.iva)}</p>
-                          </div>
-                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Total final</p>
-                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(total)}</p>
-                          </div>
-                        </div>
-                        <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Cobrado</p>
-                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(totalPaid)}</p>
-                          </div>
-                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Pendiente</p>
-                            <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(pendingAmount)}</p>
-                          </div>
-                          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Pagos</p>
-                            <p className="mt-2 text-sm font-semibold text-slate-900">{paymentCount}</p>
-                          </div>
-                        </div>
-                        <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <p className="text-[11px] uppercase tracking-[0.18em] text-sky-700">Pedido relacionado</p>
-                              <p className="mt-2 text-sm text-slate-700">
-                                Revisa producto, cantidades, precio unitario y detalle comercial en el pedido original.
-                              </p>
-                            </div>
-                            <a
-                              href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`}
-                              className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:-translate-y-0.5 hover:bg-sky-700"
-                            >
-                              Ver pedido {invoice.pedido_codigo}
+                          <div className="table-action-group">
+                            <a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="erp-button-secondary">
+                              Ver pedido
+                            </a>
+                            <a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`} className="erp-button-secondary">
+                              Ver cliente
                             </a>
                           </div>
                         </div>
-                        <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <p className="text-[11px] uppercase tracking-[0.18em] text-sky-700">Cliente relacionado</p>
-                              <p className="mt-2 text-sm text-slate-700">
-                                Accede a la ficha del cliente para revisar contacto y datos administrativos.
-                              </p>
-                            </div>
-                            <a
-                              href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`}
-                              className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:-translate-y-0.5 hover:bg-sky-700"
-                            >
-                              Ver cliente {invoice.cliente_codigo}
-                            </a>
-                          </div>
+                        <div className="mt-4 odoo-summary-grid">
+                          <div className="odoo-muted-box"><p className="odoo-field-label">Subtotal IVA incluido</p><p className="mt-2 font-semibold">{formatCurrency(invoice.subtotal)}</p></div>
+                          <div className="odoo-muted-box"><p className="odoo-field-label">Descuento IVA incluido</p><p className="mt-2 font-semibold">{formatCurrency(invoice.descuento)}</p></div>
+                          <div className="odoo-muted-box"><p className="odoo-field-label">Base imponible</p><p className="mt-2 font-semibold">{formatCurrency(taxableBase)}</p></div>
+                          <div className="odoo-muted-box"><p className="odoo-field-label">IVA incluido</p><p className="mt-2 font-semibold">{formatCurrency(invoice.iva)}</p></div>
+                          <div className="odoo-muted-box"><p className="odoo-field-label">Cobrado</p><p className="mt-2 font-semibold">{formatCurrency(totalPaid)}</p></div>
+                          <div className="odoo-muted-box"><p className="odoo-field-label">Pendiente</p><p className="mt-2 font-semibold">{formatCurrency(pendingAmount)}</p></div>
                         </div>
-                        <div className="mt-4 space-y-3">
+                        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                          <p className="odoo-field-label">Pagos registrados</p>
                           {invoice.pagos.length === 0 ? (
-                            <div className="rounded-2xl border border-dashed border-black/10 bg-white/75 px-4 py-4 text-sm text-[color:var(--muted)]">
-                              Esta factura aun no tiene pagos registrados.
-                            </div>
+                            <p className="mt-2 text-sm text-[color:var(--muted)]">Esta factura aun no tiene pagos registrados.</p>
                           ) : (
-                            invoice.pagos.map((payment) => (
-                              <article key={payment.id} className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-                                <div className="flex flex-wrap items-center justify-between gap-3">
-                                  <div>
-                                    <p className="text-sm font-semibold text-slate-900">
-                                      {payment.displayCode} · {payment.metodo_pago.toLowerCase()}
-                                    </p>
-                                    <p className="mt-1 text-xs text-[color:var(--muted)]">{formatDate(payment.fecha_pago)}</p>
-                                    <p className="mt-2 text-xs text-slate-600">
-                                      Pedido relacionado:{" "}
-                                      <a
-                                        href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`}
-                                        className="font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900"
-                                      >
-                                        {invoice.pedido_codigo}
-                                      </a>
-                                    </p>
-                                    <p className="mt-1 text-xs text-slate-600">
-                                      Cliente relacionado:{" "}
-                                      <a
-                                        href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=pago`}
-                                        className="font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900"
-                                      >
-                                        {invoice.cliente_codigo}
-                                      </a>
-                                    </p>
-                                  </div>
-                                  <p className="text-sm font-semibold text-slate-900">{formatCurrency(payment.importe)}</p>
-                                </div>
-                                {payment.notas ? (
-                                  <p className="mt-2 text-sm text-[color:var(--muted)]">{payment.notas}</p>
-                                ) : null}
-                              </article>
-                            ))
+                            <div className="table-wrap mt-3">
+                              <table className="odoo-list-table">
+                                <thead>
+                                  <tr>
+                                    <th>Pago</th>
+                                    <th>Fecha</th>
+                                    <th>Pedido</th>
+                                    <th>Cliente</th>
+                                    <th>Metodo</th>
+                                    <th>Importe</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {invoice.pagos.map((payment) => (
+                                    <tr key={payment.id}>
+                                      <td>{payment.displayCode}</td>
+                                      <td>{formatDate(payment.fecha_pago)}</td>
+                                      <td><a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="odoo-link">{invoice.pedido_codigo}</a></td>
+                                      <td><a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=pago`} className="odoo-link">{invoice.cliente_codigo}</a></td>
+                                      <td>{payment.metodo_pago.toLowerCase()}</td>
+                                      <td>{formatCurrency(payment.importe)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
                           )}
+                        </div>
                         </div>
                       </div>
 
-                      <div className="erp-record-panel p-4">
+                      <div className="odoo-record">
+                        <div className="odoo-record-header">
+                          <div>
+                            <p className="eyebrow">Resumen economico</p>
+                            <h4 className="mt-2 text-base font-semibold text-slate-900">Cobro y ajustes</h4>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Total final</p>
+                            <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(total)}</p>
+                          </div>
+                        </div>
+                        <div className="odoo-record-body">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <p className="eyebrow">Ajustes y cobro</p>
@@ -2023,7 +2258,7 @@ export function InvoicesInlineTable({
                           </div>
                         </div>
 
-                        <div className="mt-4 rounded-2xl border border-black/8 bg-white/92 p-4">
+                        <div className="mt-4 odoo-muted-box">
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
                               <p className="eyebrow">Descuento final</p>
@@ -2165,6 +2400,7 @@ export function InvoicesInlineTable({
                             ) : null}
                           </div>
                         )}
+                      </div>
                       </div>
                     </div>
                   </td>

@@ -917,7 +917,8 @@ export default async function Home({
           </Section>
 
           <Section active={section === "pedidos"} title="Pedidos" subtitle="Ventas y avance">
-            <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+            <div className={`grid gap-4 ${focusedOrderCode ? "xl:grid-cols-1" : "xl:grid-cols-[0.95fr_1.05fr]"}`}>
+              {!focusedOrderCode ? (
               <form id="create-order" action={createOrderAction} className="panel form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Crear pedido</h3>
@@ -978,14 +979,19 @@ export default async function Home({
                 </Field>
                 <SubmitButton pendingText="Creando pedido...">Crear pedido</SubmitButton>
               </form>
+              ) : null}
 
               <div className="panel p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h3 className="text-xl font-semibold">Lista de pedidos</h3>
-                    <p className="mt-1 text-sm text-[color:var(--muted)]">Filtra por estado y ejecuta solo la siguiente accion necesaria.</p>
+                    <h3 className="text-xl font-semibold">{focusedOrderCode ? "Ficha de pedido" : "Lista de pedidos"}</h3>
+                    <p className="mt-1 text-sm text-[color:var(--muted)]">
+                      {focusedOrderCode
+                        ? "Vista amplia del pedido seleccionado con cliente, lineas y trazabilidad comercial."
+                        : "Filtra por estado y ejecuta solo la siguiente accion necesaria."}
+                    </p>
                   </div>
-                  <div className="flex flex-wrap gap-2">
+                  {!focusedOrderCode ? <div className="flex flex-wrap gap-2">
                     {["ALL", ...Object.keys(orderStatusLabels)].map((status) => (
                       <FilterLink
                         key={status}
@@ -995,7 +1001,7 @@ export default async function Home({
                         count={status === "ALL" ? orders.length : orders.filter((order) => order.estado === status).length}
                       />
                     ))}
-                  </div>
+                  </div> : null}
                 </div>
 
                   <FilterSummary
@@ -1834,7 +1840,8 @@ export default async function Home({
           </Section>
 
           <Section active={section === "clientes"} title="Clientes" subtitle="Gestion">
-            <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+            <div className={`grid gap-4 ${focusedCustomerCode ? "xl:grid-cols-1" : "xl:grid-cols-[0.9fr_1.1fr]"}`}>
+              {!focusedCustomerCode ? (
               <form action={createCustomerAction} className="panel form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Nuevo cliente</h3>
@@ -1858,15 +1865,18 @@ export default async function Home({
                 </Field>
                 <SubmitButton pendingText="Creando...">Crear cliente</SubmitButton>
               </form>
+              ) : null}
               <div className="panel p-6">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h3 className="text-xl font-semibold">Base de clientes</h3>
+                    <h3 className="text-xl font-semibold">{focusedCustomerCode ? "Ficha de cliente" : "Base de clientes"}</h3>
                     <p className="mt-1 text-sm text-[color:var(--muted)]">
-                      Los clientes inactivos se mantienen para historico, pero salen de los formularios de pedidos nuevos.
+                      {focusedCustomerCode
+                        ? "Vista de registro amplia con pedidos, facturas y productos comprados en un solo lugar."
+                        : "Los clientes inactivos se mantienen para historico, pero salen de los formularios de pedidos nuevos."}
                     </p>
                   </div>
-                  <div className="flex flex-wrap gap-2">
+                  {!focusedCustomerCode ? <div className="flex flex-wrap gap-2">
                     {["ALL", "ACTIVE", "INACTIVE"].map((status) => (
                       <FilterLink
                         key={status}
@@ -1882,7 +1892,7 @@ export default async function Home({
                         }
                       />
                     ))}
-                  </div>
+                  </div> : null}
                 </div>
                   <FilterSummary
                     totalItems={filteredCustomers.length}

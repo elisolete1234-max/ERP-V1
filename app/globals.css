@@ -1016,6 +1016,159 @@ summary::-webkit-details-marker {
   padding: 0.9rem 1rem;
 }
 
+.odoo-page {
+  display: grid;
+  gap: 1rem;
+}
+
+.odoo-record {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.odoo-record-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.15rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  background: #fcfdff;
+}
+
+.odoo-record-grid {
+  display: grid;
+  gap: 0.9rem 1.1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 1rem 1.25rem;
+}
+
+.odoo-field {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 0;
+}
+
+.odoo-field-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.odoo-field-value {
+  font-size: 0.96rem;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.odoo-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0 1.25rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.odoo-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted-strong);
+  font-size: 0.84rem;
+  font-weight: 700;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.odoo-tab:hover {
+  background: var(--surface-muted);
+  border-color: var(--line);
+}
+
+.odoo-tab.is-active {
+  background: var(--accent-soft);
+  border-color: #bfdbfe;
+  color: var(--accent-hover);
+}
+
+.odoo-record-body {
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.odoo-list-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.odoo-list-table th,
+.odoo-list-table td {
+  padding: 0.72rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.odoo-list-table th {
+  background: #f8fafc;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.odoo-list-table tr:last-child td {
+  border-bottom: none;
+}
+
+.odoo-list-table tbody tr:hover td {
+  background: #fafcff;
+}
+
+.odoo-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+
+.odoo-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: #bfdbfe;
+  text-underline-offset: 3px;
+}
+
+.odoo-link:hover {
+  color: var(--accent-hover);
+}
+
+.odoo-summary-grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.odoo-muted-box {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-muted);
+  padding: 0.9rem 1rem;
+}
+
 @media (max-width: 960px) {
   .erp-layout {
     grid-template-columns: 1fr;
@@ -1027,6 +1180,11 @@ summary::-webkit-details-marker {
 
   .erp-header,
   .erp-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .odoo-record-grid,
+  .odoo-summary-grid {
     grid-template-columns: 1fr;
   }
 
