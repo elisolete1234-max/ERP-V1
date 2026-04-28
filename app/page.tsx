@@ -326,6 +326,7 @@ export default async function Home({
     printerActiveFilter?: string;
     movementInventory?: string;
     invoiceStatus?: string;
+    pedidoId?: string;
     fecha_inicio?: string;
     fecha_fin?: string;
     message?: string;
@@ -359,6 +360,7 @@ export default async function Home({
   const printerActiveFilter = resolved.printerActiveFilter ?? "ALL";
   const movementFilter = resolved.movementInventory ?? "ALL";
   const invoiceFilter = resolved.invoiceStatus ?? "ALL";
+  const focusedOrderCode = resolved.pedidoId?.trim() || null;
   const invoiceDateStart = toDateInputValue(resolved.fecha_inicio);
   const invoiceDateEnd = toDateInputValue(resolved.fecha_fin);
   const invoiceStartDate = buildDateRangeStart(invoiceDateStart);
@@ -367,7 +369,13 @@ export default async function Home({
   const hasInvoiceDateFilter = Boolean(invoiceDateStart || invoiceDateEnd);
   const hasActiveInvoiceFilters = hasInvoiceStatusFilter || hasInvoiceDateFilter;
 
-  const filteredOrders = orderFilter === "ALL" ? orders : orders.filter((order) => order.estado === orderFilter);
+  const filteredOrdersBase = orderFilter === "ALL" ? orders : orders.filter((order) => order.estado === orderFilter);
+  const filteredOrders = focusedOrderCode
+    ? [
+        ...filteredOrdersBase.filter((order) => order.codigo === focusedOrderCode),
+        ...filteredOrdersBase.filter((order) => order.codigo !== focusedOrderCode),
+      ]
+    : filteredOrdersBase;
   const filteredManufacturing =
     manufacturingFilter === "ALL"
       ? manufacturingOrders
@@ -957,14 +965,19 @@ export default async function Home({
                   </div>
                 </div>
 
-                <FilterSummary
-                  totalItems={filteredOrders.length}
-                  hasFilters={hasActiveOrderFilters}
-                  filters={activeOrderFilterSegments}
-                  itemLabel="pedidos"
-                  allItemsText="Mostrando todos los pedidos"
-                />
-                <div className="list-scroll mt-5">
+                  <FilterSummary
+                    totalItems={filteredOrders.length}
+                    hasFilters={hasActiveOrderFilters}
+                    filters={activeOrderFilterSegments}
+                    itemLabel="pedidos"
+                    allItemsText="Mostrando todos los pedidos"
+                  />
+                  {focusedOrderCode ? (
+                    <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/85 px-4 py-3 text-sm text-sky-900">
+                      Mostrando la trazabilidad del pedido <span className="font-semibold">{focusedOrderCode}</span> abierto desde facturas o pagos.
+                    </div>
+                  ) : null}
+                  <div className="list-scroll mt-5">
                   {filteredOrders.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[color:var(--muted)]">
                       No hay pedidos para este filtro.
@@ -1150,6 +1163,7 @@ export default async function Home({
                           codigo: product.codigo,
                           nombre: product.nombre,
                         }))}
+                        focusedOrderCode={focusedOrderCode}
                       />
                     )
                   )}

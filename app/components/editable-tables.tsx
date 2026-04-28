@@ -597,10 +597,12 @@ export function OrdersInlineBoard({
   orders,
   customers,
   products,
+  focusedOrderCode,
 }: {
   orders: OrderCard[];
   customers: CustomerOption[];
   products: ProductOption[];
+  focusedOrderCode?: string | null;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -608,6 +610,7 @@ export function OrdersInlineBoard({
     <div className="space-y-3">
       {orders.map((order) => {
         const editing = editingId === order.id;
+        const focused = focusedOrderCode === order.codigo;
         const latestHistory = order.historial[0] ?? null;
         const editable = ["BORRADOR", "INCIDENCIA_STOCK"].includes(order.estado);
         const lineDraft = [...order.lineas.slice(0, 3), ...Array.from({ length: Math.max(0, 3 - order.lineas.length) }, () => null)];
@@ -616,7 +619,9 @@ export function OrdersInlineBoard({
           <article
             key={order.id}
             className={`panel-muted p-4 ${
-              order.estado === "INCIDENCIA_STOCK"
+              focused
+                ? "ring-2 ring-[color:var(--brand)] ring-offset-2 ring-offset-[color:var(--surface)] shadow-[0_22px_55px_rgba(37,99,235,0.18)]"
+                : order.estado === "INCIDENCIA_STOCK"
                 ? rowHighlight("danger")
                 : order.estado === "LISTO" || order.estado === "ENTREGADO"
                   ? rowHighlight("attention")
@@ -736,6 +741,11 @@ export function OrdersInlineBoard({
                   const baseImponible = deriveTaxableBase(order.total, order.iva);
                   return (
                     <>
+                      {focused ? (
+                        <div className="mb-3 inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
+                          Pedido relacionado abierto desde facturas
+                        </div>
+                      ) : null}
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{order.codigo}</p>
@@ -749,6 +759,11 @@ export function OrdersInlineBoard({
                           <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_pago === "PAGADA" ? "success" : "neutral")}`}>
                             pago: {order.estado_pago.toLowerCase()}
                           </span>
+                          {focused ? (
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("info")}`}>
+                              trazabilidad activa
+                            </span>
+                          ) : null}
                         </div>
                       </div>
 
@@ -1677,7 +1692,14 @@ export function InvoicesInlineTable({
                   </div>
                 </td>
                 <td>{invoice.codigo}</td>
-                <td>{invoice.pedido_codigo}</td>
+                <td>
+                  <a
+                    href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`}
+                    className="font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900"
+                  >
+                    {invoice.pedido_codigo}
+                  </a>
+                </td>
                 <td>{invoice.cliente_nombre}</td>
                 <td>{formatCurrency(invoice.subtotal)}</td>
                 <td>{formatCurrency(invoice.descuento)}</td>
@@ -1742,6 +1764,22 @@ export function InvoicesInlineTable({
                             <p className="mt-2 text-sm font-semibold text-slate-900">{paymentCount}</p>
                           </div>
                         </div>
+                        <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[11px] uppercase tracking-[0.18em] text-sky-700">Pedido relacionado</p>
+                              <p className="mt-2 text-sm text-slate-700">
+                                Revisa producto, cantidades, precio unitario y detalle comercial en el pedido original.
+                              </p>
+                            </div>
+                            <a
+                              href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`}
+                              className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:-translate-y-0.5 hover:bg-sky-700"
+                            >
+                              Ver pedido {invoice.pedido_codigo}
+                            </a>
+                          </div>
+                        </div>
                         <div className="mt-4 space-y-3">
                           {invoice.pagos.length === 0 ? (
                             <div className="rounded-2xl border border-dashed border-black/10 bg-white/75 px-4 py-4 text-sm text-[color:var(--muted)]">
@@ -1756,6 +1794,15 @@ export function InvoicesInlineTable({
                                       {payment.displayCode} · {payment.metodo_pago.toLowerCase()}
                                     </p>
                                     <p className="mt-1 text-xs text-[color:var(--muted)]">{formatDate(payment.fecha_pago)}</p>
+                                    <p className="mt-2 text-xs text-slate-600">
+                                      Pedido relacionado:{" "}
+                                      <a
+                                        href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`}
+                                        className="font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900"
+                                      >
+                                        {invoice.pedido_codigo}
+                                      </a>
+                                    </p>
                                   </div>
                                   <p className="text-sm font-semibold text-slate-900">{formatCurrency(payment.importe)}</p>
                                 </div>
