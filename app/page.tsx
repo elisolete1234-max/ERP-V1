@@ -198,14 +198,14 @@ function FilterLink({
   return (
     <Link
       href={href}
-      className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-semibold shadow-[0_8px_18px_rgba(15,23,42,0.05)] transition ${
+      className={`inline-flex items-center gap-2 rounded-[10px] border px-3 py-2 text-xs font-semibold transition ${
         active
-          ? "border-[rgba(29,78,216,0.16)] bg-[color:var(--accent-soft)] text-[color:var(--accent-strong)]"
-          : "border-black/8 bg-white/92 text-[color:var(--muted-strong)] hover:border-[rgba(29,78,216,0.12)] hover:bg-slate-50"
+          ? "border-sky-200 bg-[color:var(--accent-soft)] text-[color:var(--accent-hover)]"
+          : "border-[color:var(--line)] bg-white text-[color:var(--muted-strong)] hover:border-[color:var(--line-strong)] hover:bg-[color:var(--surface-muted)]"
       }`}
     >
       {label}
-      {count != null ? <span className="rounded-full bg-black/6 px-2 py-0.5 text-[11px]">{count}</span> : null}
+      {count != null ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{count}</span> : null}
     </Link>
   );
 }
@@ -218,7 +218,7 @@ function StatusPill({
   tone: "success" | "warn" | "danger" | "info" | "neutral";
 }) {
   return (
-    <span className={`inline-flex rounded-full border px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] ${badgeClass(tone)}`}>
+    <span className={`erp-badge ${badgeClass(tone)}`}>
       {label}
     </span>
   );
@@ -279,9 +279,9 @@ function Section({
 }) {
   return (
     <section className={active ? "space-y-5" : "hidden"}>
-      <div className="section-header px-6 py-6">
+      <div className="section-header px-6 py-5">
         <p className="eyebrow">{subtitle}</p>
-        <h2 className="mt-3 text-[clamp(1.75rem,2vw,2.35rem)] font-semibold tracking-[-0.05em] text-slate-900">
+        <h2 className="mt-3 text-[clamp(1.55rem,2vw,1.95rem)] font-semibold tracking-[-0.04em] text-slate-900">
           {title}
         </h2>
       </div>
@@ -653,49 +653,43 @@ export default async function Home({
   ];
 
   return (
-    <main className="min-h-screen px-4 py-6 md:px-6 xl:px-8">
-      <div className="mx-auto grid max-w-[1500px] gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="panel self-start p-5 xl:sticky xl:top-5">
-          <div className="hero-panel p-5 text-white">
-            <p className="text-xs uppercase tracking-[0.34em] text-white/70">Produccion 3D profesional</p>
-            <h1 className="mt-3 text-[2rem] font-semibold tracking-[-0.06em]">Eli Print 3D</h1>
-            <p className="mt-3 text-sm leading-6 text-white/80">
-              Produccion 3D profesional para pedidos, stock, impresoras y facturacion en una sola vista.
-            </p>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-white/12 bg-white/10 px-3 py-3">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-white/55">Pendientes</p>
-                <p className="mt-2 text-xl font-semibold">{openOrders}</p>
-              </div>
-              <div className="rounded-2xl border border-white/12 bg-white/10 px-3 py-3">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-white/55">Ocupadas</p>
-                <p className="mt-2 text-xl font-semibold">{busyPrinters}</p>
-              </div>
+    <main className="erp-shell">
+      <div className="erp-layout">
+        <aside className="erp-sidebar">
+          <div className="erp-sidebar-brand">
+            <p className="eyebrow">ERP</p>
+            <h1 className="erp-sidebar-title">Eli Print 3D</h1>
+            <p className="erp-sidebar-subtitle">Produccion 3D profesional</p>
+          </div>
+          <div className="erp-sidebar-meta">
+            <div className="erp-sidebar-stat">
+              <p className="erp-sidebar-stat-label">Pedidos abiertos</p>
+              <p className="erp-sidebar-stat-value">{openOrders}</p>
+            </div>
+            <div className="erp-sidebar-stat">
+              <p className="erp-sidebar-stat-label">Impresoras ocupadas</p>
+              <p className="erp-sidebar-stat-value">{busyPrinters}</p>
+            </div>
+            <div className="erp-sidebar-stat">
+              <p className="erp-sidebar-stat-label">Jornada</p>
+              <p className="mt-1 text-sm font-medium text-slate-800">{todayLabelText}</p>
+              <p className="mt-1 text-xs text-[color:var(--muted)]">Operacion sincronizada y trazabilidad activa.</p>
             </div>
           </div>
-          <div className="mt-5 rounded-[22px] border border-black/6 bg-[color:var(--surface-muted)] px-4 py-4">
-            <p className="eyebrow">Jornada</p>
-            <p className="mt-2 text-sm font-medium text-slate-800">{todayLabelText}</p>
-            <p className="mt-1 text-sm text-[color:var(--muted)]">Eli Print 3D operativa, stock sincronizado y trazabilidad activa.</p>
-          </div>
-          <nav className="mt-5 space-y-2">
+          <nav className="erp-sidebar-nav">
             {sectionKeys.map((key) => (
               <Link
                 key={key}
                 href={`/?section=${key}`}
-                className={`flex items-center justify-between rounded-2xl px-4 py-3 text-sm font-medium transition focus-visible:outline-none ${
-                  section === key
-                    ? "bg-[linear-gradient(135deg,#111827,#1d4ed8)] text-slate-50 shadow-[0_14px_30px_rgba(29,78,216,0.18)] hover:text-white [&_*]:text-inherit"
-                    : "text-[color:var(--muted-strong)] hover:bg-slate-50 hover:text-slate-950"
-                }`}
+                className={`erp-sidebar-link ${section === key ? "is-active" : ""}`}
               >
-                <span className={section === key ? "text-slate-50" : undefined}>{sectionLabels[key]}</span>
+                <span>{sectionLabels[key]}</span>
                 {sectionCounters[key] != null ? (
                   <span
                     className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                       section === key
-                        ? "border border-white/12 bg-white/18 text-slate-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]"
-                        : "bg-black/6 text-[color:var(--muted)]"
+                        ? "border border-sky-200 bg-white text-sky-700"
+                        : "bg-slate-100 text-[color:var(--muted)]"
                     }`}
                   >
                     {sectionCounters[key]}
@@ -706,25 +700,43 @@ export default async function Home({
           </nav>
         </aside>
 
-        <div className="space-y-6">
+        <div className="erp-main">
+          <div className="erp-header">
+            <div>
+              <p className="eyebrow">Eli Print 3D</p>
+              <h2 className="erp-header-title">ERP administrativo para pedidos, stock y fabricacion</h2>
+              <p className="erp-header-subtitle">
+                Interfaz limpia, trazable y consistente para operar como en un ERP profesional, con navegacion lateral clara y registros amplios.
+              </p>
+            </div>
+            <div className="erp-toolbar">
+              <Link href="/?section=pedidos#create-order" className="erp-button-primary">
+                Nuevo pedido
+              </Link>
+              <Link href="/?section=facturas" className="erp-button-secondary">
+                Ver facturas
+              </Link>
+            </div>
+          </div>
+
           <div className="panel overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-5 px-6 py-5">
               <div>
-                <p className="eyebrow">Eli Print 3D</p>
-                <h2 className="mt-3 text-[clamp(2rem,3vw,2.8rem)] font-semibold tracking-[-0.07em] text-slate-950">
-                  Opera Eli Print 3D con una vista clara y accionable
+                <p className="eyebrow">Vista general</p>
+                <h2 className="mt-3 text-[clamp(1.7rem,2.7vw,2.15rem)] font-semibold tracking-[-0.05em] text-slate-950">
+                  Centro de control operativo
                 </h2>
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-[color:var(--muted)]">
-                  Produccion 3D profesional con pedidos, stock, fabricacion, impresoras y facturas en una misma interfaz.
+                  Resumen diario, accesos rapidos y estado transversal de pedidos, fabricacion, stock y facturacion en una sola pantalla administrativa.
                 </p>
               </div>
               <div className="grid min-w-[260px] flex-1 gap-3 sm:grid-cols-2 xl:max-w-md">
-                <div className="panel-muted px-4 py-4">
+                <div className="erp-card px-4 py-4">
                   <p className="eyebrow">Valor stock</p>
                   <p className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{currency(finishedStockValue)}</p>
                   <p className="mt-1 text-sm text-[color:var(--muted)]">Producto terminado valorado a coste</p>
                 </div>
-                <div className="panel-muted px-4 py-4">
+                <div className="erp-card px-4 py-4">
                   <p className="eyebrow">Impresoras</p>
                   <p className="mt-2 text-2xl font-semibold tracking-[-0.04em]">
                     {busyPrinters}/{printers.length}

@@ -651,7 +651,7 @@ export function CustomersInlineTable({
                   <tr key={`${customer.id}-history`} className={focused ? "bg-sky-50/55" : ""}>
                     <td colSpan={5} className="bg-[color:var(--surface-strong)]">
                       <div className="grid gap-4 px-3 py-4 xl:grid-cols-3">
-                        <section className="rounded-2xl border border-black/8 bg-white/92 px-4 py-4">
+                        <section className="erp-subsection">
                           <p className="eyebrow">Pedidos del cliente</p>
                           <div className="mt-3 space-y-2">
                             {customerOrders.length === 0 ? (
@@ -673,7 +673,7 @@ export function CustomersInlineTable({
                             )}
                           </div>
                         </section>
-                        <section className="rounded-2xl border border-black/8 bg-white/92 px-4 py-4">
+                        <section className="erp-subsection">
                           <p className="eyebrow">Facturas del cliente</p>
                           <div className="mt-3 space-y-2">
                             {customerInvoices.length === 0 ? (
@@ -696,7 +696,7 @@ export function CustomersInlineTable({
                             )}
                           </div>
                         </section>
-                        <section className="rounded-2xl border border-black/8 bg-white/92 px-4 py-4">
+                        <section className="erp-subsection">
                           <p className="eyebrow">Productos comprados</p>
                           <div className="mt-3 space-y-2">
                             {purchasedProducts.length === 0 ? (
@@ -751,11 +751,11 @@ export function OrdersInlineBoard({
         const lineDraft = [...order.lineas.slice(0, 3), ...Array.from({ length: Math.max(0, 3 - order.lineas.length) }, () => null)];
 
         return (
-          <article
-            key={order.id}
-            className={`panel-muted p-4 ${
-              focused
-                ? "ring-2 ring-[color:var(--brand)] ring-offset-2 ring-offset-[color:var(--surface)] shadow-[0_22px_55px_rgba(37,99,235,0.18)]"
+            <article
+              key={order.id}
+              className={`erp-record-panel p-4 ${
+                focused
+                  ? "ring-2 ring-[color:var(--brand)] ring-offset-2 ring-offset-[color:var(--surface)] shadow-[0_22px_55px_rgba(37,99,235,0.18)]"
                 : order.estado === "INCIDENCIA_STOCK"
                 ? rowHighlight("danger")
                 : order.estado === "LISTO" || order.estado === "ENTREGADO"
@@ -881,7 +881,7 @@ export function OrdersInlineBoard({
                           Pedido relacionado abierto desde facturas
                         </div>
                       ) : null}
-                      <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="erp-record-header">
                         <div>
                           <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{order.codigo}</p>
                           <h4 className="mt-2 text-lg font-semibold">{order.cliente_nombre}</h4>
@@ -913,7 +913,7 @@ export function OrdersInlineBoard({
                           </div>
                         </div>
 
-                      <div className="mt-3 grid gap-3 sm:grid-cols-5">
+                        <div className="mt-3 erp-field-grid sm:grid-cols-5">
                         <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
                           <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Subtotal IVA incluido</p>
                           <p className="mt-2 text-sm font-semibold">{formatCurrency(order.subtotal)}</p>
@@ -1880,7 +1880,7 @@ export function InvoicesInlineTable({
                 <tr key={`invoice-detail-${invoice.id}`} className={rowHighlight(highlight)}>
                   <td colSpan={12} className="bg-[color:var(--surface-strong)]">
                     <div className="grid gap-4 px-2 py-4 xl:grid-cols-[1.1fr_0.9fr]">
-                      <div className="panel-muted p-4">
+                      <div className="erp-record-panel p-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <p className="eyebrow">Trazabilidad de cobro</p>
@@ -2002,7 +2002,7 @@ export function InvoicesInlineTable({
                         </div>
                       </div>
 
-                      <div className="panel-muted p-4">
+                      <div className="erp-record-panel p-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <p className="eyebrow">Ajustes y cobro</p>
