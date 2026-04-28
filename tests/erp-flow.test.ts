@@ -744,6 +744,61 @@ test("la factura arranca pendiente y sincroniza pagos parciales y totales con el
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoice_payments WHERE factura_id = ?`, invoice.id))!.total, 2);
 });
 
+test("muestra codigos visibles de pago numerados por pedido", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = (await row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, orderId))!;
+  const order = (await row<{ codigo: string }>(`SELECT codigo FROM orders WHERE id = ?`, orderId))!;
+
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "TRANSFERENCIA",
+    importe: 2,
+    fechaPago: "2026-04-10",
+  });
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: "BIZUM",
+    importe: 3,
+    fechaPago: "2026-04-11",
+  });
+
+  const pdfData = await getInvoicePdfData(invoice.id);
+  assert.deepEqual(
+    pdfData.pagos.map((payment) => payment.displayCode),
+    [`PAG-${order.codigo}-01`, `PAG-${order.codigo}-02`],
+  );
+
+  const snapshot = await getAppSnapshot();
+  const visibleInvoice = snapshot.invoices.find((item: (typeof snapshot.invoices)[number]) => item.id === invoice.id);
+  assert.ok(visibleInvoice);
+  assert.deepEqual(
+    [...visibleInvoice!.pagos]
+      .sort((a, b) => a.fecha_pago.localeCompare(b.fecha_pago) || a.codigo.localeCompare(b.codigo))
+      .map((payment) => payment.displayCode),
+    [`PAG-${order.codigo}-01`, `PAG-${order.codigo}-02`],
+  );
+
+  const paymentExport = await getInvoicePaymentsExportRows("PARCIAL");
+  assert.equal(paymentExport.length, 2);
+  assert.deepEqual(
+    [...paymentExport]
+      .sort((a, b) => a.fechaPago.localeCompare(b.fechaPago))
+      .map((payment) => payment.codigoPago),
+    [`PAG-${order.codigo}-01`, `PAG-${order.codigo}-02`],
+  );
+});
+
 test("pedido y factura sin descuento mantienen el comportamiento actual", async () => {
   const { customerId, productId } = await setupSingleProductFixture();
   const orderId = await createOrderRecord({
@@ -1218,7 +1273,7 @@ test("recalcula facturas desincronizadas antes de mostrarlas o registrar cobros"
   );
 
   const snapshot = await getAppSnapshot();
-  const visibleInvoice = snapshot.invoices.find((item) => item.id === invoice.id);
+  const visibleInvoice = snapshot.invoices.find((item: (typeof snapshot.invoices)[number]) => item.id === invoice.id);
 
   assert.ok(visibleInvoice);
   assert.equal(visibleInvoice!.estado_pago, "PENDIENTE");

@@ -121,6 +121,7 @@ type Invoice = {
   pagos: Array<{
     id: string;
     codigo: string;
+    displayCode: string;
     factura_id: string;
     fecha_pago: string;
     metodo_pago: string;
@@ -1752,7 +1753,7 @@ export function InvoicesInlineTable({
                                 <div className="flex flex-wrap items-center justify-between gap-3">
                                   <div>
                                     <p className="text-sm font-semibold text-slate-900">
-                                      {payment.codigo} · {payment.metodo_pago.toLowerCase()}
+                                      {payment.displayCode} · {payment.metodo_pago.toLowerCase()}
                                     </p>
                                     <p className="mt-1 text-xs text-[color:var(--muted)]">{formatDate(payment.fecha_pago)}</p>
                                   </div>

@@ -238,7 +238,7 @@ export async function GET(
       invoice.pagos.forEach((payment: (typeof invoice.pagos)[number], index) => {
         addPageOnlyIfNeeded(26);
         doc.roundedRect(42, y, 240, 26, 6).fillAndStroke(index % 2 === 0 ? "#FFFFFF" : soft, line);
-        doc.font(fontPath).fontSize(9.5).fillColor(ink).text(truncate(payment.codigo, 14), 52, y + 8, {
+        doc.font(fontPath).fontSize(9.5).fillColor(ink).text(truncate(payment.displayCode, 18), 52, y + 8, {
           width: 70,
           lineBreak: false,
         });

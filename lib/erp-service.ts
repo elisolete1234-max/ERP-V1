@@ -414,6 +414,37 @@ function normalizeDateFilter(value?: string | null) {
   return normalized;
 }
 
+function comparePaymentSequence(
+  a: { fecha_pago: string; codigo: string },
+  b: { fecha_pago: string; codigo: string },
+) {
+  const byDate = a.fecha_pago.localeCompare(b.fecha_pago);
+  if (byDate !== 0) {
+    return byDate;
+  }
+  return a.codigo.localeCompare(b.codigo);
+}
+
+function buildPaymentDisplayCode(orderCode: string | null | undefined, sequence: number) {
+  const normalizedOrderCode = orderCode?.trim() || "PED-000";
+  return `PAG-${normalizedOrderCode}-${String(sequence).padStart(2, "0")}`;
+}
+
+function withPaymentDisplayCodes<T extends { id: string; codigo: string; fecha_pago: string }>(
+  payments: T[],
+  orderCode: string | null | undefined,
+) {
+  const ordered = [...payments].sort(comparePaymentSequence);
+  const displayCodeById = new Map(
+    ordered.map((payment, index) => [payment.id, buildPaymentDisplayCode(orderCode, index + 1)]),
+  );
+
+  return payments.map((payment) => ({
+    ...payment,
+    displayCode: displayCodeById.get(payment.id) ?? payment.codigo,
+  }));
+}
+
 async function syncInvoicePaymentSummary(invoiceId: string) {
   const invoice = await row<{
     id: string;
@@ -1118,24 +1149,26 @@ export async function getAppSnapshot() {
       const estadoPago =
         totalPagado <= 0 ? "PENDIENTE" : totalPagado < invoice.total ? "PARCIAL" : "PAGADA";
 
+      const pagos = await rows<{
+        id: string;
+        codigo: string;
+        factura_id: string;
+        fecha_pago: string;
+        metodo_pago: string;
+        importe: number;
+        notas: string | null;
+      }>(
+        `SELECT * FROM invoice_payments WHERE factura_id = ? ORDER BY fecha_pago DESC, codigo DESC`,
+        invoice.id,
+      );
+
       return {
         ...invoice,
         subtotal: roundMoney(invoice.total + (invoice.descuento ?? 0)),
         total_pagado: totalPagado,
         importe_pendiente: importePendiente,
         estado_pago: estadoPago,
-        pagos: await rows<{
-          id: string;
-          codigo: string;
-          factura_id: string;
-          fecha_pago: string;
-          metodo_pago: string;
-          importe: number;
-          notas: string | null;
-        }>(
-          `SELECT * FROM invoice_payments WHERE factura_id = ? ORDER BY fecha_pago DESC, codigo DESC`,
-          invoice.id,
-        ),
+        pagos: withPaymentDisplayCodes(pagos, invoice.pedido_codigo),
       };
     }),
   );
@@ -1391,7 +1424,7 @@ export async function getInvoicePdfData(invoiceId: string) {
       ...linea,
       iva_porcentaje: normalizeVatRate(linea.iva_porcentaje ?? DEFAULT_VAT_RATE),
     })),
-    pagos,
+    pagos: withPaymentDisplayCodes(pagos, invoice.pedido_codigo),
     resumen: {
       subtotal,
       descuento: roundMoney(invoice.descuento ?? 0),
@@ -1409,7 +1442,8 @@ export async function getInvoicePaymentsExportRows(status?: string, fromDate?: s
   const statusFilter = normalizeInvoiceStatusFilter(status);
   const startDate = normalizeDateFilter(fromDate);
   const endDate = normalizeDateFilter(toDate);
-  return await rows<{
+  const payments = await rows<{
+    id: string;
     codigoPago: string;
     codigoFactura: string;
     codigoPedido: string;
@@ -1419,12 +1453,13 @@ export async function getInvoicePaymentsExportRows(status?: string, fromDate?: s
     importe: number;
     notas: string | null;
   }>(
-    `SELECT
-       p.codigo AS codigoPago,
-       i.codigo AS codigoFactura,
-       o.codigo AS codigoPedido,
-       c.nombre AS cliente,
-       p.fecha_pago AS fechaPago,
+      `SELECT
+         p.id AS id,
+         p.codigo AS codigoPago,
+         i.codigo AS codigoFactura,
+         o.codigo AS codigoPedido,
+         c.nombre AS cliente,
+         p.fecha_pago AS fechaPago,
        p.metodo_pago AS metodoPago,
        p.importe AS importe,
        p.notas AS notas
@@ -1439,10 +1474,30 @@ export async function getInvoicePaymentsExportRows(status?: string, fromDate?: s
     statusFilter ?? null,
     statusFilter ?? null,
     startDate ?? null,
-    startDate ?? null,
-    endDate ?? null,
-    endDate ?? null,
+      startDate ?? null,
+      endDate ?? null,
+      endDate ?? null,
+    );
+
+  const orderedForSequence = [...payments].sort(
+    (a, b) =>
+      a.codigoPedido.localeCompare(b.codigoPedido) ||
+      a.fechaPago.localeCompare(b.fechaPago) ||
+      a.codigoPago.localeCompare(b.codigoPago),
   );
+  const displayCodeById = new Map<string, string>();
+  const paymentCountByOrder = new Map<string, number>();
+
+  for (const payment of orderedForSequence) {
+    const nextSequence = (paymentCountByOrder.get(payment.codigoPedido) ?? 0) + 1;
+    paymentCountByOrder.set(payment.codigoPedido, nextSequence);
+    displayCodeById.set(payment.id, buildPaymentDisplayCode(payment.codigoPedido, nextSequence));
+  }
+
+  return payments.map((payment) => ({
+    ...payment,
+    codigoPago: displayCodeById.get(payment.id) ?? payment.codigoPago,
+  }));
 }
 
 export async function resetDatabase() {

@@ -336,7 +336,7 @@ export default async function Home({
   const section = sectionKeys.includes(resolved.section as (typeof sectionKeys)[number])
     ? (resolved.section as (typeof sectionKeys)[number])
     : "dashboard";
-  const snapshot = toPlainData(await getAppSnapshot());
+  const snapshot: Snapshot = toPlainData(await getAppSnapshot());
   const {
     customers,
     materials,
@@ -405,8 +405,8 @@ export default async function Home({
   const filteredInvoices =
     invoiceFilter === "ALL"
       ? invoices
-      : invoices.filter((invoice) => invoice.estado_pago === invoiceFilter);
-  const dateFilteredInvoices = filteredInvoices.filter((invoice) => {
+      : invoices.filter((invoice: Snapshot["invoices"][number]) => invoice.estado_pago === invoiceFilter);
+  const dateFilteredInvoices = filteredInvoices.filter((invoice: Snapshot["invoices"][number]) => {
     const invoiceDate = new Date(invoice.fecha);
     if (Number.isNaN(invoiceDate.getTime())) {
       return false;
