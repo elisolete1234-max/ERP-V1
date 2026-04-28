@@ -329,6 +329,7 @@ export default async function Home({
     movementInventory?: string;
     invoiceStatus?: string;
     pedidoId?: string;
+    facturaId?: string;
     fecha_inicio?: string;
     fecha_fin?: string;
     message?: string;
@@ -364,6 +365,7 @@ export default async function Home({
   const invoiceFilter = resolved.invoiceStatus ?? "ALL";
   const focusedOrderCode = resolved.pedidoId?.trim() || null;
   const focusedCustomerCode = resolved.clienteId?.trim() || null;
+  const focusedInvoiceCode = resolved.facturaId?.trim() || null;
   const customerFocusOrigin =
     resolved.origen === "pedido" || resolved.origen === "factura" || resolved.origen === "pago"
       ? resolved.origen
@@ -423,10 +425,16 @@ export default async function Home({
     movementFilter === "ALL"
       ? inventoryMovements
       : inventoryMovements.filter((movement) => movement.inventario_tipo === movementFilter);
-  const filteredInvoices =
+  const filteredInvoicesBase =
     invoiceFilter === "ALL"
       ? invoices
       : invoices.filter((invoice: Snapshot["invoices"][number]) => invoice.estado_pago === invoiceFilter);
+  const filteredInvoices = focusedInvoiceCode
+    ? [
+        ...filteredInvoicesBase.filter((invoice) => invoice.codigo === focusedInvoiceCode),
+        ...filteredInvoicesBase.filter((invoice) => invoice.codigo !== focusedInvoiceCode),
+      ]
+    : filteredInvoicesBase;
   const dateFilteredInvoices = filteredInvoices.filter((invoice: Snapshot["invoices"][number]) => {
     const invoiceDate = new Date(invoice.fecha);
     if (Number.isNaN(invoiceDate.getTime())) {
@@ -1474,8 +1482,13 @@ export default async function Home({
                 hasFilters={hasActiveInvoiceFilters}
                 filters={activeInvoiceFilterSegments}
               />
+              {focusedInvoiceCode ? (
+                <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/85 px-4 py-3 text-sm text-sky-900">
+                  Mostrando la trazabilidad de la factura <span className="font-semibold">{focusedInvoiceCode}</span>.
+                </div>
+              ) : null}
               <div className="table-wrap table-scroll">
-                <InvoicesInlineTable invoices={dateFilteredInvoices} />
+                <InvoicesInlineTable invoices={dateFilteredInvoices} focusedInvoiceCode={focusedInvoiceCode} />
               </div>
             </div>
           </Section>
@@ -1866,21 +1879,41 @@ export default async function Home({
                     itemLabel="clientes"
                     allItemsText="Mostrando todos los clientes"
                   />
-                  {focusedCustomerCode ? (
-                    <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/85 px-4 py-3 text-sm text-sky-900">
-                      Mostrando la trazabilidad del cliente <span className="font-semibold">{focusedCustomerCode}</span> abierto desde {customerFocusOrigin ?? "pedido/factura/pago"}.
-                    </div>
-                  ) : null}
+                    {focusedCustomerCode ? (
+                      <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/85 px-4 py-3 text-sm text-sky-900">
+                        Mostrando la trazabilidad del cliente <span className="font-semibold">{focusedCustomerCode}</span> abierto desde {customerFocusOrigin ?? "pedido/factura/pago"}.
+                      </div>
+                    ) : null}
                   <div className="table-wrap table-scroll">
                     <CustomersInlineTable
                       customers={filteredCustomers}
                       focusedCustomerCode={focusedCustomerCode}
                       focusOriginLabel={customerFocusOrigin}
+                      orders={orders.map((order) => ({
+                        id: order.id,
+                        codigo: order.codigo,
+                        cliente_id: order.cliente_id,
+                        fecha_pedido: order.fecha_pedido,
+                        estado: order.estado,
+                        lineas: order.lineas.map((line) => ({
+                          id: line.id,
+                          producto_nombre: line.producto_nombre,
+                          cantidad: line.cantidad,
+                        })),
+                      }))}
+                      invoices={invoices.map((invoice) => ({
+                        id: invoice.id,
+                        codigo: invoice.codigo,
+                        cliente_id: invoice.cliente_id,
+                        fecha: invoice.fecha,
+                        estado_pago: invoice.estado_pago,
+                        total: invoice.total,
+                      }))}
                     />
                   </div>
+                </div>
               </div>
-            </div>
-          </Section>
+            </Section>
 
           <Section active={section === "movimientos"} title="Movimientos de inventario" subtitle="Trazabilidad">
             <div className="panel p-6">

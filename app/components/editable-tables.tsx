@@ -180,6 +180,28 @@ type CustomerOption = {
   nombre: string;
 };
 
+type CustomerOrderSummary = {
+  id: string;
+  codigo: string;
+  cliente_id: string;
+  fecha_pedido: string;
+  estado: string;
+  lineas: Array<{
+    id: string;
+    producto_nombre: string;
+    cantidad: number;
+  }>;
+};
+
+type CustomerInvoiceSummary = {
+  id: string;
+  codigo: string;
+  cliente_id: string;
+  fecha: string;
+  estado_pago: string;
+  total: number;
+};
+
 type OrderLine = {
   id: string;
   codigo: string;
@@ -505,10 +527,14 @@ export function CustomersInlineTable({
   customers,
   focusedCustomerCode,
   focusOriginLabel,
+  orders,
+  invoices,
 }: {
   customers: Customer[];
   focusedCustomerCode?: string | null;
   focusOriginLabel?: string | null;
+  orders: CustomerOrderSummary[];
+  invoices: CustomerInvoiceSummary[];
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -522,94 +548,179 @@ export function CustomersInlineTable({
             const editing = editingId === customer.id;
             const focused = focusedCustomerCode === customer.codigo;
             const formId = `customer-form-${customer.id}`;
+            const customerOrders = orders.filter((order) => order.cliente_id === customer.id);
+            const customerInvoices = invoices.filter((invoice) => invoice.cliente_id === customer.id);
+            const purchasedProducts = Array.from(
+              customerOrders
+                .flatMap((order) => order.lineas)
+                .reduce((accumulator, line) => {
+                  const current = accumulator.get(line.producto_nombre) ?? 0;
+                  accumulator.set(line.producto_nombre, current + line.cantidad);
+                  return accumulator;
+                }, new Map<string, number>())
+                .entries(),
+            ).sort((a, b) => a[0].localeCompare(b[0], "es"));
             return (
-              <tr
-                key={customer.id}
-                className={`${
-                  focused
-                    ? "bg-sky-50/90 ring-2 ring-inset ring-sky-300"
-                    : !customer.activo
-                      ? `${rowHighlight("attention")} opacity-75`
-                      : ""
-                }`.trim()}
-              >
-              <td>
-                <form id={formId} action={updateCustomerAction}>
-                  <input type="hidden" name="id" value={customer.id} />
-                </form>
-                <div className="table-action-group">
-                  <ActionButtons
-                    editing={editing}
-                    onEdit={() => setEditingId(customer.id)}
-                    onCancel={() => setEditingId(null)}
-                    formId={formId}
-                  />
-                  {!editing ? (
-                    <form action={toggleCustomerActiveAction}>
+              <>
+                <tr
+                  key={customer.id}
+                  className={`${
+                    focused
+                      ? "bg-sky-50/90 ring-2 ring-inset ring-sky-300"
+                      : !customer.activo
+                        ? `${rowHighlight("attention")} opacity-75`
+                        : ""
+                  }`.trim()}
+                >
+                  <td>
+                    <form id={formId} action={updateCustomerAction}>
                       <input type="hidden" name="id" value={customer.id} />
-                      <input type="hidden" name="active" value={customer.activo ? "false" : "true"} />
-                      <SubmitButton
-                        variant={customer.activo ? "icon-soft" : "icon-dark"}
-                        pendingText={<SpinnerIcon />}
-                        title={customer.activo ? "Dar de baja" : "Reactivar"}
-                        aria-label={customer.activo ? "Dar de baja" : "Reactivar"}
-                      >
-                        {customer.activo ? <ArchiveIcon /> : <RestoreIcon />}
-                      </SubmitButton>
                     </form>
-                  ) : null}
-                </div>
-              </td>
-              <td>{customer.codigo}</td>
-              <td>
-                {editing ? (
-                  <InlineField label="Nombre">
-                    <input form={formId} name="nombre" defaultValue={customer.nombre} className={tableInputClass} />
-                  </InlineField>
-                  ) : (
-                    <div>
-                      <div className="font-medium">{customer.nombre}</div>
-                      {focused ? (
-                        <div className="mt-2 inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
-                          Cliente abierto desde {focusOriginLabel ?? "pedido/factura/pago"}
-                        </div>
+                    <div className="table-action-group">
+                      <ActionButtons
+                        editing={editing}
+                        onEdit={() => setEditingId(customer.id)}
+                        onCancel={() => setEditingId(null)}
+                        formId={formId}
+                      />
+                      {!editing ? (
+                        <form action={toggleCustomerActiveAction}>
+                          <input type="hidden" name="id" value={customer.id} />
+                          <input type="hidden" name="active" value={customer.activo ? "false" : "true"} />
+                          <SubmitButton
+                            variant={customer.activo ? "icon-soft" : "icon-dark"}
+                            pendingText={<SpinnerIcon />}
+                            title={customer.activo ? "Dar de baja" : "Reactivar"}
+                            aria-label={customer.activo ? "Dar de baja" : "Reactivar"}
+                          >
+                            {customer.activo ? <ArchiveIcon /> : <RestoreIcon />}
+                          </SubmitButton>
+                        </form>
                       ) : null}
-                      <div className="mt-2">
-                        <span
-                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                          badgeClasses(customer.activo ? "success" : "neutral")
-                        }`}
-                      >
-                        {customer.activo ? "Activo" : "Inactivo"}
-                      </span>
                     </div>
-                  </div>
-                )}
-              </td>
-              <td>
-                {editing ? (
-                  <div className="table-edit-stack table-cell-edit table-edit-card">
-                    <InlineField label="Telefono">
-                      <input form={formId} name="telefono" defaultValue={customer.telefono ?? ""} placeholder="Telefono" className={tableInputClass} />
-                    </InlineField>
-                    <InlineField label="Email">
-                      <input form={formId} name="email" type="email" defaultValue={customer.email ?? ""} placeholder="Email" className={tableInputClass} />
-                    </InlineField>
-                    <InlineField label="Direccion">
-                      <textarea form={formId} name="direccion" defaultValue={customer.direccion ?? ""} rows={2} placeholder="Direccion" className={tableTextareaClass} />
-                    </InlineField>
-                  </div>
-                ) : (
-                  <div>
-                    <div>{customer.email || customer.telefono || "-"}</div>
-                    <div className="text-xs text-[color:var(--muted)]">{customer.direccion || "-"}</div>
-                  </div>
-                )}
-              </td>
-              <td>{formatDate(customer.fecha_creacion)}</td>
-            </tr>
-          );
-        })}
+                  </td>
+                  <td>{customer.codigo}</td>
+                  <td>
+                    {editing ? (
+                      <InlineField label="Nombre">
+                        <input form={formId} name="nombre" defaultValue={customer.nombre} className={tableInputClass} />
+                      </InlineField>
+                    ) : (
+                      <div>
+                        <div className="font-medium">{customer.nombre}</div>
+                        {focused ? (
+                          <div className="mt-2 inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
+                            Cliente abierto desde {focusOriginLabel ?? "pedido/factura/pago"}
+                          </div>
+                        ) : null}
+                        <div className="mt-2">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                              badgeClasses(customer.activo ? "success" : "neutral")
+                            }`}
+                          >
+                            {customer.activo ? "Activo" : "Inactivo"}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    {editing ? (
+                      <div className="table-edit-stack table-cell-edit table-edit-card">
+                        <InlineField label="Telefono">
+                          <input form={formId} name="telefono" defaultValue={customer.telefono ?? ""} placeholder="Telefono" className={tableInputClass} />
+                        </InlineField>
+                        <InlineField label="Email">
+                          <input form={formId} name="email" type="email" defaultValue={customer.email ?? ""} placeholder="Email" className={tableInputClass} />
+                        </InlineField>
+                        <InlineField label="Direccion">
+                          <textarea form={formId} name="direccion" defaultValue={customer.direccion ?? ""} rows={2} placeholder="Direccion" className={tableTextareaClass} />
+                        </InlineField>
+                      </div>
+                    ) : (
+                      <div>
+                        <div>{customer.email || customer.telefono || "-"}</div>
+                        <div className="text-xs text-[color:var(--muted)]">{customer.direccion || "-"}</div>
+                      </div>
+                    )}
+                  </td>
+                  <td>{formatDate(customer.fecha_creacion)}</td>
+                </tr>
+                {!editing ? (
+                  <tr key={`${customer.id}-history`} className={focused ? "bg-sky-50/55" : ""}>
+                    <td colSpan={5} className="bg-[color:var(--surface-strong)]">
+                      <div className="grid gap-4 px-3 py-4 xl:grid-cols-3">
+                        <section className="rounded-2xl border border-black/8 bg-white/92 px-4 py-4">
+                          <p className="eyebrow">Pedidos del cliente</p>
+                          <div className="mt-3 space-y-2">
+                            {customerOrders.length === 0 ? (
+                              <p className="text-sm text-[color:var(--muted)]">Sin pedidos registrados.</p>
+                            ) : (
+                              customerOrders.map((order) => (
+                                <a
+                                  key={order.id}
+                                  href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.codigo)}`}
+                                  className="flex items-center justify-between gap-3 rounded-2xl border border-sky-100 bg-sky-50/45 px-3 py-2 text-sm transition hover:border-sky-200 hover:bg-sky-50"
+                                >
+                                  <span className="font-semibold text-sky-800">{order.codigo}</span>
+                                  <span className="text-slate-600">{formatDate(order.fecha_pedido)}</span>
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${badgeClasses(orderStatusTone(order.estado))}`}>
+                                    {orderStatusLabel(order.estado)}
+                                  </span>
+                                </a>
+                              ))
+                            )}
+                          </div>
+                        </section>
+                        <section className="rounded-2xl border border-black/8 bg-white/92 px-4 py-4">
+                          <p className="eyebrow">Facturas del cliente</p>
+                          <div className="mt-3 space-y-2">
+                            {customerInvoices.length === 0 ? (
+                              <p className="text-sm text-[color:var(--muted)]">Sin facturas relacionadas.</p>
+                            ) : (
+                              customerInvoices.map((invoice) => (
+                                <a
+                                  key={invoice.id}
+                                  href={`/?section=facturas&facturaId=${encodeURIComponent(invoice.codigo)}`}
+                                  className="flex items-center justify-between gap-3 rounded-2xl border border-sky-100 bg-sky-50/45 px-3 py-2 text-sm transition hover:border-sky-200 hover:bg-sky-50"
+                                >
+                                  <span className="font-semibold text-sky-800">{invoice.codigo}</span>
+                                  <span className="text-slate-600">{formatDate(invoice.fecha)}</span>
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>
+                                    {invoice.estado_pago.toLowerCase()}
+                                  </span>
+                                  <span className="font-semibold text-slate-900">{formatCurrency(invoice.total)}</span>
+                                </a>
+                              ))
+                            )}
+                          </div>
+                        </section>
+                        <section className="rounded-2xl border border-black/8 bg-white/92 px-4 py-4">
+                          <p className="eyebrow">Productos comprados</p>
+                          <div className="mt-3 space-y-2">
+                            {purchasedProducts.length === 0 ? (
+                              <p className="text-sm text-[color:var(--muted)]">Sin productos comprados.</p>
+                            ) : (
+                              purchasedProducts.map(([productName, quantity]) => (
+                                <div
+                                  key={`${customer.id}-${productName}`}
+                                  className="flex items-center justify-between gap-3 rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-2 text-sm"
+                                >
+                                  <span className="font-medium text-slate-900">{productName}</span>
+                                  <span className="text-[color:var(--muted)]">{quantity} uds</span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </section>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+              </>
+            );
+          })}
       </tbody>
     </table>
   );
@@ -1640,8 +1751,10 @@ export function ManufacturingInlineTable({
 
 export function InvoicesInlineTable({
   invoices,
+  focusedInvoiceCode,
 }: {
   invoices: Invoice[];
+  focusedInvoiceCode?: string | null;
 }) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [paymentId, setPaymentId] = useState<string | null>(null);
@@ -1665,8 +1778,9 @@ export function InvoicesInlineTable({
         </tr>
       </thead>
       <tbody>
-        {invoices.map((invoice) => {
-          const expanded = detailId === invoice.id;
+          {invoices.map((invoice) => {
+            const focused = focusedInvoiceCode === invoice.codigo;
+            const expanded = detailId === invoice.id;
           const registeringPayment = paymentId === invoice.id;
           const { total, totalPaid, pendingAmount, paymentStatus, canRegisterPayment } =
             deriveInvoicePaymentView(invoice);
@@ -1681,7 +1795,10 @@ export function InvoicesInlineTable({
                 : null;
 
           return [
-              <tr key={`invoice-${invoice.id}`} className={rowHighlight(highlight)}>
+              <tr
+                key={`invoice-${invoice.id}`}
+                className={`${focused ? "bg-sky-50/80 ring-2 ring-inset ring-sky-300" : rowHighlight(highlight)}`.trim()}
+              >
                 <td>
                   <div className="table-action-group">
                     <button
