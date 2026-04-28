@@ -108,6 +108,7 @@ type Invoice = {
   codigo: string;
   pedido_id: string;
   cliente_id: string;
+  cliente_codigo: string;
   fecha: string;
   subtotal: number;
   descuento: number;
@@ -197,6 +198,7 @@ type OrderCard = {
   id: string;
   codigo: string;
   cliente_id: string;
+  cliente_codigo: string;
   cliente_nombre: string;
   fecha_pedido: string;
   estado: string;
@@ -499,7 +501,15 @@ function ActionButtons({
   );
 }
 
-export function CustomersInlineTable({ customers }: { customers: Customer[] }) {
+export function CustomersInlineTable({
+  customers,
+  focusedCustomerCode,
+  focusOriginLabel,
+}: {
+  customers: Customer[];
+  focusedCustomerCode?: string | null;
+  focusOriginLabel?: string | null;
+}) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   return (
@@ -508,14 +518,21 @@ export function CustomersInlineTable({ customers }: { customers: Customer[] }) {
         <tr><th>Acciones</th><th>ID</th><th>Nombre</th><th>Contacto</th><th>Alta</th></tr>
       </thead>
       <tbody>
-        {customers.map((customer) => {
-          const editing = editingId === customer.id;
-          const formId = `customer-form-${customer.id}`;
-          return (
-            <tr
-              key={customer.id}
-              className={`${!customer.activo ? `${rowHighlight("attention")} opacity-75` : ""}`.trim()}
-            >
+          {customers.map((customer) => {
+            const editing = editingId === customer.id;
+            const focused = focusedCustomerCode === customer.codigo;
+            const formId = `customer-form-${customer.id}`;
+            return (
+              <tr
+                key={customer.id}
+                className={`${
+                  focused
+                    ? "bg-sky-50/90 ring-2 ring-inset ring-sky-300"
+                    : !customer.activo
+                      ? `${rowHighlight("attention")} opacity-75`
+                      : ""
+                }`.trim()}
+              >
               <td>
                 <form id={formId} action={updateCustomerAction}>
                   <input type="hidden" name="id" value={customer.id} />
@@ -549,12 +566,17 @@ export function CustomersInlineTable({ customers }: { customers: Customer[] }) {
                   <InlineField label="Nombre">
                     <input form={formId} name="nombre" defaultValue={customer.nombre} className={tableInputClass} />
                   </InlineField>
-                ) : (
-                  <div>
-                    <div className="font-medium">{customer.nombre}</div>
-                    <div className="mt-2">
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  ) : (
+                    <div>
+                      <div className="font-medium">{customer.nombre}</div>
+                      {focused ? (
+                        <div className="mt-2 inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
+                          Cliente abierto desde {focusOriginLabel ?? "pedido/factura/pago"}
+                        </div>
+                      ) : null}
+                      <div className="mt-2">
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
                           badgeClasses(customer.activo ? "success" : "neutral")
                         }`}
                       >
@@ -598,11 +620,13 @@ export function OrdersInlineBoard({
   customers,
   products,
   focusedOrderCode,
+  focusedCustomerCode,
 }: {
   orders: OrderCard[];
   customers: CustomerOption[];
   products: ProductOption[];
   focusedOrderCode?: string | null;
+  focusedCustomerCode?: string | null;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -750,6 +774,12 @@ export function OrdersInlineBoard({
                         <div>
                           <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--muted)]">{order.codigo}</p>
                           <h4 className="mt-2 text-lg font-semibold">{order.cliente_nombre}</h4>
+                          <a
+                            href={`/?section=clientes&clienteId=${encodeURIComponent(order.cliente_codigo)}&origen=pedido`}
+                            className="mt-2 inline-flex items-center text-sm font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900"
+                          >
+                            Ver cliente {order.cliente_codigo}
+                          </a>
                           <p className="mt-2 text-sm text-[color:var(--muted)]">{formatDate(order.fecha_pedido)}</p>
                         </div>
                         <div className="flex flex-col items-end gap-2">
@@ -759,13 +789,18 @@ export function OrdersInlineBoard({
                           <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_pago === "PAGADA" ? "success" : "neutral")}`}>
                             pago: {order.estado_pago.toLowerCase()}
                           </span>
-                          {focused ? (
-                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("info")}`}>
-                              trazabilidad activa
-                            </span>
-                          ) : null}
+                            {focused ? (
+                              <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("info")}`}>
+                                trazabilidad activa
+                              </span>
+                            ) : null}
+                            {focusedCustomerCode === order.cliente_codigo ? (
+                              <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("info")}`}>
+                                cliente relacionado
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
-                      </div>
 
                       <div className="mt-3 grid gap-3 sm:grid-cols-5">
                         <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
@@ -1700,7 +1735,17 @@ export function InvoicesInlineTable({
                     {invoice.pedido_codigo}
                   </a>
                 </td>
-                <td>{invoice.cliente_nombre}</td>
+                <td>
+                  <div className="flex flex-col gap-1">
+                    <span>{invoice.cliente_nombre}</span>
+                    <a
+                      href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`}
+                      className="text-xs font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900"
+                    >
+                      Ver cliente {invoice.cliente_codigo}
+                    </a>
+                  </div>
+                </td>
                 <td>{formatCurrency(invoice.subtotal)}</td>
                 <td>{formatCurrency(invoice.descuento)}</td>
                 <td>{formatCurrency(taxableBase)}</td>
@@ -1780,6 +1825,22 @@ export function InvoicesInlineTable({
                             </a>
                           </div>
                         </div>
+                        <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[11px] uppercase tracking-[0.18em] text-sky-700">Cliente relacionado</p>
+                              <p className="mt-2 text-sm text-slate-700">
+                                Accede a la ficha del cliente para revisar contacto y datos administrativos.
+                              </p>
+                            </div>
+                            <a
+                              href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`}
+                              className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:-translate-y-0.5 hover:bg-sky-700"
+                            >
+                              Ver cliente {invoice.cliente_codigo}
+                            </a>
+                          </div>
+                        </div>
                         <div className="mt-4 space-y-3">
                           {invoice.pagos.length === 0 ? (
                             <div className="rounded-2xl border border-dashed border-black/10 bg-white/75 px-4 py-4 text-sm text-[color:var(--muted)]">
@@ -1801,6 +1862,15 @@ export function InvoicesInlineTable({
                                         className="font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900"
                                       >
                                         {invoice.pedido_codigo}
+                                      </a>
+                                    </p>
+                                    <p className="mt-1 text-xs text-slate-600">
+                                      Cliente relacionado:{" "}
+                                      <a
+                                        href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=pago`}
+                                        className="font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900"
+                                      >
+                                        {invoice.cliente_codigo}
                                       </a>
                                     </p>
                                   </div>

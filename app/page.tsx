@@ -322,6 +322,8 @@ export default async function Home({
     materialFilter?: string;
     productFilter?: string;
     customerFilter?: string;
+    clienteId?: string;
+    origen?: string;
     printerStatus?: string;
     printerActiveFilter?: string;
     movementInventory?: string;
@@ -361,6 +363,11 @@ export default async function Home({
   const movementFilter = resolved.movementInventory ?? "ALL";
   const invoiceFilter = resolved.invoiceStatus ?? "ALL";
   const focusedOrderCode = resolved.pedidoId?.trim() || null;
+  const focusedCustomerCode = resolved.clienteId?.trim() || null;
+  const customerFocusOrigin =
+    resolved.origen === "pedido" || resolved.origen === "factura" || resolved.origen === "pago"
+      ? resolved.origen
+      : null;
   const invoiceDateStart = toDateInputValue(resolved.fecha_inicio);
   const invoiceDateEnd = toDateInputValue(resolved.fecha_fin);
   const invoiceStartDate = buildDateRangeStart(invoiceDateStart);
@@ -392,12 +399,18 @@ export default async function Home({
       : productFilter === "INACTIVE"
         ? products.filter((product) => !product.activo)
         : products;
-  const filteredCustomers =
+  const filteredCustomersBase =
     customerFilter === "ACTIVE"
       ? customers.filter((customer) => customer.activo)
       : customerFilter === "INACTIVE"
         ? customers.filter((customer) => !customer.activo)
         : customers;
+  const filteredCustomers = focusedCustomerCode
+    ? [
+        ...filteredCustomersBase.filter((customer) => customer.codigo === focusedCustomerCode),
+        ...filteredCustomersBase.filter((customer) => customer.codigo !== focusedCustomerCode),
+      ]
+    : filteredCustomersBase;
   const filteredPrintersByState =
     printerFilter === "ALL" ? printers : printers.filter((printer) => printer.estado === printerFilter);
   const filteredPrinters =
@@ -1164,6 +1177,7 @@ export default async function Home({
                           nombre: product.nombre,
                         }))}
                         focusedOrderCode={focusedOrderCode}
+                        focusedCustomerCode={focusedCustomerCode}
                       />
                     )
                   )}
@@ -1845,16 +1859,25 @@ export default async function Home({
                     ))}
                   </div>
                 </div>
-                <FilterSummary
-                  totalItems={filteredCustomers.length}
-                  hasFilters={hasActiveCustomerFilters}
-                  filters={activeCustomerFilterSegments}
-                  itemLabel="clientes"
-                  allItemsText="Mostrando todos los clientes"
-                />
-                <div className="table-wrap table-scroll">
-                  <CustomersInlineTable customers={filteredCustomers} />
-                </div>
+                  <FilterSummary
+                    totalItems={filteredCustomers.length}
+                    hasFilters={hasActiveCustomerFilters}
+                    filters={activeCustomerFilterSegments}
+                    itemLabel="clientes"
+                    allItemsText="Mostrando todos los clientes"
+                  />
+                  {focusedCustomerCode ? (
+                    <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/85 px-4 py-3 text-sm text-sky-900">
+                      Mostrando la trazabilidad del cliente <span className="font-semibold">{focusedCustomerCode}</span> abierto desde {customerFocusOrigin ?? "pedido/factura/pago"}.
+                    </div>
+                  ) : null}
+                  <div className="table-wrap table-scroll">
+                    <CustomersInlineTable
+                      customers={filteredCustomers}
+                      focusedCustomerCode={focusedCustomerCode}
+                      focusOriginLabel={customerFocusOrigin}
+                    />
+                  </div>
               </div>
             </div>
           </Section>

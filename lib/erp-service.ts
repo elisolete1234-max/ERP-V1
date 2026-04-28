@@ -978,6 +978,7 @@ export async function getAppSnapshot() {
     id: string;
     codigo: string;
     cliente_id: string;
+    cliente_codigo: string;
     fecha_pedido: string;
     estado: string;
     estado_pago: string;
@@ -990,7 +991,7 @@ export async function getAppSnapshot() {
     observaciones: string | null;
     cliente_nombre: string;
   }>(
-    `SELECT o.*, c.nombre AS cliente_nombre
+    `SELECT o.*, c.codigo AS cliente_codigo, c.nombre AS cliente_nombre
      FROM orders o
      JOIN customers c ON c.id = o.cliente_id
      ORDER BY o.fecha_pedido DESC`,
@@ -1121,6 +1122,7 @@ export async function getAppSnapshot() {
     codigo: string;
     pedido_id: string;
     cliente_id: string;
+    cliente_codigo: string;
     fecha: string;
     subtotal: number;
     descuento: number;
@@ -1135,6 +1137,7 @@ export async function getAppSnapshot() {
     `SELECT
        i.*,
        o.codigo AS pedido_codigo,
+       c.codigo AS cliente_codigo,
        c.nombre AS cliente_nombre
      FROM invoices i
      JOIN orders o ON o.id = i.pedido_id
