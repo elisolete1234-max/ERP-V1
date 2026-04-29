@@ -266,6 +266,37 @@ function IntelligentAlertCard({
   );
 }
 
+function DashboardKpiCard({
+  label,
+  value,
+  detail,
+  href,
+  tone = "neutral",
+}: {
+  label: string;
+  value: ReactNode;
+  detail?: ReactNode;
+  href?: string;
+  tone?: "success" | "warn" | "danger" | "info" | "neutral";
+}) {
+  const cardClass = `erp-card px-4 py-4 ${tone === "danger" ? "border-rose-200" : tone === "warn" ? "border-amber-200" : tone === "info" ? "border-sky-200" : tone === "success" ? "border-emerald-200" : ""}`.trim();
+  const content = (
+    <>
+      <p className="text-sm text-[color:var(--muted)]">{label}</p>
+      <p className="mt-3 text-3xl font-semibold tracking-[-0.05em] text-slate-950">{value}</p>
+      {detail ? <p className="mt-2 text-sm text-[color:var(--muted)]">{detail}</p> : null}
+    </>
+  );
+
+  return href ? (
+    <Link href={href} className={`${cardClass} block transition hover:-translate-y-0.5 hover:shadow-[0_16px_34px_rgba(15,23,42,0.08)]`}>
+      {content}
+    </Link>
+  ) : (
+    <article className={cardClass}>{content}</article>
+  );
+}
+
 function Section({
   active,
   title,
@@ -576,6 +607,94 @@ export default async function Home({
   ]
     .filter((segment): segment is string => Boolean(segment))
     .join(" y ");
+  const totalInvoiced = invoices.reduce((sum, invoice) => sum + invoice.total, 0);
+  const totalCollected = invoices.reduce((sum, invoice) => sum + invoice.total_pagado, 0);
+  const totalOutstanding = invoices.reduce((sum, invoice) => sum + invoice.importe_pendiente, 0);
+  const paidInvoicesCount = invoices.filter((invoice) => invoice.estado_pago === "PAGADA").length;
+  const activeOrdersCount = orders.filter((order) => order.estado !== "FACTURADO").length;
+  const ordersInProductionCount = orders.filter((order) => order.estado === "EN_PRODUCCION").length;
+  const deliveredOrdersCount = orders.filter((order) => order.estado === "ENTREGADO").length;
+  const activeManufacturingCount = manufacturingOrders.filter((order) => order.estado === "INICIADA").length;
+  const availablePrintersCount = activePrinters.filter((printer) => printer.estado === "LIBRE").length;
+  const unavailablePrinters = activePrinters.filter((printer) => printer.estado !== "LIBRE");
+  const estimatedMaterialStockValue = activeMaterials.reduce(
+    (sum, material) => sum + (material.stock_actual_g / 1000) * material.precio_kg,
+    0,
+  );
+  const hasMaterialCostData = activeMaterials.some((material) => material.precio_kg > 0);
+  const productsById = new Map(products.map((product) => [product.id, product] as const));
+  const topProductsByUnits = Array.from(
+    orders
+      .filter((order) => order.estado !== "BORRADOR")
+      .flatMap((order) => order.lineas)
+      .reduce(
+        (map, line) => {
+          const current = map.get(line.producto_id) ?? { productId: line.producto_id, units: 0 };
+          current.units += line.cantidad;
+          map.set(line.producto_id, current);
+          return map;
+        },
+        new Map<string, { productId: string; units: number }>(),
+      )
+      .values(),
+  )
+    .map((item) => {
+      const product = productsById.get(item.productId);
+      return {
+        productId: item.productId,
+        codigo: product?.codigo ?? "No disponible",
+        nombre: product?.nombre ?? "Producto sin ficha",
+        units: item.units,
+      };
+    })
+    .sort((a, b) => b.units - a.units || a.codigo.localeCompare(b.codigo))
+    .slice(0, 5);
+  const topClientsByInvoiced = Array.from(
+    invoices
+      .reduce(
+        (map, invoice) => {
+          const current =
+            map.get(invoice.cliente_id) ??
+            { clienteId: invoice.cliente_id, codigo: invoice.cliente_codigo, nombre: invoice.cliente_nombre, total: 0 };
+          current.total += invoice.total;
+          map.set(invoice.cliente_id, current);
+          return map;
+        },
+        new Map<string, { clienteId: string; codigo: string; nombre: string; total: number }>(),
+      )
+      .values(),
+  )
+    .sort((a, b) => b.total - a.total || a.codigo.localeCompare(b.codigo))
+    .slice(0, 5);
+  const topClientsByOrders = Array.from(
+    orders
+      .reduce(
+        (map, order) => {
+          const current =
+            map.get(order.cliente_id) ??
+            { clienteId: order.cliente_id, codigo: order.cliente_codigo, nombre: order.cliente_nombre, orders: 0 };
+          current.orders += 1;
+          map.set(order.cliente_id, current);
+          return map;
+        },
+        new Map<string, { clienteId: string; codigo: string; nombre: string; orders: number }>(),
+      )
+      .values(),
+  )
+    .sort((a, b) => b.orders - a.orders || a.codigo.localeCompare(b.codigo))
+    .slice(0, 5);
+  const pendingInvoiceRecords = [...invoices]
+    .filter((invoice) => invoice.estado_pago !== "PAGADA")
+    .sort((a, b) => b.importe_pendiente - a.importe_pendiente || a.fecha.localeCompare(b.fecha))
+    .slice(0, 5);
+  const nonAvailablePrintersPreview = unavailablePrinters.slice(0, 5);
+  const lowStockMaterialsPreview = lowStockMaterials.slice(0, 5);
+  const dashboardActionLinks = [
+    { href: "/?section=facturas&invoiceStatus=ALL", label: "Ver cobros", count: pendingInvoices },
+    { href: "/?section=pedidos&orderStatus=INCIDENCIA_STOCK", label: "Pedidos con incidencia", count: blockedOrders.length },
+    { href: "/?section=fabricacion&manufacturingStatus=INICIADA", label: "Fabricacion activa", count: activeManufacturingCount },
+    { href: "/?section=impresoras&printerStatus=ALL&printerActiveFilter=ACTIVE", label: "Capacidad de impresoras", count: unavailablePrinters.length },
+  ];
   const smartAlerts = [
     ...(blockedOrders.length > 0
       ? [
@@ -828,6 +947,368 @@ export default async function Home({
             </div>
           </div>
           <Section active={section === "dashboard"} title="Resumen operativo" subtitle="Panel principal">
+            <div className="odoo-action-bar">
+              {dashboardActionLinks.map((item) => (
+                <FilterLink key={item.href} href={item.href} label={item.label} active={false} count={item.count} />
+              ))}
+            </div>
+
+            <div className="grid gap-5 xl:grid-cols-2">
+              <article className="odoo-record">
+                <div className="odoo-record-header">
+                  <div>
+                    <p className="eyebrow">Facturacion</p>
+                    <h3 className="mt-2 text-xl font-semibold text-slate-950">Dinero y cobro</h3>
+                  </div>
+                  <StatusPill label={`${invoices.length} facturas`} tone={pendingInvoices > 0 ? "warn" : "success"} />
+                </div>
+                <div className="odoo-record-grid">
+                  <DashboardKpiCard label="Total facturado" value={currency(totalInvoiced)} detail="Importe total emitido" href="/?section=facturas&invoiceStatus=ALL" tone="info" />
+                  <DashboardKpiCard label="Total cobrado" value={currency(totalCollected)} detail="Cobros registrados" href="/?section=facturas&invoiceStatus=PAGADA" tone="success" />
+                  <DashboardKpiCard label="Pendiente de cobro" value={currency(totalOutstanding)} detail="Saldo aun no liquidado" href="/?section=facturas&invoiceStatus=ALL" tone={totalOutstanding > 0 ? "warn" : "success"} />
+                  <DashboardKpiCard label="Facturas pagadas" value={paidInvoicesCount} detail="Total totalmente liquidadas" href="/?section=facturas&invoiceStatus=PAGADA" />
+                  <DashboardKpiCard label="Facturas parciales" value={partialInvoices.length} detail="Con cobro parcial" href="/?section=facturas&invoiceStatus=PARCIAL" tone={partialInvoices.length > 0 ? "warn" : "neutral"} />
+                  <DashboardKpiCard label="Facturas pendientes" value={pendingPaymentInvoices.length} detail="Sin cobro registrado" href="/?section=facturas&invoiceStatus=PENDIENTE" tone={pendingPaymentInvoices.length > 0 ? "danger" : "neutral"} />
+                </div>
+              </article>
+
+              <article className="odoo-record">
+                <div className="odoo-record-header">
+                  <div>
+                    <p className="eyebrow">Pedidos</p>
+                    <h3 className="mt-2 text-xl font-semibold text-slate-950">Estado comercial</h3>
+                  </div>
+                  <StatusPill label={`${orders.length} pedidos`} tone={activeOrdersCount > 0 ? "info" : "neutral"} />
+                </div>
+                <div className="odoo-record-grid">
+                  <DashboardKpiCard label="Pedidos totales" value={orders.length} detail="Historico completo" href="/?section=pedidos" />
+                  <DashboardKpiCard label="Pedidos activos" value={activeOrdersCount} detail="Aun no facturados" href="/?section=pedidos&orderStatus=ALL" tone={activeOrdersCount > 0 ? "info" : "neutral"} />
+                  <DashboardKpiCard label="En fabricacion" value={ordersInProductionCount} detail="Pedidos ya lanzados" href="/?section=pedidos&orderStatus=EN_PRODUCCION" tone={ordersInProductionCount > 0 ? "warn" : "neutral"} />
+                  <DashboardKpiCard label="Listos" value={readyToDeliver} detail="Preparados para entregar" href="/?section=pedidos&orderStatus=LISTO" tone={readyToDeliver > 0 ? "success" : "neutral"} />
+                  <DashboardKpiCard label="Entregados" value={deliveredOrdersCount} detail="Pendientes de factura o cierre" href="/?section=pedidos&orderStatus=ENTREGADO" />
+                  <DashboardKpiCard label="Con incidencia" value={blockedOrders.length} detail="Bloqueados por stock" href="/?section=pedidos&orderStatus=INCIDENCIA_STOCK" tone={blockedOrders.length > 0 ? "danger" : "neutral"} />
+                </div>
+              </article>
+
+              <article className="odoo-record">
+                <div className="odoo-record-header">
+                  <div>
+                    <p className="eyebrow">Produccion</p>
+                    <h3 className="mt-2 text-xl font-semibold text-slate-950">Capacidad y carga</h3>
+                  </div>
+                  <StatusPill label={`${activePrinters.length} impresoras activas`} tone={busyPrinters > 0 ? "info" : "neutral"} />
+                </div>
+                <div className="odoo-record-grid">
+                  <DashboardKpiCard label="Ordenes activas" value={activeManufacturingCount} detail="Fabricacion iniciada" href="/?section=fabricacion&manufacturingStatus=INICIADA" tone={activeManufacturingCount > 0 ? "info" : "neutral"} />
+                  <DashboardKpiCard label="Ordenes pendientes" value={manufacturingOrders.filter((order) => order.estado === "PENDIENTE").length} detail="Aun sin arrancar" href="/?section=fabricacion&manufacturingStatus=PENDIENTE" tone={manufacturingOrders.some((order) => order.estado === "PENDIENTE") ? "warn" : "neutral"} />
+                  <DashboardKpiCard label="Impresoras ocupadas" value={busyPrinters} detail="Ahora mismo imprimiendo" href="/?section=impresoras&printerStatus=IMPRIMIENDO&printerActiveFilter=ACTIVE" tone={busyPrinters > 0 ? "info" : "neutral"} />
+                  <DashboardKpiCard label="Impresoras disponibles" value={availablePrintersCount} detail="Libres y activas" href="/?section=impresoras&printerStatus=LIBRE&printerActiveFilter=ACTIVE" tone={availablePrintersCount > 0 ? "success" : "warn"} />
+                  <DashboardKpiCard label="Productos terminados" value={finishedInventory.length > 0 ? `${finishedUnits} uds` : "No disponible"} detail={finishedInventory.length > 0 ? "Stock disponible para venta" : "Sin inventario de producto terminado"} href="/?section=productos-terminados" />
+                  <DashboardKpiCard label="Valor stock terminado" value={finishedInventory.length > 0 ? currency(finishedStockValue) : "No disponible"} detail="Valorado a coste unitario" href="/?section=productos-terminados" />
+                </div>
+              </article>
+
+              <article className="odoo-record">
+                <div className="odoo-record-header">
+                  <div>
+                    <p className="eyebrow">Materiales</p>
+                    <h3 className="mt-2 text-xl font-semibold text-slate-950">Filamento y coste inmovilizado</h3>
+                  </div>
+                  <StatusPill label={`${activeMaterials.length} activos`} tone={lowStockMaterials.length > 0 ? "warn" : "success"} />
+                </div>
+                <div className="odoo-record-grid">
+                  <DashboardKpiCard label="Materiales activos" value={activeMaterials.length} detail="Disponibles en operativa diaria" href="/?section=materiales&materialFilter=ACTIVE" />
+                  <DashboardKpiCard label="Stock bajo" value={lowStockMaterials.length} detail="En minimo o por debajo" href="/?section=materiales&materialFilter=ACTIVE" tone={lowStockMaterials.length > 0 ? "danger" : "neutral"} />
+                  <DashboardKpiCard label="Valor estimado de stock" value={hasMaterialCostData ? currency(estimatedMaterialStockValue) : "No disponible"} detail="Segun coste por kilo existente" href="/?section=materiales&materialFilter=ACTIVE" />
+                  <DashboardKpiCard label="Reposiciones pendientes" value={lowStockMaterials.length} detail="Materiales a revisar hoy" href="/?section=stock#restock-material" tone={lowStockMaterials.length > 0 ? "warn" : "neutral"} />
+                </div>
+              </article>
+            </div>
+
+            <div className="grid gap-5 xl:grid-cols-3">
+              <article className="odoo-record">
+                <div className="odoo-record-header">
+                  <div>
+                    <p className="eyebrow">Top negocio</p>
+                    <h3 className="mt-2 text-lg font-semibold text-slate-950">Productos por unidades</h3>
+                  </div>
+                  <StatusPill label="Top 5" tone="info" />
+                </div>
+                <div className="table-wrap">
+                  <table className="odoo-list-table">
+                    <thead>
+                      <tr>
+                        <th>Producto</th>
+                        <th>Unidades</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topProductsByUnits.length === 0 ? (
+                        <tr>
+                          <td colSpan={2} className="text-sm text-[color:var(--muted)]">No disponible</td>
+                        </tr>
+                      ) : (
+                        topProductsByUnits.map((product) => (
+                          <tr key={product.productId}>
+                            <td>
+                              <Link href={`/?section=productos&productoId=${encodeURIComponent(product.codigo)}`} className="odoo-link">
+                                {product.codigo} · {product.nombre}
+                              </Link>
+                            </td>
+                            <td>{product.units} uds</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article className="odoo-record">
+                <div className="odoo-record-header">
+                  <div>
+                    <p className="eyebrow">Top negocio</p>
+                    <h3 className="mt-2 text-lg font-semibold text-slate-950">Clientes por importe facturado</h3>
+                  </div>
+                  <StatusPill label="Top 5" tone="info" />
+                </div>
+                <div className="table-wrap">
+                  <table className="odoo-list-table">
+                    <thead>
+                      <tr>
+                        <th>Cliente</th>
+                        <th>Facturado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topClientsByInvoiced.length === 0 ? (
+                        <tr>
+                          <td colSpan={2} className="text-sm text-[color:var(--muted)]">No disponible</td>
+                        </tr>
+                      ) : (
+                        topClientsByInvoiced.map((customer) => (
+                          <tr key={customer.clienteId}>
+                            <td>
+                              <Link href={`/?section=clientes&clienteId=${encodeURIComponent(customer.codigo)}`} className="odoo-link">
+                                {customer.codigo} · {customer.nombre}
+                              </Link>
+                            </td>
+                            <td>{currency(customer.total)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article className="odoo-record">
+                <div className="odoo-record-header">
+                  <div>
+                    <p className="eyebrow">Top negocio</p>
+                    <h3 className="mt-2 text-lg font-semibold text-slate-950">Clientes por numero de pedidos</h3>
+                  </div>
+                  <StatusPill label="Top 5" tone="info" />
+                </div>
+                <div className="table-wrap">
+                  <table className="odoo-list-table">
+                    <thead>
+                      <tr>
+                        <th>Cliente</th>
+                        <th>Pedidos</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topClientsByOrders.length === 0 ? (
+                        <tr>
+                          <td colSpan={2} className="text-sm text-[color:var(--muted)]">No disponible</td>
+                        </tr>
+                      ) : (
+                        topClientsByOrders.map((customer) => (
+                          <tr key={customer.clienteId}>
+                            <td>
+                              <Link href={`/?section=clientes&clienteId=${encodeURIComponent(customer.codigo)}`} className="odoo-link">
+                                {customer.codigo} · {customer.nombre}
+                              </Link>
+                            </td>
+                            <td>{customer.orders}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            </div>
+
+            <article className="odoo-record">
+              <div className="odoo-record-header">
+                <div>
+                  <p className="eyebrow">Alertas</p>
+                  <h3 className="mt-2 text-xl font-semibold text-slate-950">Alertas operativas</h3>
+                </div>
+                <StatusPill
+                  label={smartAlerts.length === 0 ? "Todo en orden" : `${smartAlerts.length} activas`}
+                  tone={smartAlerts.some((alert) => alert.tone === "critical") ? "danger" : smartAlerts.length > 0 ? "warn" : "success"}
+                />
+              </div>
+              <div className="mt-5 grid gap-5 xl:grid-cols-2">
+                <div className="erp-card p-5">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h4 className="text-base font-semibold text-slate-950">Facturas pendientes de cobro</h4>
+                    <span className={`erp-badge ${badgeClass(pendingInvoiceRecords.length > 0 ? "warn" : "success")}`}>{pendingInvoiceRecords.length}</span>
+                  </div>
+                  <div className="table-wrap">
+                    <table className="odoo-list-table">
+                      <thead>
+                        <tr>
+                          <th>Factura</th>
+                          <th>Estado</th>
+                          <th>Pendiente</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pendingInvoiceRecords.length === 0 ? (
+                          <tr>
+                            <td colSpan={3} className="text-sm text-[color:var(--muted)]">Sin alertas</td>
+                          </tr>
+                        ) : (
+                          pendingInvoiceRecords.map((invoice) => (
+                            <tr key={invoice.id}>
+                              <td>
+                                <Link href={`/?section=facturas&facturaId=${encodeURIComponent(invoice.codigo)}`} className="odoo-link">
+                                  {invoice.codigo}
+                                </Link>
+                              </td>
+                              <td><span className={`erp-badge ${badgeClass(invoice.estado_pago === "PENDIENTE" ? "danger" : "warn")}`}>{invoice.estado_pago.toLowerCase()}</span></td>
+                              <td>{currency(invoice.importe_pendiente)}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="erp-card p-5">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h4 className="text-base font-semibold text-slate-950">Pedidos con incidencia</h4>
+                    <span className={`erp-badge ${badgeClass(blockedOrders.length > 0 ? "danger" : "success")}`}>{blockedOrders.length}</span>
+                  </div>
+                  <div className="table-wrap">
+                    <table className="odoo-list-table">
+                      <thead>
+                        <tr>
+                          <th>Pedido</th>
+                          <th>Cliente</th>
+                          <th>Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {blockedOrders.length === 0 ? (
+                          <tr>
+                            <td colSpan={3} className="text-sm text-[color:var(--muted)]">Sin alertas</td>
+                          </tr>
+                        ) : (
+                          blockedOrders.slice(0, 5).map((order) => (
+                            <tr key={order.id}>
+                              <td>
+                                <Link href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.codigo)}`} className="odoo-link">
+                                  {order.codigo}
+                                </Link>
+                              </td>
+                              <td>
+                                <Link href={`/?section=clientes&clienteId=${encodeURIComponent(order.cliente_codigo)}`} className="odoo-link">
+                                  {order.cliente_codigo} · {order.cliente_nombre}
+                                </Link>
+                              </td>
+                              <td><span className={`erp-badge ${badgeClass("danger")}`}>incidencia</span></td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="erp-card p-5">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h4 className="text-base font-semibold text-slate-950">Materiales con stock bajo</h4>
+                    <span className={`erp-badge ${badgeClass(lowStockMaterialsPreview.length > 0 ? "warn" : "success")}`}>{lowStockMaterialsPreview.length}</span>
+                  </div>
+                  <div className="table-wrap">
+                    <table className="odoo-list-table">
+                      <thead>
+                        <tr>
+                          <th>Material</th>
+                          <th>Stock</th>
+                          <th>Minimo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lowStockMaterialsPreview.length === 0 ? (
+                          <tr>
+                            <td colSpan={3} className="text-sm text-[color:var(--muted)]">Sin alertas</td>
+                          </tr>
+                        ) : (
+                          lowStockMaterialsPreview.map((material) => (
+                            <tr key={material.id}>
+                              <td>
+                                <Link href="/?section=materiales&materialFilter=ACTIVE" className="odoo-link">
+                                  {material.codigo} · {material.nombre}
+                                </Link>
+                              </td>
+                              <td>{material.stock_actual_g} g</td>
+                              <td>{material.stock_minimo_g} g</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="erp-card p-5">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h4 className="text-base font-semibold text-slate-950">Impresoras no disponibles</h4>
+                    <span className={`erp-badge ${badgeClass(nonAvailablePrintersPreview.length > 0 ? "info" : "success")}`}>{nonAvailablePrintersPreview.length}</span>
+                  </div>
+                  <div className="table-wrap">
+                    <table className="odoo-list-table">
+                      <thead>
+                        <tr>
+                          <th>Impresora</th>
+                          <th>Estado</th>
+                          <th>Ubicacion</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {nonAvailablePrintersPreview.length === 0 ? (
+                          <tr>
+                            <td colSpan={3} className="text-sm text-[color:var(--muted)]">Sin alertas</td>
+                          </tr>
+                        ) : (
+                          nonAvailablePrintersPreview.map((printer) => (
+                            <tr key={printer.id}>
+                              <td>
+                                <Link href={`/?section=impresoras&impresoraId=${encodeURIComponent(printer.codigo)}`} className="odoo-link">
+                                  {printer.codigo} · {printer.nombre}
+                                </Link>
+                              </td>
+                              <td><span className={`erp-badge ${badgeClass(printer.estado === "MANTENIMIENTO" ? "warn" : "info")}`}>{printer.estado.toLowerCase()}</span></td>
+                              <td>{printer.ubicacion || "-"}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </Section>
+          {false ? (
+          <Section active={section === "dashboard"} title="Resumen operativo" subtitle="Panel principal">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {[
                 { label: "Pedidos abiertos", value: openOrders, detail: "por cerrar" },
@@ -941,6 +1422,7 @@ export default async function Home({
             </div>
 
           </Section>
+          ) : null}
 
           <Section active={section === "pedidos"} title="Pedidos" subtitle="Ventas y avance">
             <div className={`grid gap-4 ${focusedOrderCode ? "xl:grid-cols-1" : "xl:grid-cols-[0.95fr_1.05fr]"}`}>
