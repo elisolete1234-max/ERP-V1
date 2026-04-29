@@ -497,9 +497,9 @@ export default async function Home({
         focusedCustomerOrders
           .flatMap((order) => order.lineas)
           .reduce((accumulator, line) => {
-            const current = accumulator.get(line.codigo);
-            accumulator.set(line.codigo, {
-              codigo: line.codigo,
+            const current = accumulator.get(line.producto_codigo);
+            accumulator.set(line.producto_codigo, {
+              codigo: line.producto_codigo,
               nombre: line.producto_nombre,
               cantidad: (current?.cantidad ?? 0) + line.cantidad,
             });
@@ -2860,7 +2860,10 @@ export default async function Home({
                                     focusedCustomerOrders.map((order) => (
                                       <tr key={order.id}>
                                         <td>
-                                          <Link href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.codigo)}`} className="odoo-link">
+                                          <Link
+                                            href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.codigo)}&origen=cliente`}
+                                            className="odoo-link"
+                                          >
                                             {order.codigo}
                                           </Link>
                                         </td>
@@ -2965,7 +2968,7 @@ export default async function Home({
                         estado: order.estado,
                         lineas: order.lineas.map((line) => ({
                           id: line.id,
-                          producto_codigo: line.codigo,
+                          producto_codigo: line.producto_codigo,
                           producto_nombre: line.producto_nombre,
                           cantidad: line.cantidad,
                         })),

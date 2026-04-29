@@ -1005,6 +1005,7 @@ export async function getAppSnapshot() {
       codigo: string;
       pedido_id: string;
       producto_id: string;
+      producto_codigo: string;
       cantidad: number;
       cantidad_desde_stock: number;
       cantidad_a_fabricar: number;
@@ -1025,6 +1026,7 @@ export async function getAppSnapshot() {
     }>(
       `SELECT
          l.*,
+         p.codigo AS producto_codigo,
          p.nombre AS producto_nombre,
          p.tiempo_impresion_horas,
          m.nombre AS material_nombre,
