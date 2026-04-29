@@ -130,6 +130,11 @@ a {
   box-shadow: var(--shadow-soft);
 }
 
+.section-header--compact {
+  padding-top: 0.8rem !important;
+  padding-bottom: 0.8rem !important;
+}
+
 .create-disclosure {
   overflow: hidden;
 }
@@ -934,28 +939,35 @@ summary::-webkit-details-marker {
 
 .erp-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: #fff;
-  padding: 0.65rem 0.9rem;
+  min-height: 4.3rem;
+  padding: 0.6rem 0.9rem;
   box-shadow: var(--shadow-soft);
 }
 
-.erp-header-title {
-  font-size: clamp(1.15rem, 1.55vw, 1.45rem);
+.erp-header-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.erp-header-name {
+  font-size: 1rem;
   font-weight: 700;
   letter-spacing: -0.03em;
   color: var(--foreground);
 }
 
-.erp-header-subtitle {
-  margin-top: 0.15rem;
-  max-width: 58rem;
-  font-size: 0.76rem;
-  line-height: 1.35;
+.erp-header-divider,
+.erp-header-role {
+  font-size: 0.78rem;
+  font-weight: 600;
   color: var(--muted);
 }
 
@@ -964,6 +976,55 @@ summary::-webkit-details-marker {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
+}
+
+.dashboard-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.dashboard-mini-kpi {
+  display: grid;
+  gap: 0.22rem;
+  min-height: 4.3rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.dashboard-mini-kpi:hover {
+  transform: translateY(-1px);
+  border-color: var(--line-strong);
+  background: var(--surface-muted);
+}
+
+.dashboard-mini-kpi__label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dashboard-mini-kpi__value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--foreground);
+}
+
+.dashboard-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
 }
 
 .erp-card {
@@ -1259,15 +1320,11 @@ summary::-webkit-details-marker {
   }
 
   .erp-header {
-    padding: 0.95rem 1rem;
+    padding: 0.75rem 0.9rem;
   }
 
-  .erp-header-title {
-    font-size: clamp(1.4rem, 5vw, 1.75rem);
-  }
-
-  .erp-header-subtitle {
-    font-size: 0.86rem;
+  .dashboard-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .erp-card,
@@ -1315,6 +1372,15 @@ summary::-webkit-details-marker {
 
   .erp-header {
     flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .erp-header-brand {
+    flex-wrap: wrap;
+  }
+
+  .dashboard-strip {
+    grid-template-columns: 1fr;
   }
 
   .odoo-record-grid,

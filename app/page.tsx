@@ -301,17 +301,19 @@ function Section({
   title,
   subtitle,
   children,
+  compact = false,
 }: {
   active: boolean;
   title: string;
   subtitle: string;
   children: ReactNode;
+  compact?: boolean;
 }) {
   return (
     <section className={active ? "space-y-5" : "hidden"}>
-      <div className="section-header px-6 py-5">
-        <p className="eyebrow">{subtitle}</p>
-        <h2 className="mt-3 text-[clamp(1.55rem,2vw,1.95rem)] font-semibold tracking-[-0.04em] text-slate-900">
+      <div className={`section-header px-6 py-5 ${compact ? "section-header--compact" : ""}`.trim()}>
+        {subtitle ? <p className="eyebrow">{subtitle}</p> : null}
+        <h2 className={`${subtitle ? "mt-3" : ""} text-[clamp(1.55rem,2vw,1.95rem)] font-semibold tracking-[-0.04em] text-slate-900`.trim()}>
           {title}
         </h2>
       </div>
@@ -904,6 +906,12 @@ export default async function Home({
     { href: "/?section=pedidos&orderStatus=ENTREGADO", label: "Listos para facturar", count: readyToInvoice },
     { href: "/?section=stock#restock-material", label: "Reponer material", count: lowStockMaterials.length },
   ];
+  const dashboardHeroMetrics = [
+    { href: "/?section=productos-terminados", label: "Valor stock", value: currency(finishedStockValue) },
+    { href: "/?section=impresoras&printerActiveFilter=ACTIVE", label: "Impresoras", value: `${busyPrinters}/${printers.length}` },
+    { href: "/?section=pedidos&orderStatus=ALL", label: "Pedidos abiertos", value: activeOrdersCount },
+    { href: "/?section=facturas&invoiceStatus=ALL", label: "Facturas pendientes", value: pendingInvoices },
+  ];
 
   return (
     <main className="erp-shell">
@@ -954,14 +962,12 @@ export default async function Home({
         </aside>
 
         <div className="erp-main">
-            <div className="erp-header">
-              <div>
-                <p className="eyebrow">Eli Print 3D</p>
-                <h2 className="erp-header-title">ERP operativo</h2>
-                <p className="erp-header-subtitle">
-                  Pedidos, stock, fabricacion y cobro.
-                </p>
-              </div>
+          <div className="erp-header">
+            <div className="erp-header-brand">
+              <span className="erp-header-name">Eli Print 3D</span>
+              <span className="erp-header-divider">|</span>
+              <span className="erp-header-role">ERP operativo</span>
+            </div>
             <div className="erp-toolbar">
               <Link href="/?section=pedidos#create-order" className="erp-button-primary">
                 Nuevo pedido
@@ -972,51 +978,13 @@ export default async function Home({
             </div>
           </div>
 
-          <div className="panel overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-5 px-6 py-5">
-              <div>
-                <p className="eyebrow">Vista general</p>
-                <h2 className="mt-3 text-[clamp(1.7rem,2.7vw,2.15rem)] font-semibold tracking-[-0.05em] text-slate-950">
-                  Centro de control operativo
-                </h2>
-                <p className="mt-3 max-w-3xl text-sm leading-6 text-[color:var(--muted)]">
-                  Resumen diario, accesos rapidos y estado transversal de pedidos, fabricacion, stock y facturacion en una sola pantalla administrativa.
-                </p>
-              </div>
-              <div className="grid min-w-[260px] flex-1 gap-3 sm:grid-cols-2 xl:max-w-md">
-                <div className="erp-card px-4 py-4">
-                  <p className="eyebrow">Valor stock</p>
-                  <p className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{currency(finishedStockValue)}</p>
-                  <p className="mt-1 text-sm text-[color:var(--muted)]">Producto terminado valorado a coste</p>
-                </div>
-                <div className="erp-card px-4 py-4">
-                  <p className="eyebrow">Impresoras</p>
-                  <p className="mt-2 text-2xl font-semibold tracking-[-0.04em]">
-                    {busyPrinters}/{printers.length}
-                  </p>
-                  <p className="mt-1 text-sm text-[color:var(--muted)]">ocupadas ahora mismo</p>
-                </div>
-              </div>
-            </div>
-            <div className="soft-divider" />
-            <div className="grid gap-3 px-6 py-5 sm:grid-cols-2 xl:grid-cols-4">
-              <div>
-                <p className="eyebrow">Pedidos</p>
-                <p className="mt-2 text-sm text-[color:var(--muted)]">Borrradores, listos y entregados siempre a mano.</p>
-              </div>
-              <div>
-                <p className="eyebrow">Fabricacion</p>
-                <p className="mt-2 text-sm text-[color:var(--muted)]">Ordenes con estados claros y accion inmediata.</p>
-              </div>
-              <div>
-                <p className="eyebrow">Inventario</p>
-                <p className="mt-2 text-sm text-[color:var(--muted)]">Alertas visibles antes de que el stock bloquee pedidos.</p>
-              </div>
-              <div>
-                <p className="eyebrow">Facturacion</p>
-                <p className="mt-2 text-sm text-[color:var(--muted)]">Cobro y trazabilidad alineados con la operativa.</p>
-              </div>
-            </div>
+          <div className="dashboard-strip">
+            {dashboardHeroMetrics.map((metric) => (
+              <Link key={metric.label} href={metric.href} className="dashboard-mini-kpi">
+                <span className="dashboard-mini-kpi__label">{metric.label}</span>
+                <span className="dashboard-mini-kpi__value">{metric.value}</span>
+              </Link>
+            ))}
           </div>
           {resolved.message ? (
             <div
@@ -1032,21 +1000,12 @@ export default async function Home({
             </div>
           ) : null}
 
-          <div className="panel p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="eyebrow">Acceso rapido</p>
-                <h2 className="mt-3 text-2xl font-semibold tracking-[-0.05em] text-slate-950">Las acciones mas frecuentes, a un clic</h2>
-              </div>
-              <p className="max-w-xl text-sm text-[color:var(--muted)]">
-                Priorizamos confirmar pedidos, arrancar fabricacion, entregar y facturar sin pasos extra.
-              </p>
-            </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {shortcuts.map((shortcut) => (
-              <FilterLink
-                key={shortcut.href}
-                href={shortcut.href}
+          <div className="panel px-4 py-3">
+            <div className="dashboard-shortcuts">
+              {shortcuts.map((shortcut) => (
+                <FilterLink
+                  key={shortcut.href}
+                  href={shortcut.href}
                   label={shortcut.label}
                   active={false}
                   count={shortcut.count}
@@ -1054,7 +1013,7 @@ export default async function Home({
               ))}
             </div>
           </div>
-          <Section active={section === "dashboard"} title="Resumen operativo" subtitle="Panel principal">
+          <Section active={section === "dashboard"} title="Resumen" subtitle="" compact>
             <div className="odoo-action-bar">
               {dashboardActionLinks.map((item) => (
                 <FilterLink key={item.href} href={item.href} label={item.label} active={false} count={item.count} />
