@@ -906,12 +906,22 @@ export default async function Home({
     { href: "/?section=pedidos&orderStatus=ENTREGADO", label: "Listos para facturar", count: readyToInvoice },
     { href: "/?section=stock#restock-material", label: "Reponer material", count: lowStockMaterials.length },
   ];
+  const dashboardShortcuts = shortcuts.filter((shortcut) => shortcut.label !== "Nuevo pedido");
   const dashboardHeroMetrics = [
     { href: "/?section=productos-terminados", label: "Valor stock", value: currency(finishedStockValue) },
     { href: "/?section=impresoras&printerActiveFilter=ACTIVE", label: "Impresoras", value: `${busyPrinters}/${printers.length}` },
     { href: "/?section=pedidos&orderStatus=ALL", label: "Pedidos abiertos", value: activeOrdersCount },
     { href: "/?section=facturas&invoiceStatus=ALL", label: "Facturas pendientes", value: pendingInvoices },
   ];
+  const headerActions =
+    section === "dashboard"
+      ? [
+          { href: "/?section=pedidos#create-order", label: "Nuevo pedido", variant: "primary" as const },
+          { href: "/?section=facturas", label: "Ver facturas", variant: "secondary" as const },
+        ]
+      : section === "facturas"
+        ? [{ href: "/?section=facturas&invoiceStatus=PENDIENTE", label: "Pendientes", variant: "secondary" as const }]
+        : [];
 
   return (
     <main className="erp-shell">
@@ -969,23 +979,28 @@ export default async function Home({
               <span className="erp-header-role">ERP operativo</span>
             </div>
             <div className="erp-toolbar">
-              <Link href="/?section=pedidos#create-order" className="erp-button-primary">
-                Nuevo pedido
-              </Link>
-              <Link href="/?section=facturas" className="erp-button-secondary">
-                Ver facturas
-              </Link>
+              {headerActions.map((action) => (
+                <Link
+                  key={`${action.href}-${action.label}`}
+                  href={action.href}
+                  className={action.variant === "primary" ? "erp-button-primary" : "erp-button-secondary"}
+                >
+                  {action.label}
+                </Link>
+              ))}
             </div>
           </div>
 
-          <div className="dashboard-strip">
-            {dashboardHeroMetrics.map((metric) => (
-              <Link key={metric.label} href={metric.href} className="dashboard-mini-kpi">
-                <span className="dashboard-mini-kpi__label">{metric.label}</span>
-                <span className="dashboard-mini-kpi__value">{metric.value}</span>
-              </Link>
-            ))}
-          </div>
+          {section === "dashboard" ? (
+            <div className="dashboard-strip">
+              {dashboardHeroMetrics.map((metric) => (
+                <Link key={metric.label} href={metric.href} className="dashboard-mini-kpi">
+                  <span className="dashboard-mini-kpi__label">{metric.label}</span>
+                  <span className="dashboard-mini-kpi__value">{metric.value}</span>
+                </Link>
+              ))}
+            </div>
+          ) : null}
           {resolved.message ? (
             <div
               role="status"
@@ -1000,19 +1015,21 @@ export default async function Home({
             </div>
           ) : null}
 
-          <div className="panel px-4 py-3">
-            <div className="dashboard-shortcuts">
-              {shortcuts.map((shortcut) => (
-                <FilterLink
-                  key={shortcut.href}
-                  href={shortcut.href}
-                  label={shortcut.label}
-                  active={false}
-                  count={shortcut.count}
-                />
-              ))}
+          {section === "dashboard" ? (
+            <div className="panel px-4 py-3">
+              <div className="dashboard-shortcuts">
+                {dashboardShortcuts.map((shortcut) => (
+                  <FilterLink
+                    key={shortcut.href}
+                    href={shortcut.href}
+                    label={shortcut.label}
+                    active={false}
+                    count={shortcut.count}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
+          ) : null}
           <Section active={section === "dashboard"} title="Resumen" subtitle="" compact>
             <div className="odoo-action-bar">
               {dashboardActionLinks.map((item) => (
