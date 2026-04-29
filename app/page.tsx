@@ -25,7 +25,7 @@ import {
 } from "./components/editable-tables";
 import { SubmitButton } from "./components/form-ui";
 import { FilterSummary } from "./components/filter-summary";
-import { getAppSnapshot } from "@/lib/erp-service";
+import { getAppSnapshot, matchesOrderFocusCode, prioritizeOrdersByFocus } from "@/lib/erp-service";
 
 const sectionKeys = [
   "dashboard",
@@ -432,6 +432,10 @@ export default async function Home({
     resolved.origen === "producto" || resolved.origen === "pedido" || resolved.origen === "fabricacion"
       ? resolved.origen
       : null;
+  const orderFocusOrigin =
+    resolved.origen === "cliente" || resolved.origen === "factura" || resolved.origen === "pago"
+      ? resolved.origen
+      : null;
   const invoiceDateStart = toDateInputValue(resolved.fecha_inicio);
   const invoiceDateEnd = toDateInputValue(resolved.fecha_fin);
   const invoiceStartDate = buildDateRangeStart(invoiceDateStart);
@@ -441,12 +445,10 @@ export default async function Home({
   const hasActiveInvoiceFilters = hasInvoiceStatusFilter || hasInvoiceDateFilter;
 
   const filteredOrdersBase = orderFilter === "ALL" ? orders : orders.filter((order) => order.estado === orderFilter);
-  const filteredOrders = focusedOrderCode
-    ? [
-        ...filteredOrdersBase.filter((order) => order.codigo === focusedOrderCode),
-        ...filteredOrdersBase.filter((order) => order.codigo !== focusedOrderCode),
-      ]
-    : filteredOrdersBase;
+  const filteredOrders = prioritizeOrdersByFocus(filteredOrdersBase, focusedOrderCode);
+  const focusedOrder = focusedOrderCode
+    ? filteredOrders.find((order) => matchesOrderFocusCode(order, focusedOrderCode)) ?? null
+    : null;
   const filteredManufacturing =
     manufacturingFilter === "ALL"
       ? manufacturingOrders
@@ -1629,7 +1631,87 @@ export default async function Home({
                   />
                   {focusedOrderCode ? (
                     <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/85 px-4 py-3 text-sm text-sky-900">
-                      Mostrando la trazabilidad del pedido <span className="font-semibold">{focusedOrderCode}</span> abierto desde facturas o pagos.
+                      Mostrando la trazabilidad del pedido <span className="font-semibold">{focusedOrder?.codigo ?? focusedOrderCode}</span> abierto desde {orderFocusOrigin ?? "facturas o pagos"}.
+                    </div>
+                  ) : null}
+                  {focusedOrder ? (
+                    <div className="mt-4 odoo-page">
+                      <article className="odoo-record ring-2 ring-sky-200">
+                        <div className="odoo-record-header">
+                          <div>
+                            <p className="eyebrow">Pedido</p>
+                            <h4 className="mt-2 text-[1.7rem] font-semibold tracking-[-0.04em] text-slate-950">
+                              {focusedOrder.codigo}
+                            </h4>
+                            <p className="mt-2 text-sm text-[color:var(--muted-strong)]">
+                              {focusedOrder.cliente_nombre} · {dateLabel(focusedOrder.fecha_pedido)}
+                            </p>
+                            <div className="mt-3 inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
+                              Pedido abierto desde {orderFocusOrigin ?? "factura/pago"}
+                            </div>
+                          </div>
+                          <StatusPill label={orderStatusLabels[focusedOrder.estado]} tone={orderStatusTone(focusedOrder.estado)} />
+                        </div>
+                        <div className="odoo-record-grid">
+                          <div className="odoo-field">
+                            <span className="odoo-field-label">Cliente</span>
+                            <span className="odoo-field-value">
+                              <Link
+                                href={`/?section=clientes&clienteId=${encodeURIComponent(focusedOrder.cliente_codigo)}&origen=pedido`}
+                                className="odoo-link"
+                              >
+                                {focusedOrder.cliente_codigo} · {focusedOrder.cliente_nombre}
+                              </Link>
+                            </span>
+                          </div>
+                          <div className="odoo-field">
+                            <span className="odoo-field-label">Estado</span>
+                            <span className="odoo-field-value">{orderStatusLabels[focusedOrder.estado]}</span>
+                          </div>
+                          <div className="odoo-field">
+                            <span className="odoo-field-label">Pago</span>
+                            <span className="odoo-field-value">{focusedOrder.estado_pago.toLowerCase()}</span>
+                          </div>
+                          <div className="odoo-field">
+                            <span className="odoo-field-label">Total</span>
+                            <span className="odoo-field-value">{currency(focusedOrder.total)}</span>
+                          </div>
+                          <div className="odoo-field">
+                            <span className="odoo-field-label">Coste</span>
+                            <span className="odoo-field-value">{currency(focusedOrder.coste_total_pedido)}</span>
+                          </div>
+                          <div className="odoo-field">
+                            <span className="odoo-field-label">Beneficio</span>
+                            <span className="odoo-field-value">{currency(focusedOrder.beneficio_total)}</span>
+                          </div>
+                        </div>
+                        <div className="odoo-record-body">
+                          <div className="table-wrap">
+                            <table className="odoo-list-table">
+                              <thead>
+                                <tr>
+                                  <th>Producto</th>
+                                  <th>Cantidad</th>
+                                  <th>Stock</th>
+                                  <th>Fabricacion</th>
+                                  <th>Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {focusedOrder.lineas.map((line) => (
+                                  <tr key={line.id}>
+                                    <td>{line.producto_nombre}</td>
+                                    <td>{line.cantidad} uds</td>
+                                    <td>{line.cantidad_desde_stock} uds</td>
+                                    <td>{line.cantidad_a_fabricar} uds</td>
+                                    <td>{currency(line.precio_total_linea)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </article>
                     </div>
                   ) : null}
                   <div className="list-scroll mt-5">
@@ -1823,13 +1905,15 @@ export default async function Home({
                             {filteredOrders.map((order) => (
                               <tr
                                 key={order.id}
-                                className={
-                                  order.estado === "INCIDENCIA_STOCK"
-                                    ? "row-danger"
-                                    : order.estado === "LISTO" || order.estado === "ENTREGADO"
-                                      ? "row-attention"
-                                      : ""
-                                }
+                                className={`${
+                                  matchesOrderFocusCode(order, focusedOrderCode)
+                                    ? "bg-sky-50/85 ring-1 ring-inset ring-sky-200"
+                                    : order.estado === "INCIDENCIA_STOCK"
+                                      ? "row-danger"
+                                      : order.estado === "LISTO" || order.estado === "ENTREGADO"
+                                        ? "row-attention"
+                                        : ""
+                                }`}
                               >
                                 <td>
                                   <div className="table-action-group">

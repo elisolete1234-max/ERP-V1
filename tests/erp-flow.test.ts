@@ -18,6 +18,8 @@ import {
   getInvoicePdfData,
   getInvoicePaymentsExportRows,
   getInvoicesExportRows,
+  matchesOrderFocusCode,
+  prioritizeOrdersByFocus,
   resetDatabase,
   restockFinishedProduct,
   setCustomerActiveState,
@@ -128,6 +130,21 @@ test("helpers CSV formatean importes, fechas y nombres de archivo de forma estab
   assert.equal(formatCsvMoney(1234.5), "1234,50");
   assert.equal(formatCsvDateTime("2026-04-17T08:05:00"), "2026-04-17 08:05");
   assert.equal(buildCsvFilename("facturas", new Date("2026-04-17T08:05:00")), "facturas-20260417-0805.csv");
+});
+
+test("pedidoId prioriza el pedido correcto usando codigo visible y formatos compatibles", () => {
+  const fixture = [
+    { id: "uuid-1", codigo: "PED-001", estado: "BORRADOR" },
+    { id: "uuid-2", codigo: "PED-007", pedido_codigo: "PED-007", estado: "CONFIRMADO" },
+    { id: "PED-099", codigo: "TMP-099", estado: "LISTO" },
+  ];
+
+  assert.equal(matchesOrderFocusCode(fixture[1], "PED-007"), true);
+  assert.equal(matchesOrderFocusCode(fixture[2], "PED-099"), true);
+  assert.deepEqual(
+    prioritizeOrdersByFocus(fixture, "PED-007").map((order) => order.codigo),
+    ["PED-007", "PED-001", "TMP-099"],
+  );
 });
 
 test("usa stock terminado completo sin fabricar", async () => {

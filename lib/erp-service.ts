@@ -15,6 +15,34 @@ type InvoicePaymentStatus = "PENDIENTE" | "PARCIAL" | "PAGADA";
 
 export const DEFAULT_VAT_RATE = 21;
 
+type OrderFocusCandidate = {
+  id: string;
+  codigo?: string | null;
+  pedido_codigo?: string | null;
+};
+
+export function matchesOrderFocusCode(order: OrderFocusCandidate, focusedOrderCode?: string | null) {
+  const normalizedFocus = focusedOrderCode?.trim();
+  if (!normalizedFocus) {
+    return false;
+  }
+
+  return [order.codigo, order.pedido_codigo, order.id].some((value) => value?.trim() === normalizedFocus);
+}
+
+export function prioritizeOrdersByFocus<T extends OrderFocusCandidate>(orders: T[], focusedOrderCode?: string | null) {
+  if (!focusedOrderCode?.trim()) {
+    return orders;
+  }
+
+  const focused = orders.find((order) => matchesOrderFocusCode(order, focusedOrderCode));
+  if (!focused) {
+    return orders;
+  }
+
+  return [focused, ...orders.filter((order) => order !== focused)];
+}
+
 function roundMoney(value: number) {
   return Number(value.toFixed(2));
 }
