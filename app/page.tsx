@@ -1947,6 +1947,8 @@ export default async function Home({
           </Section>
 
           <Section active={section === "fabricacion"} title="Ordenes de fabricacion" subtitle="Produccion">
+            <div className="manufacturing-module space-y-6">
+            <div className="manufacturing-kpi-block">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {[
                 { label: "Pendientes", value: manufacturingOrders.filter((order) => order.estado === "PENDIENTE").length },
@@ -1954,11 +1956,12 @@ export default async function Home({
                 { label: "Bloqueadas", value: manufacturingOrders.filter((order) => order.estado === "BLOQUEADA_POR_STOCK").length },
                 { label: "Completadas", value: manufacturingOrders.filter((order) => order.estado === "COMPLETADA").length },
               ].map((metric) => (
-                <article key={metric.label} className="metric-card p-5">
-                  <p className="text-sm text-[color:var(--muted)]">{metric.label}</p>
-                  <p className="mt-4 text-3xl font-semibold tracking-[-0.05em]">{metric.value}</p>
+                <article key={metric.label} className="metric-card manufacturing-kpi-card p-5">
+                  <p className="manufacturing-kpi-label">{metric.label}</p>
+                  <p className="manufacturing-kpi-value">{metric.value}</p>
                 </article>
               ))}
+            </div>
             </div>
             <div className="panel p-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1987,6 +1990,7 @@ export default async function Home({
               <div className="table-wrap table-scroll mt-5">
                 <ManufacturingInlineTable manufacturingOrders={filteredManufacturing} />
               </div>
+            </div>
             </div>
           </Section>
 
