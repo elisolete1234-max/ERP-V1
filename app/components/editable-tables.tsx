@@ -2,12 +2,12 @@
 
 import { Fragment, useState, type FormEvent } from "react";
 import {
+  collectInvoicePaymentAction,
   completeManufacturingAction,
   confirmOrderAction,
   deliverOrderAction,
   generateInvoiceAction,
   registerInvoicePaymentAction,
-  startManufacturingAction,
   retryOrderAction,
   toggleCustomerActiveAction,
   toggleMaterialActiveAction,
@@ -373,14 +373,6 @@ function CloseIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
       <path d="M5.5 5.5 14.5 14.5M14.5 5.5l-9 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function PlayIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path d="M7 5.7v8.6l6.8-4.3L7 5.7Z" fill="currentColor" />
     </svg>
   );
 }
@@ -2520,27 +2512,14 @@ export function ManufacturingInlineTable({
                   <input type="hidden" name="id" value={order.id} />
                 </form>
                 <div className="table-action-group">
-                  {!editing && order.estado === "PENDIENTE" ? (
-                    <form action={startManufacturingAction}>
-                      <input type="hidden" name="fabricacionId" value={order.id} />
-                      <SubmitButton
-                        variant="icon-dark"
-                        pendingText={<SpinnerIcon />}
-                        title="Iniciar"
-                        aria-label="Iniciar"
-                      >
-                        <PlayIcon />
-                      </SubmitButton>
-                    </form>
-                  ) : null}
-                  {!editing && order.estado === "INICIADA" ? (
+                  {!editing && (order.estado === "PENDIENTE" || order.estado === "INICIADA") ? (
                     <form action={completeManufacturingAction}>
                       <input type="hidden" name="fabricacionId" value={order.id} />
                       <SubmitButton
                         variant="icon-dark"
                         pendingText={<SpinnerIcon />}
-                        title="Completar"
-                        aria-label="Completar"
+                        title="Completar fabricación"
+                        aria-label="Completar fabricación"
                       >
                         <CheckIcon />
                       </SubmitButton>
@@ -2675,23 +2654,19 @@ export function InvoicesInlineTable({
                     >
                       <EyeIcon />
                     </button>
-                    <button
-                      type="button"
-                      title={canRegisterPayment ? "Registrar pago" : "Factura totalmente pagada"}
-                      aria-label={canRegisterPayment ? "Registrar pago" : "Factura totalmente pagada"}
-                      disabled={!canRegisterPayment}
-                      className={`icon-action-button ${
-                        canRegisterPayment ? "icon-action-button--dark" : "icon-action-button"
-                      }`}
-                      onClick={() => {
-                        if (!canRegisterPayment) return;
-                        const nextOpen = paymentId === invoice.id ? null : invoice.id;
-                        setDetailId(invoice.id);
-                        setPaymentId(nextOpen);
-                      }}
-                    >
-                      <PaymentIcon />
-                    </button>
+                    <form action={collectInvoicePaymentAction}>
+                      <input type="hidden" name="facturaId" value={invoice.id} />
+                      <input type="hidden" name="metodoPago" value="TRANSFERENCIA" />
+                      <SubmitButton
+                        variant={canRegisterPayment ? "icon-dark" : "icon-soft"}
+                        pendingText={<SpinnerIcon />}
+                        title={canRegisterPayment ? "Cobrar factura" : "Factura totalmente pagada"}
+                        aria-label={canRegisterPayment ? "Cobrar factura" : "Factura totalmente pagada"}
+                        disabled={!canRegisterPayment}
+                      >
+                        <PaymentIcon />
+                      </SubmitButton>
+                    </form>
                     <a
                       href={`/api/exports/invoices/${invoice.id}/pdf`}
                       title="Descargar PDF"
@@ -2911,7 +2886,7 @@ export function InvoicesInlineTable({
                           <form action={registerInvoicePaymentAction} className="mt-4 space-y-3">
                             <input type="hidden" name="facturaId" value={invoice.id} />
                             <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
-                              Introduce un importe entre 0,01 EUR y {formatCurrency(pendingAmount)}. Si completas el pendiente, la factura pasara a pagada automaticamente.
+                              Introduce un importe entre 0,01 EUR y {formatCurrency(pendingAmount)}. Este formulario queda para cobros parciales o para usar un metodo distinto al cobro rapido.
                               <div className="mt-1 text-xs text-sky-700">
                                 Metodos admitidos: {["EFECTIVO", "TRANSFERENCIA", "TARJETA", "BIZUM", "PAYPAL", "OTRO"].map(paymentMethodLabel).join(", ")}.
                               </div>
@@ -2966,7 +2941,7 @@ export function InvoicesInlineTable({
                             </div>
                             <div className="table-action-group">
                               <SubmitButton variant="chip-dark" pendingText="Guardando...">
-                                Registrar pago
+                                Registrar cobro detallado
                               </SubmitButton>
                               <button
                                 type="button"
@@ -2981,7 +2956,7 @@ export function InvoicesInlineTable({
                           <div className="mt-4 space-y-3">
                             <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3 text-sm text-[color:var(--muted)]">
                               {canRegisterPayment
-                                ? "Abre el formulario para registrar un pago parcial o completar el cobro."
+                                ? "Usa Cobrar factura para liquidar todo el pendiente al instante, o abre el detalle si necesitas un cobro parcial."
                                 : "La factura ya esta totalmente pagada."}
                             </div>
                             {canRegisterPayment ? (
@@ -2990,7 +2965,7 @@ export function InvoicesInlineTable({
                                 onClick={() => setPaymentId(invoice.id)}
                                 className="button-secondary"
                               >
-                                Registrar pago
+                                Abrir cobro detallado
                               </button>
                             ) : null}
                           </div>

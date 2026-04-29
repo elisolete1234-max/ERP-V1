@@ -7,16 +7,18 @@ import {
   archiveMaterial,
   archivePrinter,
   archiveProduct,
-  completeManufacturingOrder,
+  collectInvoicePayment,
+  completeManufacturingWorkflow,
   createCustomerRecord,
   createMaterialRecord,
   createOrderRecord,
   createInvoicePaymentRecord,
   createPrinterRecord,
   createProductRecord,
-  deliverOrder,
-  generateInvoiceForOrder,
+  deliverOrderWorkflow,
   confirmOrder,
+  invoiceOrderWorkflow,
+  processOrder,
   restockMaterial,
   restockFinishedProduct,
   retryOrderAfterRestock,
@@ -66,7 +68,7 @@ function asOptionalNumber(value: FormDataEntryValue | null) {
 
 function redirectWithMessage(
   message: string,
-  tone: "success" | "error" = "success",
+  tone: "success" | "warn" | "error" = "success",
   path = "/",
 ) {
   const [baseWithQuery, hash = ""] = path.split("#");
@@ -81,9 +83,19 @@ async function executeAndRefresh(
   successPath = "/",
 ) {
   let errorMessage: string | null = null;
+  let resolvedMessage = successMessage;
+  let resolvedTone: "success" | "warn" = "success";
 
   try {
-    await task();
+    const result = await task();
+    if (result && typeof result === "object") {
+      if ("message" in result && typeof result.message === "string" && result.message.trim()) {
+        resolvedMessage = result.message.trim();
+      }
+      if ("tone" in result && (result.tone === "success" || result.tone === "warn")) {
+        resolvedTone = result.tone;
+      }
+    }
     revalidatePath("/");
   } catch (error) {
     unstable_rethrow(error);
@@ -95,7 +107,7 @@ async function executeAndRefresh(
     redirectWithMessage(errorMessage, "error", successPath);
   }
 
-  redirectWithMessage(successMessage, "success", successPath);
+  redirectWithMessage(resolvedMessage, resolvedTone, successPath);
 }
 
 export async function createCustomerAction(formData: FormData) {
@@ -356,6 +368,14 @@ export async function confirmOrderAction(formData: FormData) {
   );
 }
 
+export async function processOrderAction(formData: FormData) {
+  await executeAndRefresh(
+    () => processOrder(asString(formData.get("pedidoId"))),
+    "Pedido procesado.",
+    "/?section=pedidos",
+  );
+}
+
 export async function retryOrderAction(formData: FormData) {
   await executeAndRefresh(
     () => retryOrderAfterRestock(asString(formData.get("pedidoId"))),
@@ -384,7 +404,7 @@ async function confirmAndStart(formData: FormData) {
 
 export async function completeManufacturingAction(formData: FormData) {
   await executeAndRefresh(
-    () => completeManufacturingOrder(asString(formData.get("fabricacionId"))),
+    () => completeManufacturingWorkflow(asString(formData.get("fabricacionId"))),
     "Fabricación completada y stock descontado.",
     "/?section=fabricacion",
   );
@@ -502,7 +522,7 @@ export async function updateFinishedInventoryAction(formData: FormData) {
 
 export async function deliverOrderAction(formData: FormData) {
   await executeAndRefresh(
-    () => deliverOrder(asString(formData.get("pedidoId"))),
+    () => deliverOrderWorkflow(asString(formData.get("pedidoId"))),
     "Pedido entregado.",
     "/?section=pedidos",
   );
@@ -510,8 +530,26 @@ export async function deliverOrderAction(formData: FormData) {
 
 export async function generateInvoiceAction(formData: FormData) {
   await executeAndRefresh(
-    () => generateInvoiceForOrder(asString(formData.get("pedidoId"))),
+    () => invoiceOrderWorkflow(asString(formData.get("pedidoId"))),
     "Factura generada.",
+    "/?section=facturas",
+  );
+}
+
+export async function collectInvoicePaymentAction(formData: FormData) {
+  await executeAndRefresh(
+    () =>
+      collectInvoicePayment(
+        asString(formData.get("facturaId")),
+        (asString(formData.get("metodoPago")) || "TRANSFERENCIA") as
+          | "EFECTIVO"
+          | "TRANSFERENCIA"
+          | "TARJETA"
+          | "BIZUM"
+          | "PAYPAL"
+          | "OTRO",
+      ),
+    "Factura cobrada.",
     "/?section=facturas",
   );
 }

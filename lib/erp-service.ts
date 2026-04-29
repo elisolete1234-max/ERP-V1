@@ -12,6 +12,7 @@ type InventoryMovementType = "ENTRADA" | "SALIDA" | "AJUSTE";
 type PaymentMethod = "EFECTIVO" | "TRANSFERENCIA" | "TARJETA" | "BIZUM" | "PAYPAL" | "OTRO";
 const PAYMENT_METHODS: PaymentMethod[] = ["EFECTIVO", "TRANSFERENCIA", "TARJETA", "BIZUM", "PAYPAL", "OTRO"];
 type InvoicePaymentStatus = "PENDIENTE" | "PARCIAL" | "PAGADA";
+type WorkflowTone = "success" | "warn";
 
 export const DEFAULT_VAT_RATE = 21;
 
@@ -2803,6 +2804,60 @@ export async function retryOrderAfterRestock(orderId: string) {
   return await confirmOrder(orderId);
 }
 
+export async function processOrder(orderId: string) {
+  const order = await row<{ id: string; codigo: string; estado: string }>(
+    `SELECT id, codigo, estado FROM orders WHERE id = ?`,
+    orderId,
+  );
+
+  if (!order) {
+    throw new Error("El pedido no existe.");
+  }
+
+  if (order.estado === "BORRADOR" || order.estado === "INCIDENCIA_STOCK") {
+    const confirmation = await confirmOrder(orderId);
+    const refreshedOrder = await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId);
+    const nextStatus = refreshedOrder?.estado ?? order.estado;
+    const message = confirmation.ok
+      ? confirmation.toManufactureUnits > 0
+        ? `Pedido ${order.codigo} procesado. ${confirmation.fromStockUnits} uds reservadas y ${confirmation.toManufactureUnits} uds enviadas a fabricacion.`
+        : `Pedido ${order.codigo} procesado. Todo el stock terminado quedo reservado y el pedido esta listo.`
+      : `Pedido ${order.codigo} procesado con aviso: ${confirmation.incidents.join(" ")}`;
+
+    return {
+      action: "processed" as const,
+      orderCode: order.codigo,
+      orderStatus: nextStatus,
+      ok: confirmation.ok,
+      incidents: confirmation.incidents,
+      fromStockUnits: confirmation.fromStockUnits,
+      toManufactureUnits: confirmation.toManufactureUnits,
+      message,
+      tone: (confirmation.ok ? "success" : "warn") as WorkflowTone,
+    };
+  }
+
+  const passiveMessageByStatus: Record<string, string> = {
+    CONFIRMADO: `El pedido ${order.codigo} ya estaba procesado y pendiente de fabricacion.`,
+    EN_PRODUCCION: `El pedido ${order.codigo} ya esta en produccion.`,
+    LISTO: `El pedido ${order.codigo} ya esta listo para entregar.`,
+    ENTREGADO: `El pedido ${order.codigo} ya estaba entregado.`,
+    FACTURADO: `El pedido ${order.codigo} ya estaba facturado.`,
+  };
+
+  return {
+    action: "noop" as const,
+    orderCode: order.codigo,
+    orderStatus: order.estado,
+    ok: order.estado !== "INCIDENCIA_STOCK",
+    incidents: [],
+    fromStockUnits: 0,
+    toManufactureUnits: 0,
+    message: passiveMessageByStatus[order.estado] ?? `El pedido ${order.codigo} ya estaba actualizado.`,
+    tone: "success" as WorkflowTone,
+  };
+}
+
 export async function updateOrderRecord(input: {
   id: string;
   clienteId: string;
@@ -3230,6 +3285,70 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
   };
 }
 
+export async function completeManufacturingWorkflow(manufacturingOrderId: string) {
+  const manufacturingOrder = await row<{
+    id: string;
+    codigo: string;
+    estado: string;
+    pedido_id: string;
+    incidencia: string | null;
+  }>(
+    `SELECT id, codigo, estado, pedido_id, incidencia
+     FROM manufacturing_orders
+     WHERE id = ?`,
+    manufacturingOrderId,
+  );
+
+  if (!manufacturingOrder) {
+    throw new Error("La orden de fabricacion no existe.");
+  }
+
+  if (manufacturingOrder.estado === "COMPLETADA") {
+    const order = await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, manufacturingOrder.pedido_id);
+    return {
+      action: "noop" as const,
+      manufacturingCode: manufacturingOrder.codigo,
+      manufacturingStatus: manufacturingOrder.estado,
+      orderStatus: order?.estado ?? "LISTO",
+      autoStarted: false,
+      message: `La fabricacion ${manufacturingOrder.codigo} ya estaba completada.`,
+      tone: "success" as WorkflowTone,
+    };
+  }
+
+  if (manufacturingOrder.estado === "BLOQUEADA_POR_STOCK") {
+    throw new Error(
+      manufacturingOrder.incidencia?.trim() || "La fabricacion sigue bloqueada por stock. Repon material antes de completarla.",
+    );
+  }
+
+  let autoStarted = false;
+  if (manufacturingOrder.estado === "PENDIENTE") {
+    await startManufacturingOrder(manufacturingOrderId);
+    autoStarted = true;
+  }
+
+  const completion = await completeManufacturingOrder(manufacturingOrderId);
+  const refreshed = await row<{ estado: string }>(
+    `SELECT estado FROM orders WHERE id = ?`,
+    manufacturingOrder.pedido_id,
+  );
+
+  return {
+    action: "completed" as const,
+    manufacturingCode: manufacturingOrder.codigo,
+    manufacturingStatus: "COMPLETADA",
+    orderStatus: refreshed?.estado ?? "LISTO",
+    autoStarted,
+    grams: completion.grams,
+    totalHours: completion.totalHours,
+    message: autoStarted
+      ? `Fabricacion ${manufacturingOrder.codigo} completada en un paso. Se inicio y finalizo automaticamente.`
+      : `Fabricacion ${manufacturingOrder.codigo} completada y stock actualizado.`,
+    tone: "success" as WorkflowTone,
+  };
+}
+
 export async function restockMaterial(materialId: string, quantityG: number, reason: string) {
   const parsedQuantity = requirePositiveInteger(quantityG, "La reposicion debe ser mayor que cero.");
   const material = await getMaterialStatusOrThrow(materialId);
@@ -3268,6 +3387,40 @@ export async function deliverOrder(orderId: string) {
     await registerOrderHistory(orderId, "ENTREGADO", "Pedido entregado al cliente.");
     await syncFinishedInventoryMetricsForOrder(orderId);
   });
+}
+
+export async function deliverOrderWorkflow(orderId: string) {
+  const order = await row<{ id: string; codigo: string; estado: string }>(
+    `SELECT id, codigo, estado FROM orders WHERE id = ?`,
+    orderId,
+  );
+
+  if (!order) {
+    throw new Error("El pedido no existe.");
+  }
+
+  if (order.estado === "ENTREGADO" || order.estado === "FACTURADO") {
+    return {
+      action: "noop" as const,
+      orderCode: order.codigo,
+      orderStatus: order.estado,
+      message:
+        order.estado === "FACTURADO"
+          ? `El pedido ${order.codigo} ya estaba facturado y entregado.`
+          : `El pedido ${order.codigo} ya estaba entregado.`,
+      tone: "success" as WorkflowTone,
+    };
+  }
+
+  await deliverOrder(orderId);
+
+  return {
+    action: "delivered" as const,
+    orderCode: order.codigo,
+    orderStatus: "ENTREGADO",
+    message: `Pedido ${order.codigo} entregado correctamente.`,
+    tone: "success" as WorkflowTone,
+  };
 }
 
 export async function generateInvoiceForOrder(orderId: string) {
@@ -3320,4 +3473,105 @@ export async function generateInvoiceForOrder(orderId: string) {
     await registerOrderHistory(orderId, "FACTURADO", `Factura ${codigo} generada.`);
     await syncFinishedInventoryMetricsForOrder(orderId);
   });
+}
+
+export async function invoiceOrderWorkflow(orderId: string) {
+  const order = await row<{ id: string; codigo: string; estado: string }>(
+    `SELECT id, codigo, estado FROM orders WHERE id = ?`,
+    orderId,
+  );
+
+  if (!order) {
+    throw new Error("El pedido no existe.");
+  }
+
+  const existingInvoice = await row<{ codigo: string }>(
+    `SELECT codigo FROM invoices WHERE pedido_id = ?`,
+    orderId,
+  );
+
+  if (existingInvoice) {
+    return {
+      action: "noop" as const,
+      orderCode: order.codigo,
+      invoiceCode: existingInvoice.codigo,
+      orderStatus: order.estado,
+      message: `El pedido ${order.codigo} ya tiene la factura ${existingInvoice.codigo}.`,
+      tone: "success" as WorkflowTone,
+    };
+  }
+
+  await generateInvoiceForOrder(orderId);
+
+  const invoice = await row<{ codigo: string }>(`SELECT codigo FROM invoices WHERE pedido_id = ?`, orderId);
+
+  return {
+    action: "invoiced" as const,
+    orderCode: order.codigo,
+    invoiceCode: invoice?.codigo ?? null,
+    orderStatus: "FACTURADO",
+    message: invoice?.codigo
+      ? `Factura ${invoice.codigo} generada para el pedido ${order.codigo}.`
+      : `Factura generada para el pedido ${order.codigo}.`,
+    tone: "success" as WorkflowTone,
+  };
+}
+
+export async function collectInvoicePayment(invoiceId: string, paymentMethod: PaymentMethod = "TRANSFERENCIA") {
+  await syncInvoicePaymentSummary(invoiceId);
+
+  const invoice = await row<{
+    id: string;
+    codigo: string;
+    total: number;
+    total_pagado: number;
+    importe_pendiente: number;
+    estado_pago: string;
+  }>(
+    `SELECT id, codigo, total, total_pagado, importe_pendiente, estado_pago
+     FROM invoices
+     WHERE id = ?`,
+    invoiceId,
+  );
+
+  if (!invoice) {
+    throw new Error("La factura no existe.");
+  }
+
+  if (invoice.estado_pago === "PAGADA" || invoice.importe_pendiente <= 0) {
+    return {
+      action: "noop" as const,
+      invoiceCode: invoice.codigo,
+      paymentStatus: "PAGADA",
+      amountCollected: 0,
+      message: `La factura ${invoice.codigo} ya estaba totalmente cobrada.`,
+      tone: "success" as WorkflowTone,
+    };
+  }
+
+  const amount = roundMoney(invoice.importe_pendiente);
+  await createInvoicePaymentRecord({
+    facturaId: invoice.id,
+    metodoPago: paymentMethod,
+    importe: amount,
+    notas: "Cobro rapido desde la accion principal.",
+  });
+
+  const refreshed = await row<{ estado_pago: string; total_pagado: number; importe_pendiente: number }>(
+    `SELECT estado_pago, total_pagado, importe_pendiente
+     FROM invoices
+     WHERE id = ?`,
+    invoice.id,
+  );
+
+  return {
+    action: "collected" as const,
+    invoiceCode: invoice.codigo,
+    paymentStatus: refreshed?.estado_pago ?? "PAGADA",
+    amountCollected: amount,
+    totalPaid: refreshed?.total_pagado ?? invoice.total,
+    pendingAmount: refreshed?.importe_pendiente ?? 0,
+    message: `Factura ${invoice.codigo} cobrada por ${amount.toFixed(2)} EUR.`,
+    tone: "success" as WorkflowTone,
+  };
 }

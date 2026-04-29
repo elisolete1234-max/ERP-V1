@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { buildCsvFilename, formatCsvDateTime, formatCsvMoney, serializeCsv } from "../lib/csv";
 import { row, rows, run } from "../lib/db";
 import {
+  collectInvoicePayment,
   completeManufacturingOrder,
+  completeManufacturingWorkflow,
   confirmOrder,
   createCustomerRecord,
   createInvoicePaymentRecord,
@@ -12,13 +14,16 @@ import {
   createPrinterRecord,
   createProductRecord,
   deliverOrder,
+  deliverOrderWorkflow,
   deleteMaterialRecord,
   generateInvoiceForOrder,
   getAppSnapshot,
   getInvoicePdfData,
   getInvoicePaymentsExportRows,
   getInvoicesExportRows,
+  invoiceOrderWorkflow,
   matchesOrderFocusCode,
+  processOrder,
   prioritizeOrdersByFocus,
   resetDatabase,
   restockFinishedProduct,
@@ -204,6 +209,37 @@ test("reconfirmar un pedido no duplica salidas netas de stock terminado", async 
   assert.equal(manufacturingCount.total, 1);
 });
 
+test("procesar pedido reutiliza la logica existente y evita duplicados al pulsarlo dos veces", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  await restockFinishedProduct(productId, 2, "Carga inicial", "A1", 8);
+  const orderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 4 }],
+  });
+
+  const firstRun = await processOrder(orderId);
+  const secondRun = await processOrder(orderId);
+  const stock = (await row<{ cantidad_disponible: number }>(
+    `SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`,
+    productId,
+  ))!;
+  const manufacturingCount = (await row<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!;
+  const order = (await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId))!;
+
+  assert.equal(firstRun.action, "processed");
+  assert.equal(firstRun.fromStockUnits, 2);
+  assert.equal(firstRun.toManufactureUnits, 2);
+  assert.equal(firstRun.orderStatus, "CONFIRMADO");
+  assert.equal(secondRun.action, "noop");
+  assert.equal(secondRun.orderStatus, "CONFIRMADO");
+  assert.equal(stock.cantidad_disponible, 0);
+  assert.equal(manufacturingCount.total, 1);
+  assert.equal(order.estado, "CONFIRMADO");
+});
+
 test("flujo mixto usa stock terminado y fabrica el resto", async () => {
   const { customerId, productId, materialId } = await setupSingleProductFixture({ materialStock: 1000, grams: 120, hours: 3, electricity: 2 });
   await restockFinishedProduct(productId, 1, "Carga inicial", "A1", 9);
@@ -275,6 +311,33 @@ test("fabricacion completa consume materiales y registra movimientos", async () 
   assert.equal(material.stock_actual_g, 600);
   assert.equal(stockMovement.total, 1);
   assert.ok((inventoryMovements?.total ?? 0) >= 2);
+});
+
+test("completar fabricacion en un paso inicia y finaliza la orden pendiente", async () => {
+  const { customerId, productId } = await setupSingleProductFixture({ materialStock: 1000, grams: 150, hours: 2.5, electricity: 1.2 });
+  const orderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 2 }],
+  });
+
+  await processOrder(orderId);
+  const manufacturing = (await row<{ id: string; estado: string }>(
+    `SELECT id, estado FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!;
+
+  const result = await completeManufacturingWorkflow(manufacturing.id);
+  const refreshedManufacturing = (await row<{ estado: string }>(
+    `SELECT estado FROM manufacturing_orders WHERE id = ?`,
+    manufacturing.id,
+  ))!;
+  const order = (await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId))!;
+
+  assert.equal(manufacturing.estado, "PENDIENTE");
+  assert.equal(result.action, "completed");
+  assert.equal(result.autoStarted, true);
+  assert.equal(refreshedManufacturing.estado, "COMPLETADA");
+  assert.equal(order.estado, "LISTO");
 });
 
 test("no permite movimientos con cantidad cero ni stock negativo", async () => {
@@ -735,6 +798,51 @@ test("estados del pedido transicionan correctamente y la factura solo se genera 
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices WHERE pedido_id = ?`, orderId))!.total, 1);
 });
 
+test("entregar pedido inteligente no duplica la entrega de pedidos ya cerrados", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await processOrder(orderId);
+
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+
+  await completeManufacturingWorkflow(manufacturingId);
+
+  const firstDelivery = await deliverOrderWorkflow(orderId);
+  const secondDelivery = await deliverOrderWorkflow(orderId);
+
+  assert.equal(firstDelivery.action, "delivered");
+  assert.equal(secondDelivery.action, "noop");
+  assert.equal((await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId))!.estado, "ENTREGADO");
+});
+
+test("facturar pedido inteligente reutiliza la factura ya creada si la accion se repite", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await processOrder(orderId);
+
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+
+  await completeManufacturingWorkflow(manufacturingId);
+  await deliverOrderWorkflow(orderId);
+
+  const firstInvoice = await invoiceOrderWorkflow(orderId);
+  const secondInvoice = await invoiceOrderWorkflow(orderId);
+  const invoiceCount = (await row<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM invoices WHERE pedido_id = ?`,
+    orderId,
+  ))!;
+
+  assert.equal(firstInvoice.action, "invoiced");
+  assert.equal(secondInvoice.action, "noop");
+  assert.equal(invoiceCount.total, 1);
+});
+
 test("la factura arranca pendiente y sincroniza pagos parciales y totales con el pedido", async () => {
   const { customerId, productId } = await setupSingleProductFixture();
   const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
@@ -789,6 +897,41 @@ test("la factura arranca pendiente y sincroniza pagos parciales y totales con el
   assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM invoices WHERE id = ?`, invoice.id))!.estado_pago, "PAGADA");
   assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM orders WHERE id = ?`, orderId))!.estado_pago, "PAGADA");
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoice_payments WHERE factura_id = ?`, invoice.id))!.total, 2);
+});
+
+test("cobrar factura rapido liquida todo el pendiente y es idempotente al repetirlo", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await processOrder(orderId);
+
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+
+  await completeManufacturingWorkflow(manufacturingId);
+  await deliverOrderWorkflow(orderId);
+  await invoiceOrderWorkflow(orderId);
+
+  const invoice = (await row<{ id: string; total: number; codigo: string }>(
+    `SELECT id, total, codigo FROM invoices WHERE pedido_id = ?`,
+    orderId,
+  ))!;
+
+  const firstCollection = await collectInvoicePayment(invoice.id);
+  const secondCollection = await collectInvoicePayment(invoice.id);
+  const refreshedInvoice = (await row<{
+    estado_pago: string;
+    total_pagado: number;
+    importe_pendiente: number;
+  }>(`SELECT estado_pago, total_pagado, importe_pendiente FROM invoices WHERE id = ?`, invoice.id))!;
+
+  assert.equal(firstCollection.action, "collected");
+  assert.equal(firstCollection.amountCollected, invoice.total);
+  assert.equal(secondCollection.action, "noop");
+  assert.equal(refreshedInvoice.estado_pago, "PAGADA");
+  assert.equal(refreshedInvoice.total_pagado, invoice.total);
+  assert.equal(refreshedInvoice.importe_pendiente, 0);
 });
 
 test("muestra codigos visibles de pago numerados por pedido", async () => {

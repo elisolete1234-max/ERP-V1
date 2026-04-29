@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import {
   confirmOrderAction,
+  processOrderAction,
   createCustomerAction,
   createMaterialAction,
   createOrderAction,
@@ -1008,6 +1009,8 @@ export default async function Home({
               className={`panel px-5 py-4 text-sm font-medium ${
                 resolved.tone === "error"
                   ? "border-red-200 bg-[linear-gradient(180deg,#fff1f2,#fff7f7)] text-red-700"
+                  : resolved.tone === "warn"
+                    ? "border-amber-200 bg-[linear-gradient(180deg,#fff8eb,#fffdf7)] text-amber-800"
                   : "border-emerald-200 bg-[linear-gradient(180deg,#ecfdf3,#f7fff9)] text-emerald-700"
               }`}
             >
@@ -1686,6 +1689,52 @@ export default async function Home({
                               </tbody>
                             </table>
                           </div>
+                          <div className="mt-4 rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="eyebrow">Accion principal</p>
+                                <p className="mt-2 text-sm text-[color:var(--muted-strong)]">{orderNextStep(focusedOrder)}</p>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {(focusedOrder.estado === "BORRADOR" || focusedOrder.estado === "INCIDENCIA_STOCK") ? (
+                                  <form action={processOrderAction}>
+                                    <input type="hidden" name="pedidoId" value={focusedOrder.id} />
+                                    <SubmitButton pendingText="Procesando pedido...">Procesar pedido</SubmitButton>
+                                  </form>
+                                ) : null}
+                                {focusedOrder.estado === "LISTO" ? (
+                                  <form action={deliverOrderAction}>
+                                    <input type="hidden" name="pedidoId" value={focusedOrder.id} />
+                                    <SubmitButton pendingText="Entregando pedido...">Entregar pedido</SubmitButton>
+                                  </form>
+                                ) : null}
+                                {focusedOrder.estado === "ENTREGADO" ? (
+                                  <form action={generateInvoiceAction}>
+                                    <input type="hidden" name="pedidoId" value={focusedOrder.id} />
+                                    <SubmitButton pendingText="Facturando pedido...">Facturar pedido</SubmitButton>
+                                  </form>
+                                ) : null}
+                                {(focusedOrder.estado === "CONFIRMADO" || focusedOrder.estado === "EN_PRODUCCION") ? (
+                                  <Link
+                                    href={`/?section=fabricacion${focusedOrder.estado === "CONFIRMADO" ? "&manufacturingStatus=PENDIENTE" : ""}`}
+                                    className="button-secondary"
+                                  >
+                                    Ver fabricacion
+                                  </Link>
+                                ) : null}
+                                {focusedOrder.factura ? (
+                                  <Link href="/?section=facturas" className="button-secondary">
+                                    Ver factura
+                                  </Link>
+                                ) : null}
+                              </div>
+                            </div>
+                            {focusedOrder.estado === "INCIDENCIA_STOCK" ? (
+                              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                                Faltan materiales para completar el pedido. Puedes reponer stock y volver a procesarlo sin duplicar reservas.
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       </article>
                     </div>
@@ -1894,18 +1943,18 @@ export default async function Home({
                                 <td>
                                   <div className="table-action-group">
                                     {order.estado === "BORRADOR" ? (
-                                      <form action={confirmOrderAction}>
+                                      <form action={processOrderAction}>
                                         <input type="hidden" name="pedidoId" value={order.id} />
-                                        <SubmitButton variant="chip-dark" pendingText="Confirmando...">
-                                          Confirmar
+                                        <SubmitButton variant="chip-dark" pendingText="Procesando...">
+                                          Procesar pedido
                                         </SubmitButton>
                                       </form>
                                     ) : null}
                                     {order.estado === "INCIDENCIA_STOCK" ? (
-                                      <form action={retryOrderAction}>
+                                      <form action={processOrderAction}>
                                         <input type="hidden" name="pedidoId" value={order.id} />
-                                        <SubmitButton variant="chip-dark" pendingText="Reintentando...">
-                                          Reintentar
+                                        <SubmitButton variant="chip-dark" pendingText="Procesando...">
+                                          Procesar pedido
                                         </SubmitButton>
                                       </form>
                                     ) : null}
@@ -1913,7 +1962,7 @@ export default async function Home({
                                       <form action={deliverOrderAction}>
                                         <input type="hidden" name="pedidoId" value={order.id} />
                                         <SubmitButton variant="chip-dark" pendingText="Entregando...">
-                                          Entregar
+                                          Entregar pedido
                                         </SubmitButton>
                                       </form>
                                     ) : null}
@@ -1921,7 +1970,7 @@ export default async function Home({
                                       <form action={generateInvoiceAction}>
                                         <input type="hidden" name="pedidoId" value={order.id} />
                                         <SubmitButton variant="chip-dark" pendingText="Facturando...">
-                                          Facturar
+                                          Facturar pedido
                                         </SubmitButton>
                                       </form>
                                     ) : null}
@@ -1985,7 +2034,7 @@ export default async function Home({
                 <div>
                   <h3 className="text-xl font-semibold">Cola de fabricacion</h3>
                   <p className="mt-1 text-sm text-[color:var(--muted)]">
-                    Inicia o completa ordenes directamente desde cada fila. La impresora se asigna automaticamente.
+                    Completa cada orden desde una sola accion. Si estaba pendiente, la impresora se asigna y la fabricacion se cierra en el mismo paso.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -2188,7 +2237,7 @@ export default async function Home({
                 <div>
                   <h3 className="text-xl font-semibold">Facturas emitidas</h3>
                   <p className="mt-1 text-sm text-[color:var(--muted)]">
-                    Solo se puede facturar cuando el pedido ya esta entregado.
+                    La accion principal cobra toda la factura pendiente al instante. El detalle queda disponible para cobros parciales o metodos distintos.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
