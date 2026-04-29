@@ -3,6 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { redirect, unstable_rethrow } from "next/navigation";
 import {
+  archiveCustomer,
+  archiveMaterial,
+  archivePrinter,
+  archiveProduct,
   completeManufacturingOrder,
   createCustomerRecord,
   createMaterialRecord,
@@ -20,6 +24,10 @@ import {
   setMaterialActiveState,
   setPrinterActiveState,
   setProductActiveState,
+  unarchiveCustomer,
+  unarchiveMaterial,
+  unarchivePrinter,
+  unarchiveProduct,
   updateCustomerRecord,
   updateFinishedInventoryRecord,
   updateInvoiceRecord,
@@ -28,7 +36,6 @@ import {
   updateOrderRecord,
   updatePrinterRecord,
   updateProductRecord,
-  deleteMaterialRecord,
 } from "@/lib/erp-service";
 
 function asString(value: FormDataEntryValue | null) {
@@ -126,9 +133,19 @@ export async function toggleCustomerActiveAction(formData: FormData) {
 
   await executeAndRefresh(
     () => setCustomerActiveState(customerId, active),
-    active ? "Cliente reactivado." : "Cliente dado de baja.",
+    active ? "Cliente desarchivado." : "Cliente archivado.",
     "/?section=clientes",
   );
+}
+
+export async function archiveClienteAction(formData: FormData) {
+  const customerId = asString(formData.get("id"));
+  await executeAndRefresh(() => archiveCustomer(customerId), "Cliente archivado.", "/?section=clientes");
+}
+
+export async function unarchiveClienteAction(formData: FormData) {
+  const customerId = asString(formData.get("id"));
+  await executeAndRefresh(() => unarchiveCustomer(customerId), "Cliente desarchivado.", "/?section=clientes");
 }
 
 export async function createMaterialAction(formData: FormData) {
@@ -192,15 +209,25 @@ export async function toggleMaterialActiveAction(formData: FormData) {
 
   await executeAndRefresh(
     () => setMaterialActiveState(materialId, active),
-    active ? "Material reactivado." : "Material dado de baja.",
+    active ? "Material desarchivado." : "Material archivado.",
     "/?section=materiales",
   );
 }
 
-export async function deleteMaterialAction(formData: FormData) {
+export async function archiveMaterialAction(formData: FormData) {
+  const materialId = asString(formData.get("id"));
+  await executeAndRefresh(() => archiveMaterial(materialId), "Material archivado.", "/?section=materiales");
+}
+
+export async function unarchiveMaterialAction(formData: FormData) {
+  const materialId = asString(formData.get("id"));
+  await executeAndRefresh(() => unarchiveMaterial(materialId), "Material desarchivado.", "/?section=materiales");
+}
+
+export async function deleteMaterialAction() {
   await executeAndRefresh(
-    () => deleteMaterialRecord(asString(formData.get("id"))),
-    "Material eliminado definitivamente.",
+    () => Promise.reject(new Error("El borrado fisico esta deshabilitado. Archiva el material para retirarlo del uso diario.")),
+    "Accion no disponible.",
     "/?section=materiales&materialFilter=ALL",
   );
 }
@@ -260,9 +287,19 @@ export async function toggleProductActiveAction(formData: FormData) {
 
   await executeAndRefresh(
     () => setProductActiveState(productId, active),
-    active ? "Producto reactivado." : "Producto dado de baja.",
+    active ? "Producto desarchivado." : "Producto archivado.",
     "/?section=productos",
   );
+}
+
+export async function archiveProductoAction(formData: FormData) {
+  const productId = asString(formData.get("id"));
+  await executeAndRefresh(() => archiveProduct(productId), "Producto archivado.", "/?section=productos");
+}
+
+export async function unarchiveProductoAction(formData: FormData) {
+  const productId = asString(formData.get("id"));
+  await executeAndRefresh(() => unarchiveProduct(productId), "Producto desarchivado.", "/?section=productos");
 }
 
 export async function createOrderAction(formData: FormData) {
@@ -418,9 +455,19 @@ export async function togglePrinterActiveAction(formData: FormData) {
 
   await executeAndRefresh(
     () => setPrinterActiveState(printerId, active),
-    active ? "Impresora reactivada." : "Impresora dada de baja.",
+    active ? "Impresora desarchivada." : "Impresora archivada.",
     "/?section=impresoras",
   );
+}
+
+export async function archiveImpresoraAction(formData: FormData) {
+  const printerId = asString(formData.get("id"));
+  await executeAndRefresh(() => archivePrinter(printerId), "Impresora archivada.", "/?section=impresoras");
+}
+
+export async function unarchiveImpresoraAction(formData: FormData) {
+  const printerId = asString(formData.get("id"));
+  await executeAndRefresh(() => unarchivePrinter(printerId), "Impresora desarchivada.", "/?section=impresoras");
 }
 
 export async function restockFinishedProductAction(formData: FormData) {

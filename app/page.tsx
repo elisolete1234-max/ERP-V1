@@ -323,6 +323,8 @@ export default async function Home({
     productFilter?: string;
     customerFilter?: string;
     clienteId?: string;
+    productoId?: string;
+    impresoraId?: string;
     origen?: string;
     printerStatus?: string;
     printerActiveFilter?: string;
@@ -356,18 +358,28 @@ export default async function Home({
 
   const orderFilter = resolved.orderStatus ?? "ALL";
   const manufacturingFilter = resolved.manufacturingStatus ?? "ALL";
-  const materialFilter = resolved.materialFilter ?? "ALL";
-  const productFilter = resolved.productFilter ?? "ALL";
-  const customerFilter = resolved.customerFilter ?? "ALL";
+  const materialFilter = resolved.materialFilter ?? "ACTIVE";
+  const productFilter = resolved.productFilter ?? "ACTIVE";
+  const customerFilter = resolved.customerFilter ?? "ACTIVE";
   const printerFilter = resolved.printerStatus ?? "ALL";
-  const printerActiveFilter = resolved.printerActiveFilter ?? "ALL";
+  const printerActiveFilter = resolved.printerActiveFilter ?? "ACTIVE";
   const movementFilter = resolved.movementInventory ?? "ALL";
   const invoiceFilter = resolved.invoiceStatus ?? "ALL";
   const focusedOrderCode = resolved.pedidoId?.trim() || null;
   const focusedCustomerCode = resolved.clienteId?.trim() || null;
+  const focusedProductCode = resolved.productoId?.trim() || null;
+  const focusedPrinterCode = resolved.impresoraId?.trim() || null;
   const focusedInvoiceCode = resolved.facturaId?.trim() || null;
   const customerFocusOrigin =
     resolved.origen === "pedido" || resolved.origen === "factura" || resolved.origen === "pago"
+      ? resolved.origen
+      : null;
+  const productFocusOrigin =
+    resolved.origen === "cliente" || resolved.origen === "pedido" || resolved.origen === "factura"
+      ? resolved.origen
+      : null;
+  const printerFocusOrigin =
+    resolved.origen === "producto" || resolved.origen === "pedido" || resolved.origen === "fabricacion"
       ? resolved.origen
       : null;
   const invoiceDateStart = toDateInputValue(resolved.fecha_inicio);
@@ -396,16 +408,24 @@ export default async function Home({
         ? materials.filter((material) => !material.activo)
         : materials;
   const filteredProducts =
-    productFilter === "ACTIVE"
-      ? products.filter((product) => product.activo)
-      : productFilter === "INACTIVE"
-        ? products.filter((product) => !product.activo)
-        : products;
+    (
+      productFilter === "ACTIVE"
+        ? products.filter((product) => product.activo || product.codigo === focusedProductCode)
+        : productFilter === "INACTIVE"
+          ? products.filter((product) => !product.activo || product.codigo === focusedProductCode)
+          : products
+    );
+  const prioritizedProducts = focusedProductCode
+    ? [
+        ...filteredProducts.filter((product) => product.codigo === focusedProductCode),
+        ...filteredProducts.filter((product) => product.codigo !== focusedProductCode),
+      ]
+    : filteredProducts;
   const filteredCustomersBase =
     customerFilter === "ACTIVE"
-      ? customers.filter((customer) => customer.activo)
+      ? customers.filter((customer) => customer.activo || customer.codigo === focusedCustomerCode)
       : customerFilter === "INACTIVE"
-        ? customers.filter((customer) => !customer.activo)
+        ? customers.filter((customer) => !customer.activo || customer.codigo === focusedCustomerCode)
         : customers;
   const filteredCustomers = focusedCustomerCode
     ? [
@@ -417,10 +437,16 @@ export default async function Home({
     printerFilter === "ALL" ? printers : printers.filter((printer) => printer.estado === printerFilter);
   const filteredPrinters =
     printerActiveFilter === "ACTIVE"
-      ? filteredPrintersByState.filter((printer) => printer.activo)
+      ? filteredPrintersByState.filter((printer) => printer.activo || printer.codigo === focusedPrinterCode)
       : printerActiveFilter === "INACTIVE"
-        ? filteredPrintersByState.filter((printer) => !printer.activo)
+        ? filteredPrintersByState.filter((printer) => !printer.activo || printer.codigo === focusedPrinterCode)
         : filteredPrintersByState;
+  const prioritizedPrinters = focusedPrinterCode
+    ? [
+        ...filteredPrinters.filter((printer) => printer.codigo === focusedPrinterCode),
+        ...filteredPrinters.filter((printer) => printer.codigo !== focusedPrinterCode),
+      ]
+    : filteredPrinters;
   const filteredInventoryMovements =
     movementFilter === "ALL"
       ? inventoryMovements
@@ -493,20 +519,20 @@ export default async function Home({
   ].filter((segment): segment is string => Boolean(segment));
   const hasActiveMaterialFilters = materialFilter !== "ALL";
   const activeMaterialFilterSegments: string[] = [
-    materialFilter === "ACTIVE" ? "estado: activos" : materialFilter === "INACTIVE" ? "estado: inactivos" : null,
+    materialFilter === "ACTIVE" ? "estado: activos" : materialFilter === "INACTIVE" ? "estado: archivados" : null,
   ].filter((segment): segment is string => Boolean(segment));
   const hasActiveProductFilters = productFilter !== "ALL";
   const activeProductFilterSegments: string[] = [
-    productFilter === "ACTIVE" ? "estado: activos" : productFilter === "INACTIVE" ? "estado: inactivos" : null,
+    productFilter === "ACTIVE" ? "estado: activos" : productFilter === "INACTIVE" ? "estado: archivados" : null,
   ].filter((segment): segment is string => Boolean(segment));
   const hasActiveCustomerFilters = customerFilter !== "ALL";
   const activeCustomerFilterSegments: string[] = [
-    customerFilter === "ACTIVE" ? "estado: activos" : customerFilter === "INACTIVE" ? "estado: inactivos" : null,
+    customerFilter === "ACTIVE" ? "estado: activos" : customerFilter === "INACTIVE" ? "estado: archivados" : null,
   ].filter((segment): segment is string => Boolean(segment));
   const hasActivePrinterFilters = printerFilter !== "ALL" || printerActiveFilter !== "ALL";
   const activePrinterFilterSegments: string[] = [
     hasActivePrinterFilters ? `estado: ${printerStatusLabels[printerFilter]}` : null,
-    printerActiveFilter === "ACTIVE" ? "visibles: activas" : printerActiveFilter === "INACTIVE" ? "visibles: inactivas" : null,
+    printerActiveFilter === "ACTIVE" ? "visibles: activas" : printerActiveFilter === "INACTIVE" ? "visibles: archivadas" : null,
   ].filter((segment): segment is string => Boolean(segment));
   const hasActiveMovementFilters = movementFilter !== "ALL";
   const activeMovementFilterSegments: string[] = [
@@ -1512,7 +1538,8 @@ export default async function Home({
           </Section>
 
           <Section active={section === "impresoras"} title="Impresoras" subtitle="Capacidad de produccion">
-            <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
+            <div className={`grid gap-4 ${focusedPrinterCode ? "xl:grid-cols-1" : "xl:grid-cols-[0.85fr_1.15fr]"}`}>
+              {!focusedPrinterCode ? (
               <form action={createPrinterAction} className="panel form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Nueva impresora</h3>
@@ -1543,6 +1570,7 @@ export default async function Home({
                 </Field>
                 <SubmitButton pendingText="Creando...">Crear impresora</SubmitButton>
               </form>
+              ) : null}
 
               <div className="panel p-6">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -1569,7 +1597,7 @@ export default async function Home({
                     <FilterLink
                       key={status}
                       href={`/?section=impresoras&printerStatus=${printerFilter}&printerActiveFilter=${status}`}
-                      label={status === "ALL" ? "ver todas" : status === "ACTIVE" ? "solo activas" : "ver inactivas"}
+                      label={status === "ALL" ? "todas" : status === "ACTIVE" ? "activas" : "archivadas"}
                       active={printerActiveFilter === status}
                       count={
                         status === "ALL"
@@ -1582,21 +1610,27 @@ export default async function Home({
                   ))}
                 </div>
                 <FilterSummary
-                  totalItems={filteredPrinters.length}
+                  totalItems={prioritizedPrinters.length}
                   hasFilters={hasActivePrinterFilters}
                   filters={activePrinterFilterSegments}
                   itemLabel="impresoras"
                   allItemsText="Mostrando todas las impresoras"
                 />
+                {focusedPrinterCode ? (
+                  <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/85 px-4 py-3 text-sm text-sky-900">
+                    Impresora abierta desde {printerFocusOrigin ?? "producto/pedido/fabricacion"}: <span className="font-semibold">{focusedPrinterCode}</span>.
+                  </div>
+                ) : null}
                 <div className="table-wrap table-scroll">
-                  <PrintersInlineTable printers={filteredPrinters} />
+                  <PrintersInlineTable printers={prioritizedPrinters} focusedPrinterCode={focusedPrinterCode} />
                 </div>
               </div>
             </div>
           </Section>
 
           <Section active={section === "productos"} title="Productos" subtitle="Catalogo">
-            <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+            <div className={`grid gap-4 ${focusedProductCode ? "xl:grid-cols-1" : "xl:grid-cols-[0.95fr_1.05fr]"}`}>
+              {!focusedProductCode ? (
               <form action={createProductAction} className="panel form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Nuevo producto</h3>
@@ -1670,13 +1704,14 @@ export default async function Home({
                 </label>
                 <SubmitButton pendingText="Creando...">Crear producto</SubmitButton>
               </form>
+              ) : null}
 
               <div className="panel p-6">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="text-xl font-semibold">Catalogo de productos</h3>
                     <p className="mt-1 text-sm text-[color:var(--muted)]">
-                      Los productos inactivos conservan historico pero no aparecen en nuevas operaciones.
+                      Los productos archivados conservan historico pero no aparecen en nuevas operaciones.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -1684,7 +1719,7 @@ export default async function Home({
                       <FilterLink
                         key={status}
                         href={`/?section=productos&productFilter=${status}`}
-                        label={status === "ALL" ? "todos" : status === "ACTIVE" ? "activos" : "inactivos"}
+                        label={status === "ALL" ? "todos" : status === "ACTIVE" ? "activos" : "archivados"}
                         active={productFilter === status}
                         count={
                           status === "ALL"
@@ -1698,15 +1733,20 @@ export default async function Home({
                   </div>
                 </div>
                 <FilterSummary
-                  totalItems={filteredProducts.length}
+                  totalItems={prioritizedProducts.length}
                   hasFilters={hasActiveProductFilters}
                   filters={activeProductFilterSegments}
                   itemLabel="productos"
                   allItemsText="Mostrando todos los productos"
                 />
+                {focusedProductCode ? (
+                  <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/85 px-4 py-3 text-sm text-sky-900">
+                    Mostrando la trazabilidad del producto <span className="font-semibold">{focusedProductCode}</span> abierto desde {productFocusOrigin ?? "cliente/pedido/factura"}.
+                  </div>
+                ) : null}
                 <div className="table-wrap table-scroll">
                   <ProductsInlineTable
-                    products={filteredProducts}
+                    products={prioritizedProducts}
                     materials={materials.map((material) => ({
                       id: material.id,
                       codigo: material.codigo,
@@ -1714,6 +1754,12 @@ export default async function Home({
                       color: material.color,
                       activo: material.activo,
                     }))}
+                    focusedProductCode={focusedProductCode}
+                    focusOriginLabel={productFocusOrigin}
+                    orders={orders}
+                    invoices={invoices}
+                    manufacturingOrders={manufacturingOrders}
+                    finishedInventory={finishedInventory}
                   />
                 </div>
               </div>
@@ -1804,7 +1850,7 @@ export default async function Home({
                   <div>
                     <h3 className="text-xl font-semibold">Stock y alertas</h3>
                     <p className="mt-1 text-sm text-[color:var(--muted)]">
-                      Gestiona altas y bajas sin perder historico. Los materiales inactivos dejan de aparecer en formularios normales.
+                      Gestiona archivado logico sin perder historico. Los materiales archivados dejan de aparecer en formularios normales.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -1812,7 +1858,7 @@ export default async function Home({
                       <FilterLink
                         key={status}
                         href={`/?section=materiales&materialFilter=${status}`}
-                        label={status === "ALL" ? "todos" : status === "ACTIVE" ? "activos" : "inactivos"}
+                        label={status === "ALL" ? "todos" : status === "ACTIVE" ? "activos" : "archivados"}
                         active={materialFilter === status}
                         count={
                           status === "ALL"
@@ -1873,7 +1919,7 @@ export default async function Home({
                     <p className="mt-1 text-sm text-[color:var(--muted)]">
                       {focusedCustomerCode
                         ? "Vista de registro amplia con pedidos, facturas y productos comprados en un solo lugar."
-                        : "Los clientes inactivos se mantienen para historico, pero salen de los formularios de pedidos nuevos."}
+                        : "Los clientes archivados se mantienen para historico, pero salen de los formularios de pedidos nuevos."}
                     </p>
                   </div>
                   {!focusedCustomerCode ? <div className="flex flex-wrap gap-2">
@@ -1881,7 +1927,7 @@ export default async function Home({
                       <FilterLink
                         key={status}
                         href={`/?section=clientes&customerFilter=${status}`}
-                        label={status === "ALL" ? "todos" : status === "ACTIVE" ? "activos" : "inactivos"}
+                        label={status === "ALL" ? "todos" : status === "ACTIVE" ? "activos" : "archivados"}
                         active={customerFilter === status}
                         count={
                           status === "ALL"
@@ -1919,6 +1965,7 @@ export default async function Home({
                         estado: order.estado,
                         lineas: order.lineas.map((line) => ({
                           id: line.id,
+                          producto_codigo: line.codigo,
                           producto_nombre: line.producto_nombre,
                           cantidad: line.cantidad,
                         })),

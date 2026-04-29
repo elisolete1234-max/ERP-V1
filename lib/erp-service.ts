@@ -181,11 +181,11 @@ async function getProductOrThrow(productId: string) {
   }
 
   if (!parseBoolean(product.activo)) {
-    throw new Error("Uno de los productos seleccionados esta inactivo.");
+    throw new Error("Uno de los productos seleccionados esta archivado.");
   }
 
   if (!parseBoolean(product.material_activo)) {
-    throw new Error("Uno de los productos seleccionados depende de un material inactivo.");
+    throw new Error("Uno de los productos seleccionados depende de un material archivado.");
   }
 
   return product;
@@ -1587,11 +1587,19 @@ export async function setCustomerActiveState(customerId: string, active: boolean
     ))?.total ?? 0;
 
     if (openOrders > 0) {
-      throw new Error("No se puede dar de baja el cliente porque tiene pedidos abiertos o pendientes de cierre.");
+      throw new Error("No se puede archivar el cliente porque tiene pedidos abiertos o pendientes de cierre.");
     }
   }
 
   await run(`UPDATE customers SET activo = ? WHERE id = ?`, active ? 1 : 0, customerId);
+}
+
+export async function archiveCustomer(customerId: string) {
+  await setCustomerActiveState(customerId, false);
+}
+
+export async function unarchiveCustomer(customerId: string) {
+  await setCustomerActiveState(customerId, true);
 }
 
 export async function createMaterialRecord(input: {
@@ -1772,35 +1780,17 @@ export async function setMaterialActiveState(materialId: string, active: boolean
   );
 }
 
+export async function archiveMaterial(materialId: string) {
+  await setMaterialActiveState(materialId, false);
+}
+
+export async function unarchiveMaterial(materialId: string) {
+  await setMaterialActiveState(materialId, true);
+}
+
 export async function deleteMaterialRecord(materialId: string) {
-  const material = await getMaterialStatusOrThrow(materialId);
-
-  if (material.activo) {
-    throw new Error("Primero debes dar de baja el material antes de eliminarlo definitivamente.");
-  }
-
-  const productCount = (await row<{ total: number }>(
-    `SELECT COUNT(*) AS total FROM products WHERE material_id = ?`,
-    materialId,
-  ))?.total ?? 0;
-  const movementCount = (await row<{ total: number }>(
-    `SELECT COUNT(*) AS total FROM stock_movements WHERE material_id = ?`,
-    materialId,
-  ))?.total ?? 0;
-
-  const blockingReasons: string[] = [];
-  if (productCount > 0) {
-    blockingReasons.push(`tiene ${productCount} producto(s) asociado(s)`);
-  }
-  if (movementCount > 0) {
-    blockingReasons.push(`tiene ${movementCount} movimiento(s) de stock`);
-  }
-
-  if (blockingReasons.length > 0) {
-    throw new Error(`No se puede eliminar el material porque ${blockingReasons.join(" y ")}.`);
-  }
-
-  await run(`DELETE FROM materials WHERE id = ?`, materialId);
+  await getMaterialStatusOrThrow(materialId);
+  throw new Error("El borrado fisico esta deshabilitado. Archiva el material para retirarlo del uso diario.");
 }
 
 export async function createProductRecord(input: {
@@ -1852,7 +1842,7 @@ export async function createProductRecord(input: {
     throw new Error("El material principal no existe.");
   }
   if (!material.activo) {
-    throw new Error("No se puede crear un producto nuevo con un material inactivo.");
+    throw new Error("No se puede crear un producto nuevo con un material archivado.");
   }
 
   const productId = randomUUID();
@@ -1945,7 +1935,7 @@ export async function updateProductRecord(input: {
     throw new Error("El material principal no existe.");
   }
   if (!material.activo && currentProduct.material_id !== input.materialId) {
-    throw new Error("No se puede asignar un material inactivo a nuevos usos.");
+    throw new Error("No se puede asignar un material archivado a nuevos usos.");
   }
 
   if (parseBoolean(currentProduct.activo) && input.activo === false) {
@@ -2028,11 +2018,19 @@ export async function setProductActiveState(productId: string, active: boolean) 
     ))?.total ?? 0;
 
     if (openOrderLines > 0 || openManufacturing > 0) {
-      throw new Error("No se puede dar de baja el producto porque participa en pedidos u ordenes de fabricacion abiertas.");
+      throw new Error("No se puede archivar el producto porque participa en pedidos u ordenes de fabricacion abiertas.");
     }
   }
 
   await run(`UPDATE products SET activo = ? WHERE id = ?`, active ? 1 : 0, productId);
+}
+
+export async function archiveProduct(productId: string) {
+  await setProductActiveState(productId, false);
+}
+
+export async function unarchiveProduct(productId: string) {
+  await setProductActiveState(productId, true);
 }
 
 export async function createOrderRecord(input: {
@@ -2052,7 +2050,7 @@ export async function createOrderRecord(input: {
     throw new Error("El cliente no existe.");
   }
   if (!parseBoolean(customer.activo)) {
-    throw new Error("El cliente seleccionado esta inactivo. Reactivalo antes de crear pedidos nuevos.");
+    throw new Error("El cliente seleccionado esta archivado. Desarchivalo antes de crear pedidos nuevos.");
   }
   const validLines = input.lines.filter((line) => line.productId && line.quantity > 0);
   if (validLines.length === 0) {
@@ -2466,7 +2464,7 @@ export async function setPrinterActiveState(printerId: string, active: boolean) 
     ))?.total ?? 0;
 
     if (activeOrders > 0 || printer.estado === "IMPRIMIENDO") {
-      throw new Error("No se puede dar de baja la impresora mientras tenga una orden de fabricacion activa.");
+      throw new Error("No se puede archivar la impresora mientras tenga una orden de fabricacion activa.");
     }
   }
 
@@ -2478,6 +2476,14 @@ export async function setPrinterActiveState(printerId: string, active: boolean) 
     nowIso(),
     printerId,
   );
+}
+
+export async function archivePrinter(printerId: string) {
+  await setPrinterActiveState(printerId, false);
+}
+
+export async function unarchivePrinter(printerId: string) {
+  await setPrinterActiveState(printerId, true);
 }
 
 export async function restockFinishedProduct(
@@ -2496,7 +2502,7 @@ export async function restockFinishedProduct(
     throw new Error("El producto no existe.");
   }
   if (!parseBoolean(product.activo)) {
-    throw new Error("El producto esta inactivo. Reactivalo antes de registrar nuevas entradas.");
+    throw new Error("El producto esta archivado. Desarchivalo antes de registrar nuevas entradas.");
   }
   if (unitCost != null && unitCost < 0) {
     throw new Error("El coste unitario no puede ser negativo.");
@@ -2794,7 +2800,7 @@ export async function updateOrderRecord(input: {
     throw new Error("El cliente no existe.");
   }
   if (!parseBoolean(customer.activo)) {
-    throw new Error("El cliente seleccionado esta inactivo. Reactivalo antes de editar el pedido.");
+    throw new Error("El cliente seleccionado esta archivado. Desarchivalo antes de editar el pedido.");
   }
   if (["EN_PRODUCCION", "LISTO", "ENTREGADO", "FACTURADO"].includes(current.estado)) {
     throw new Error("No se pueden editar pedidos ya lanzados a produccion o cerrados.");
@@ -3199,7 +3205,7 @@ export async function restockMaterial(materialId: string, quantityG: number, rea
   const material = await getMaterialStatusOrThrow(materialId);
 
   if (!material.activo) {
-    throw new Error("El material esta inactivo. Reactivalo antes de registrar una reposicion.");
+    throw new Error("El material esta archivado. Desarchivalo antes de registrar una reposicion.");
   }
 
   await transaction(async () => {

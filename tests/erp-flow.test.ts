@@ -338,72 +338,102 @@ test("editar material conserva campos opcionales vacios y guarda el detalle V2",
   assert.equal(material.temp_cama, null);
 });
 
-test("permite dar de baja y reactivar materiales sin borrar su historico", async () => {
+test("archivar materiales no elimina el registro y desarchivar lo devuelve al listado activo", async () => {
   const { materialId } = await setupSingleProductFixture();
 
   await setMaterialActiveState(materialId, false);
   assert.equal((await row<{ activo: number }>(`SELECT activo FROM materials WHERE id = ?`, materialId))!.activo, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM materials WHERE id = ?`, materialId))!.total, 1);
+
+  const archivedSnapshot = await getAppSnapshot();
+  assert.equal(archivedSnapshot.materials.find((material) => material.id === materialId)?.activo, false);
+  assert.equal(archivedSnapshot.materials.filter((material) => material.activo).some((material) => material.id === materialId), false);
 
   await setMaterialActiveState(materialId, true);
   assert.equal((await row<{ activo: number }>(`SELECT activo FROM materials WHERE id = ?`, materialId))!.activo, 1);
+
+  const activeSnapshot = await getAppSnapshot();
+  assert.equal(activeSnapshot.materials.filter((material) => material.activo).some((material) => material.id === materialId), true);
 });
 
-test("solo elimina de verdad materiales inactivos y sin historico ni relaciones", async () => {
+test("el borrado fisico queda bloqueado aunque el material este archivado", async () => {
   await createMaterialRecord({ nombre: "Material temporal" });
   const materialId = (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))!.id;
 
-  await assert.rejects(() => deleteMaterialRecord(materialId), /dar de baja/i);
+  await assert.rejects(() => deleteMaterialRecord(materialId), /borrado fisico.*deshabilitado|archiva el material/i);
 
   await setMaterialActiveState(materialId, false);
-  await deleteMaterialRecord(materialId);
-
-  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM materials WHERE id = ?`, materialId))!.total, 0);
+  await assert.rejects(() => deleteMaterialRecord(materialId), /borrado fisico.*deshabilitado|archiva el material/i);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM materials WHERE id = ?`, materialId))!.total, 1);
 });
 
-test("bloquea la eliminacion real si el material tiene productos o movimientos", async () => {
-  const { materialId } = await setupSingleProductFixture();
-  await setMaterialActiveState(materialId, false);
-
-  await assert.rejects(
-    () => deleteMaterialRecord(materialId),
-    /producto|movimiento/i,
-  );
-});
-
-test("no permite nuevos productos con materiales inactivos", async () => {
+test("no permite nuevos productos con materiales archivados", async () => {
   await createCustomerRecord({ nombre: "Cliente base" });
-  await createMaterialRecord({ nombre: "Material inactivo" });
+  await createMaterialRecord({ nombre: "Material archivado" });
   const materialId = (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))!.id;
   await setMaterialActiveState(materialId, false);
 
   await assert.rejects(
     () => createProductRecord({ nombre: "Producto bloqueado", materialId }),
-    /material inactivo/i,
+    /material archivado/i,
   );
 });
 
-test("no permite nuevos pedidos con clientes inactivos", async () => {
+test("no permite nuevos pedidos con clientes archivados", async () => {
   const { customerId, productId } = await setupSingleProductFixture();
   await setCustomerActiveState(customerId, false);
 
   await assert.rejects(
     () => createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] }),
-    /cliente seleccionado esta inactivo/i,
+    /cliente seleccionado esta archivado/i,
   );
 });
 
-test("no permite nuevas operaciones con productos inactivos", async () => {
+test("no permite nuevas operaciones con productos archivados", async () => {
   const { customerId, productId } = await setupSingleProductFixture();
   await setProductActiveState(productId, false);
 
   await assert.rejects(
     () => createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] }),
-    /producto.*inactivo/i,
+    /producto.*archivado/i,
   );
   await assert.rejects(
     () => restockFinishedProduct(productId, 1, "Entrada manual"),
-    /producto esta inactivo/i,
+    /producto esta archivado/i,
   );
+});
+
+test("los registros archivados siguen accesibles desde pedidos y facturas historicas", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const orderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 2 }] });
+  await confirmOrder(orderId);
+  const manufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  ))!.id;
+  await startManufacturingOrder(manufacturingId);
+  await completeManufacturingOrder(manufacturingId);
+  await deliverOrder(orderId);
+  await generateInvoiceForOrder(orderId);
+
+  await setCustomerActiveState(customerId, false);
+  await setProductActiveState(productId, false);
+
+  const snapshot = await getAppSnapshot();
+  const archivedCustomer = snapshot.customers.find((customer) => customer.id === customerId);
+  const archivedProduct = snapshot.products.find((product) => product.id === productId);
+  const order = snapshot.orders.find((item) => item.id === orderId);
+  const invoice = snapshot.invoices.find((item) => item.pedido_id === orderId);
+
+  assert.ok(archivedCustomer);
+  assert.equal(archivedCustomer!.activo, false);
+  assert.ok(archivedProduct);
+  assert.equal(archivedProduct!.activo, false);
+  assert.ok(order);
+  assert.equal(order!.cliente_id, customerId);
+  assert.equal(order!.lineas.some((linea) => linea.producto_id === productId), true);
+  assert.ok(invoice);
+  assert.equal(invoice!.cliente_id, customerId);
 });
 
 test("editar producto actualiza la receta V2 sin romper el producto", async () => {
