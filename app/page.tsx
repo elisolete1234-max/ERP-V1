@@ -321,6 +321,26 @@ function Section({
   );
 }
 
+function CreatePanel({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className="create-disclosure panel">
+      <summary className="create-disclosure-summary">
+        <span className="erp-button-primary">{title}</span>
+        <span className="create-disclosure-hint">{description}</span>
+      </summary>
+      <div className="create-disclosure-body">{children}</div>
+    </details>
+  );
+}
+
 function Field({
   label,
   hint,
@@ -1425,9 +1445,10 @@ export default async function Home({
           ) : null}
 
           <Section active={section === "pedidos"} title="Pedidos" subtitle="Ventas y avance">
-            <div className={`grid gap-4 ${focusedOrderCode ? "xl:grid-cols-1" : "xl:grid-cols-[0.95fr_1.05fr]"}`}>
+            <div className="space-y-4">
               {!focusedOrderCode ? (
-              <form id="create-order" action={createOrderAction} className="panel form-shell p-6 space-y-5">
+              <CreatePanel title="Nuevo pedido" description="Alta compacta. Abre solo cuando necesites crear un pedido.">
+              <form id="create-order" action={createOrderAction} className="form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Crear pedido</h3>
                   <p className="mt-2 text-sm text-[color:var(--muted)]">
@@ -1487,6 +1508,7 @@ export default async function Home({
                 </Field>
                 <SubmitButton pendingText="Creando pedido...">Crear pedido</SubmitButton>
               </form>
+              </CreatePanel>
               ) : null}
 
               <div className="panel p-6">
@@ -1765,9 +1787,9 @@ export default async function Home({
           </Section>
 
           <Section active={section === "stock"} title="Stock de materiales" subtitle="Inventario de materiales">
-            <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
-              <div className="space-y-4">
-                <form id="restock-material" action={restockMaterialAction} className="panel form-shell p-6 space-y-5">
+            <div className="space-y-4">
+              <CreatePanel title="Nueva reposicion" description="Registra una entrada de material solo cuando la necesites.">
+                <form id="restock-material" action={restockMaterialAction} className="form-shell p-6 space-y-5">
                   <div>
                     <h3 className="text-xl font-semibold">Registrar reposicion</h3>
                     <p className="mt-2 text-sm text-[color:var(--muted)]">
@@ -1776,12 +1798,12 @@ export default async function Home({
                   </div>
                   <Field label="Material">
                     <select name="materialId" className="input" defaultValue="">
-                    <option value="">Material</option>
-                    {activeMaterials.map((material) => (
-                      <option key={material.id} value={material.id}>
-                        {material.codigo} · {material.nombre} · {material.color}
-                      </option>
-                    ))}
+                      <option value="">Material</option>
+                      {activeMaterials.map((material) => (
+                        <option key={material.id} value={material.id}>
+                          {material.codigo} &middot; {material.nombre} &middot; {material.color}
+                        </option>
+                      ))}
                     </select>
                   </Field>
                   <div className="form-grid-2">
@@ -1794,78 +1816,74 @@ export default async function Home({
                   </div>
                   <SubmitButton pendingText="Registrando...">Registrar reposicion</SubmitButton>
                 </form>
-
-                <div className="panel p-6">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h3 className="text-xl font-semibold">Vision rapida</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {["ALL", "LOW"].map((status) => (
-                        <FilterLink
-                          key={status}
-                          href={`/?section=materiales&materialFilter=${status}`}
-                          label={status === "ALL" ? "todos" : "stock bajo"}
-                          active={false}
-                          count={status === "ALL" ? materials.length : lowStockMaterials.length}
-                        />
-                      ))}
-                    </div>
+              </CreatePanel>
+              <div className="panel p-6">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xl font-semibold">Movimientos de stock</h3>
+                    <p className="mt-1 text-sm text-[color:var(--muted)]">
+                      Entradas y consumos de material con trazabilidad completa, sin ocupar media pantalla con formularios abiertos.
+                    </p>
                   </div>
-                  <div className="mt-4 space-y-3">
-                    {lowStockMaterials.slice(0, 4).map((material) => (
-                      <div key={material.id} className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
-                        <p className="font-semibold">
-                          {material.codigo} · {material.nombre}
-                        </p>
-                        <p className="mt-1 text-sm text-amber-800">
-                          {material.stock_actual_g} g disponibles · minimo {material.stock_minimo_g} g
-                        </p>
-                      </div>
-                    ))}
-                    {lowStockMaterials.length === 0 ? (
-                      <p className="rounded-2xl bg-white/70 px-4 py-4 text-sm text-[color:var(--muted)]">No hay alertas de material.</p>
-                    ) : null}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusPill label={`${activeMaterials.length} materiales activos`} tone="neutral" />
+                    <StatusPill
+                      label={`${lowStockMaterials.length} con stock bajo`}
+                      tone={lowStockMaterials.length > 0 ? "warn" : "success"}
+                    />
                   </div>
                 </div>
-              </div>
-
-              <div className="panel p-6">
+                {lowStockMaterials.length > 0 ? (
+                  <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+                    <p className="text-sm font-semibold text-amber-900">Alertas activas de material</p>
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2 text-sm text-amber-800">
+                      {lowStockMaterials.slice(0, 4).map((material) => (
+                        <span key={material.id}>
+                          {material.codigo} &middot; {material.nombre} &middot; {material.stock_actual_g} g
+                        </span>
+                      ))}
+                      {lowStockMaterials.length > 4 ? <span>+{lowStockMaterials.length - 4} materiales mas</span> : null}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="table-wrap table-scroll">
                   <table className="table">
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Fecha</th>
-                      <th>Material</th>
-                      <th>Tipo</th>
-                      <th>Cantidad</th>
-                      <th>Motivo</th>
-                      <th>Referencia</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stockMovements.map((movement) => (
-                      <tr key={movement.id}>
-                        <td>{movement.codigo}</td>
-                        <td>{dateLabel(movement.fecha)}</td>
-                        <td>{movement.material_nombre}</td>
-                        <td>{movement.tipo.toLowerCase()}</td>
-                        <td>{movement.cantidad_g} g</td>
-                        <td>{movement.motivo}</td>
-                        <td>{movement.referencia ?? "-"}</td>
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Fecha</th>
+                        <th>Material</th>
+                        <th>Tipo</th>
+                        <th>Cantidad</th>
+                        <th>Motivo</th>
+                        <th>Referencia</th>
                       </tr>
-                    ))}
-                  </tbody>
+                    </thead>
+                    <tbody>
+                      {stockMovements.map((movement) => (
+                        <tr key={movement.id}>
+                          <td>{movement.codigo}</td>
+                          <td>{dateLabel(movement.fecha)}</td>
+                          <td>{movement.material_nombre}</td>
+                          <td>{movement.tipo.toLowerCase()}</td>
+                          <td>{movement.cantidad_g} g</td>
+                          <td>{movement.motivo}</td>
+                          <td>{movement.referencia ?? "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
                   </table>
                 </div>
               </div>
             </div>
           </Section>
           <Section active={section === "productos-terminados"} title="Productos terminados" subtitle="Inventario de salida">
-            <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
+            <div className="space-y-4">
+              <CreatePanel title="Nuevo stock terminado" description="Abre este panel solo para registrar una entrada manual.">
               <form
                 id="add-finished-stock"
                 action={restockFinishedProductAction}
-                className="panel form-shell p-6 space-y-5"
+                className="form-shell p-6 space-y-5"
               >
                 <div>
                   <h3 className="text-xl font-semibold">Añadir stock</h3>
@@ -1901,6 +1919,7 @@ export default async function Home({
                 </div>
                 <SubmitButton pendingText="Añadiendo...">Añadir stock</SubmitButton>
               </form>
+              </CreatePanel>
 
               <div className="panel p-6">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -1912,9 +1931,6 @@ export default async function Home({
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusPill label={`${finishedUnits} uds`} tone={finishedUnits > 0 ? "success" : "neutral"} />
-                    <a href="#add-finished-stock" className="button-secondary">
-                      Añadir stock
-                    </a>
                   </div>
                 </div>
                 <div className="table-wrap table-scroll">
@@ -2020,9 +2036,10 @@ export default async function Home({
           </Section>
 
           <Section active={section === "impresoras"} title="Impresoras" subtitle="Capacidad de produccion">
-            <div className={`grid gap-4 ${focusedPrinterCode ? "xl:grid-cols-1" : "xl:grid-cols-[0.85fr_1.15fr]"}`}>
+            <div className="space-y-4">
               {!focusedPrinterCode ? (
-              <form action={createPrinterAction} className="panel form-shell p-6 space-y-5">
+              <CreatePanel title="Nueva impresora" description="Alta compacta para registrar capacidad y coste solo cuando haga falta.">
+              <form action={createPrinterAction} className="form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Nueva impresora</h3>
                   <p className="mt-2 text-sm text-[color:var(--muted)]">
@@ -2052,6 +2069,7 @@ export default async function Home({
                 </Field>
                 <SubmitButton pendingText="Creando...">Crear impresora</SubmitButton>
               </form>
+              </CreatePanel>
               ) : null}
 
               <div className="panel p-6">
@@ -2111,9 +2129,10 @@ export default async function Home({
           </Section>
 
           <Section active={section === "productos"} title="Productos" subtitle="Catalogo">
-            <div className={`grid gap-4 ${focusedProductCode ? "xl:grid-cols-1" : "xl:grid-cols-[0.95fr_1.05fr]"}`}>
+            <div className="space-y-4">
               {!focusedProductCode ? (
-              <form action={createProductAction} className="panel form-shell p-6 space-y-5">
+              <CreatePanel title="Nuevo producto" description="Abre el alta solo cuando necesites crear una ficha nueva.">
+              <form action={createProductAction} className="form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Nuevo producto</h3>
                   <p className="mt-2 text-sm text-[color:var(--muted)]">
@@ -2186,6 +2205,7 @@ export default async function Home({
                 </label>
                 <SubmitButton pendingText="Creando...">Crear producto</SubmitButton>
               </form>
+              </CreatePanel>
               ) : null}
 
               <div className="panel p-6">
@@ -2249,8 +2269,9 @@ export default async function Home({
           </Section>
 
           <Section active={section === "materiales"} title="Materiales" subtitle="Filamentos y resinas">
-            <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-              <form action={createMaterialAction} className="panel form-shell p-6 space-y-5">
+            <div className="space-y-4">
+              <CreatePanel title="Nuevo material" description="Formulario oculto por defecto para mantener la tabla principal despejada.">
+              <form action={createMaterialAction} className="form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Nuevo material</h3>
                   <p className="mt-2 text-sm text-[color:var(--muted)]">
@@ -2326,6 +2347,7 @@ export default async function Home({
                 </Field>
                 <SubmitButton pendingText="Creando...">Crear material</SubmitButton>
               </form>
+              </CreatePanel>
 
               <div className="panel p-6">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -2368,9 +2390,10 @@ export default async function Home({
           </Section>
 
           <Section active={section === "clientes"} title="Clientes" subtitle="Gestion">
-            <div className={`grid gap-4 ${focusedCustomerCode ? "xl:grid-cols-1" : "xl:grid-cols-[0.9fr_1.1fr]"}`}>
+            <div className="space-y-4">
               {!focusedCustomerCode ? (
-              <form action={createCustomerAction} className="panel form-shell p-6 space-y-5">
+              <CreatePanel title="Nuevo cliente" description="Alta plegable para que la base de clientes ocupe casi todo el ancho.">
+              <form action={createCustomerAction} className="form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Nuevo cliente</h3>
                   <p className="mt-2 text-sm text-[color:var(--muted)]">
@@ -2393,6 +2416,7 @@ export default async function Home({
                 </Field>
                 <SubmitButton pendingText="Creando...">Crear cliente</SubmitButton>
               </form>
+              </CreatePanel>
               ) : null}
               <div className="panel p-6">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -2535,3 +2559,4 @@ export default async function Home({
     </main>
   );
 }
+
