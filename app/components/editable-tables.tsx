@@ -1080,7 +1080,7 @@ export function CustomersInlineTable({
 
       <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Nombre</th><th>Contacto</th><th>Alta</th></tr>
+        <tr><th>Acciones</th><th>ID</th><th>Nombre</th><th>Contacto</th><th>Alta</th><th>Estado</th></tr>
       </thead>
       <tbody>
           {customers.map((customer) => {
@@ -1137,21 +1137,12 @@ export function CustomersInlineTable({
                       </InlineField>
                     ) : (
                       <div>
-                        <div className="font-medium">{customer.nombre}</div>
+                        <a href={`/?section=clientes&clienteId=${encodeURIComponent(customer.codigo)}`} className="odoo-link font-medium">{customer.nombre}</a>
                         {focused ? (
                           <div className="mt-2 inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
                             Cliente abierto desde {focusOriginLabel ?? "pedido/factura/pago"}
                           </div>
                         ) : null}
-                        <div className="mt-2">
-                          <span
-                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                              badgeClasses(customer.activo ? "success" : "neutral")
-                            }`}
-                          >
-                            {archiveStatusLabel(customer.activo)}
-                          </span>
-                        </div>
                       </div>
                     )}
                   </td>
@@ -1176,10 +1167,15 @@ export function CustomersInlineTable({
                     )}
                   </td>
                   <td>{formatDate(customer.fecha_creacion)}</td>
+                  <td>
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(customer.activo ? "success" : "neutral")}`}>
+                      {archiveStatusLabel(customer.activo)}
+                    </span>
+                  </td>
                 </tr>
-                {!editing ? (
+                {!editing && focused ? (
                   <tr key={`${customer.id}-history`} className={focused ? "bg-sky-50/55" : ""}>
-                    <td colSpan={5} className="bg-[color:var(--surface-strong)]">
+                    <td colSpan={6} className="bg-[color:var(--surface-strong)]">
                       <div className="grid gap-4 px-3 py-4 xl:grid-cols-3">
                         <section className="erp-subsection">
                           <p className="eyebrow">Pedidos del cliente</p>
@@ -2016,6 +2012,7 @@ export function ProductsInlineTable({
   invoices,
   manufacturingOrders,
   finishedInventory,
+  showFocusedDetails = true,
 }: {
   products: Product[];
   materials: MaterialOption[];
@@ -2025,6 +2022,7 @@ export function ProductsInlineTable({
   invoices: Invoice[];
   manufacturingOrders: ManufacturingOrder[];
   finishedInventory: FinishedInventory[];
+  showFocusedDetails?: boolean;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeProductTab, setActiveProductTab] = useState<"customers" | "orders" | "invoices" | "printers">("customers");
@@ -2086,7 +2084,7 @@ export function ProductsInlineTable({
 
   return (
     <>
-      {focusedProduct ? (
+      {showFocusedDetails && focusedProduct ? (
         <div className="mb-5 odoo-page">
           <article className="odoo-record ring-2 ring-[color:var(--brand)] ring-offset-2 ring-offset-[color:var(--surface)] shadow-[0_22px_55px_rgba(37,99,235,0.18)]">
             <div className="odoo-record-header">
@@ -2258,7 +2256,7 @@ export function ProductsInlineTable({
                   </div>
                 ) : (
                   <div>
-                    <div className="font-medium">{product.nombre}</div>
+                    <a href={`/?section=productos&productoId=${encodeURIComponent(product.codigo)}`} className="odoo-link font-medium">{product.nombre}</a>
                     <div className="text-xs text-[color:var(--muted)]">
                       {product.gramos_estimados} g · {product.tiempo_impresion_horas} h
                     </div>
@@ -3179,7 +3177,7 @@ export function PrintersInlineTable({
                   </div>
                 ) : (
                   <div>
-                    <div>{printer.nombre}</div>
+                    <a href={`/?section=impresoras&impresoraId=${encodeURIComponent(printer.codigo)}`} className="odoo-link">{printer.nombre}</a>
                     <div className="mt-2">
                       <span
                         className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${

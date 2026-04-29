@@ -20,7 +20,6 @@ import {
   InvoicesInlineTable,
   ManufacturingInlineTable,
   MaterialsInlineTable,
-  OrdersInlineBoard,
   PrintersInlineTable,
   ProductsInlineTable,
 } from "./components/editable-tables";
@@ -484,6 +483,87 @@ export default async function Home({
         ...filteredCustomersBase.filter((customer) => customer.codigo !== focusedCustomerCode),
       ]
     : filteredCustomersBase;
+  const focusedCustomer = focusedCustomerCode
+    ? customers.find((customer) => customer.codigo === focusedCustomerCode) ?? null
+    : null;
+  const focusedCustomerOrders = focusedCustomer
+    ? orders.filter((order) => order.cliente_id === focusedCustomer.id)
+    : [];
+  const focusedCustomerInvoices = focusedCustomer
+    ? invoices.filter((invoice) => invoice.cliente_id === focusedCustomer.id)
+    : [];
+  const focusedCustomerProducts = focusedCustomer
+    ? Array.from(
+        focusedCustomerOrders
+          .flatMap((order) => order.lineas)
+          .reduce((accumulator, line) => {
+            const current = accumulator.get(line.codigo);
+            accumulator.set(line.codigo, {
+              codigo: line.codigo,
+              nombre: line.producto_nombre,
+              cantidad: (current?.cantidad ?? 0) + line.cantidad,
+            });
+            return accumulator;
+          }, new Map<string, { codigo: string; nombre: string; cantidad: number }>())
+          .values(),
+      ).sort((a, b) => a.codigo.localeCompare(b.codigo, "es"))
+    : [];
+  const focusedProduct = focusedProductCode
+    ? products.find((product) => product.codigo === focusedProductCode) ?? null
+    : null;
+  const focusedProductInventory = focusedProduct
+    ? finishedInventory.find((item) => item.product_id === focusedProduct.id) ?? null
+    : null;
+  const focusedProductOrders = focusedProduct
+    ? orders.filter((order) => order.lineas.some((line) => line.producto_id === focusedProduct.id))
+    : [];
+  const focusedProductOrderIds = new Set(focusedProductOrders.map((order) => order.id));
+  const focusedProductInvoices = focusedProduct
+    ? invoices.filter((invoice) => focusedProductOrderIds.has(invoice.pedido_id))
+    : [];
+  const focusedProductCustomers = focusedProduct
+    ? Array.from(
+        focusedProductOrders
+          .reduce((accumulator, order) => {
+            const quantity = order.lineas
+              .filter((line) => line.producto_id === focusedProduct.id)
+              .reduce((sum, line) => sum + line.cantidad, 0);
+            const current = accumulator.get(order.cliente_id);
+            accumulator.set(order.cliente_id, {
+              clienteId: order.cliente_id,
+              clienteCodigo: order.cliente_codigo,
+              clienteNombre: order.cliente_nombre,
+              cantidad: (current?.cantidad ?? 0) + quantity,
+            });
+            return accumulator;
+          }, new Map<string, { clienteId: string; clienteCodigo: string; clienteNombre: string; cantidad: number }>())
+          .values(),
+      ).sort((a, b) => a.clienteCodigo.localeCompare(b.clienteCodigo, "es"))
+    : [];
+  const focusedProductPrinters = focusedProduct
+    ? Array.from(
+        manufacturingOrders
+          .filter(
+            (order) =>
+              order.producto_id === focusedProduct.id &&
+              order.impresora_id &&
+              order.impresora_codigo &&
+              order.impresora_nombre,
+          )
+          .reduce((accumulator, order) => {
+            const current = accumulator.get(order.impresora_id!);
+            accumulator.set(order.impresora_id!, {
+              impresoraId: order.impresora_id!,
+              impresoraCodigo: order.impresora_codigo!,
+              impresoraNombre: order.impresora_nombre!,
+              fabricaciones: (current?.fabricaciones ?? 0) + 1,
+              cantidad: (current?.cantidad ?? 0) + order.cantidad,
+            });
+            return accumulator;
+          }, new Map<string, { impresoraId: string; impresoraCodigo: string; impresoraNombre: string; fabricaciones: number; cantidad: number }>())
+          .values(),
+      ).sort((a, b) => a.impresoraCodigo.localeCompare(b.impresoraCodigo, "es"))
+    : [];
   const filteredPrintersByState =
     printerFilter === "ALL" ? printers : printers.filter((printer) => printer.estado === printerFilter);
   const filteredPrinters =
@@ -498,6 +578,12 @@ export default async function Home({
         ...filteredPrinters.filter((printer) => printer.codigo !== focusedPrinterCode),
       ]
     : filteredPrinters;
+  const focusedPrinter = focusedPrinterCode
+    ? printers.find((printer) => printer.codigo === focusedPrinterCode) ?? null
+    : null;
+  const focusedPrinterManufacturing = focusedPrinter
+    ? manufacturingOrders.filter((order) => order.impresora_id === focusedPrinter.id)
+    : [];
   const filteredInventoryMovements =
     movementFilter === "ALL"
       ? inventoryMovements
@@ -866,14 +952,14 @@ export default async function Home({
         </aside>
 
         <div className="erp-main">
-          <div className="erp-header">
-            <div>
-              <p className="eyebrow">Eli Print 3D</p>
-              <h2 className="erp-header-title">ERP administrativo para pedidos, stock y fabricacion</h2>
-              <p className="erp-header-subtitle">
-                Interfaz limpia, trazable y consistente para operar como en un ERP profesional, con navegacion lateral clara y registros amplios.
-              </p>
-            </div>
+            <div className="erp-header">
+              <div>
+                <p className="eyebrow">Eli Print 3D</p>
+                <h2 className="erp-header-title">ERP operativo</h2>
+                <p className="erp-header-subtitle">
+                  Pedidos, stock, fabricacion y cobro.
+                </p>
+              </div>
             <div className="erp-toolbar">
               <Link href="/?section=pedidos#create-order" className="erp-button-primary">
                 Nuevo pedido
@@ -1720,21 +1806,96 @@ export default async function Home({
                         </article>
                       );
                     }) : (
-                      <OrdersInlineBoard
-                        orders={filteredOrders}
-                        customers={activeCustomers.map((customer) => ({
-                          id: customer.id,
-                          codigo: customer.codigo,
-                          nombre: customer.nombre,
-                        }))}
-                        products={activeProducts.map((product) => ({
-                          id: product.id,
-                          codigo: product.codigo,
-                          nombre: product.nombre,
-                        }))}
-                        focusedOrderCode={focusedOrderCode}
-                        focusedCustomerCode={focusedCustomerCode}
-                      />
+                      <div className="table-wrap table-scroll">
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>Acciones</th>
+                              <th>ID</th>
+                              <th>Cliente</th>
+                              <th>Fecha</th>
+                              <th>Estado</th>
+                              <th>Pago</th>
+                              <th>Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredOrders.map((order) => (
+                              <tr
+                                key={order.id}
+                                className={
+                                  order.estado === "INCIDENCIA_STOCK"
+                                    ? "row-danger"
+                                    : order.estado === "LISTO" || order.estado === "ENTREGADO"
+                                      ? "row-attention"
+                                      : ""
+                                }
+                              >
+                                <td>
+                                  <div className="table-action-group">
+                                    {order.estado === "BORRADOR" ? (
+                                      <form action={confirmOrderAction}>
+                                        <input type="hidden" name="pedidoId" value={order.id} />
+                                        <SubmitButton variant="chip-dark" pendingText="Confirmando...">
+                                          Confirmar
+                                        </SubmitButton>
+                                      </form>
+                                    ) : null}
+                                    {order.estado === "INCIDENCIA_STOCK" ? (
+                                      <form action={retryOrderAction}>
+                                        <input type="hidden" name="pedidoId" value={order.id} />
+                                        <SubmitButton variant="chip-dark" pendingText="Reintentando...">
+                                          Reintentar
+                                        </SubmitButton>
+                                      </form>
+                                    ) : null}
+                                    {order.estado === "LISTO" ? (
+                                      <form action={deliverOrderAction}>
+                                        <input type="hidden" name="pedidoId" value={order.id} />
+                                        <SubmitButton variant="chip-dark" pendingText="Entregando...">
+                                          Entregar
+                                        </SubmitButton>
+                                      </form>
+                                    ) : null}
+                                    {order.estado === "ENTREGADO" ? (
+                                      <form action={generateInvoiceAction}>
+                                        <input type="hidden" name="pedidoId" value={order.id} />
+                                        <SubmitButton variant="chip-dark" pendingText="Facturando...">
+                                          Facturar
+                                        </SubmitButton>
+                                      </form>
+                                    ) : null}
+                                  </div>
+                                </td>
+                                <td>
+                                  <Link href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.codigo)}`} className="odoo-link">
+                                    {order.codigo}
+                                  </Link>
+                                </td>
+                                <td>
+                                  <div className="font-semibold text-slate-900">{order.cliente_nombre}</div>
+                                  <Link
+                                    href={`/?section=clientes&clienteId=${encodeURIComponent(order.cliente_codigo)}&origen=pedido`}
+                                    className="mt-1 inline-flex text-xs text-[color:var(--muted)] hover:text-[color:var(--accent-hover)]"
+                                  >
+                                    {order.cliente_codigo}
+                                  </Link>
+                                </td>
+                                <td>{dateLabel(order.fecha_pedido)}</td>
+                                <td>
+                                  <StatusPill label={orderStatusLabels[order.estado]} tone={orderStatusTone(order.estado)} />
+                                </td>
+                                <td>
+                                  <span className={`erp-badge ${order.estado_pago === "PAGADA" ? badgeClass("success") : badgeClass("neutral")}`}>
+                                    {order.estado_pago.toLowerCase()}
+                                  </span>
+                                </td>
+                                <td>{currency(order.total)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     )
                   )}
                 </div>
@@ -2116,10 +2277,66 @@ export default async function Home({
                   itemLabel="impresoras"
                   allItemsText="Mostrando todas las impresoras"
                 />
-                {focusedPrinterCode ? (
-                  <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/85 px-4 py-3 text-sm text-sky-900">
-                    Impresora abierta desde {printerFocusOrigin ?? "producto/pedido/fabricacion"}: <span className="font-semibold">{focusedPrinterCode}</span>.
-                  </div>
+                {focusedPrinter ? (
+                  <article className="mt-4 odoo-record ring-2 ring-sky-200">
+                    <div className="odoo-record-header">
+                      <div>
+                        <p className="eyebrow">Impresora</p>
+                        <h4 className="mt-2 text-[1.7rem] font-semibold tracking-[-0.04em] text-slate-950">{focusedPrinter.nombre}</h4>
+                        <p className="mt-2 text-sm font-semibold text-sky-700">{focusedPrinter.codigo}</p>
+                        <div className="mt-3 inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
+                          Impresora abierta desde {printerFocusOrigin ?? "producto/pedido/fabricacion"}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <StatusPill label={focusedPrinter.activo ? "activa" : "archivada"} tone={focusedPrinter.activo ? "success" : "neutral"} />
+                        <StatusPill label={printerStatusLabels[focusedPrinter.estado]} tone={focusedPrinter.estado === "MANTENIMIENTO" ? "danger" : focusedPrinter.estado === "IMPRIMIENDO" ? "info" : "success"} />
+                      </div>
+                    </div>
+                    <div className="odoo-record-grid">
+                      <div className="odoo-field"><span className="odoo-field-label">Ubicacion</span><span className="odoo-field-value">{focusedPrinter.ubicacion || "-"}</span></div>
+                      <div className="odoo-field"><span className="odoo-field-label">Horas acumuladas</span><span className="odoo-field-value">{focusedPrinter.horas_uso_acumuladas} h</span></div>
+                      <div className="odoo-field"><span className="odoo-field-label">Coste por hora</span><span className="odoo-field-value">{currency(focusedPrinter.coste_hora)}</span></div>
+                      <div className="odoo-field"><span className="odoo-field-label">Orden activa</span><span className="odoo-field-value">{focusedPrinter.orden_activa_codigo || "-"}</span></div>
+                    </div>
+                    <div className="odoo-record-body">
+                      <div className="odoo-action-bar"><span className="eyebrow">Fabricaciones relacionadas</span></div>
+                      <div className="table-wrap">
+                        <table className="odoo-list-table">
+                          <thead>
+                            <tr>
+                              <th>Orden</th>
+                              <th>Pedido</th>
+                              <th>Producto</th>
+                              <th>Estado</th>
+                              <th>Cantidad</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {focusedPrinterManufacturing.length === 0 ? (
+                              <tr>
+                                <td colSpan={5} className="text-sm text-[color:var(--muted)]">Sin fabricaciones relacionadas.</td>
+                              </tr>
+                            ) : (
+                              focusedPrinterManufacturing.map((order) => (
+                                <tr key={order.id}>
+                                  <td>{order.codigo}</td>
+                                  <td>
+                                    <Link href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.pedido_codigo)}`} className="odoo-link">
+                                      {order.pedido_codigo}
+                                    </Link>
+                                  </td>
+                                  <td>{order.producto_nombre}</td>
+                                  <td>{manufacturingStatusLabels[order.estado]}</td>
+                                  <td>{order.cantidad}</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </article>
                 ) : null}
                 <div className="table-wrap table-scroll">
                   <PrintersInlineTable printers={prioritizedPrinters} focusedPrinterCode={focusedPrinterCode} />
@@ -2241,10 +2458,132 @@ export default async function Home({
                   itemLabel="productos"
                   allItemsText="Mostrando todos los productos"
                 />
-                {focusedProductCode ? (
-                  <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/85 px-4 py-3 text-sm text-sky-900">
-                    Mostrando la trazabilidad del producto <span className="font-semibold">{focusedProductCode}</span> abierto desde {productFocusOrigin ?? "cliente/pedido/factura"}.
-                  </div>
+                {focusedProduct ? (
+                  <article className="mt-4 odoo-record ring-2 ring-sky-200">
+                    <div className="odoo-record-header">
+                      <div>
+                        <p className="eyebrow">Producto</p>
+                        <h4 className="mt-2 text-[1.7rem] font-semibold tracking-[-0.04em] text-slate-950">{focusedProduct.nombre}</h4>
+                        <p className="mt-2 text-sm font-semibold text-sky-700">{focusedProduct.codigo}</p>
+                        <div className="mt-3 inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
+                          Producto abierto desde {productFocusOrigin ?? "cliente/pedido/factura"}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <StatusPill label={focusedProduct.activo ? "activo" : "archivado"} tone={focusedProduct.activo ? "success" : "neutral"} />
+                        <StatusPill
+                          label={
+                            focusedProductInventory
+                              ? `${focusedProductInventory.cantidad_disponible} uds`
+                              : "sin stock"
+                          }
+                          tone={focusedProductInventory?.cantidad_disponible ? "info" : "neutral"}
+                        />
+                      </div>
+                    </div>
+                    <div className="odoo-record-grid">
+                      <div className="odoo-field"><span className="odoo-field-label">Modelo</span><span className="odoo-field-value">{focusedProduct.enlace_modelo ? <a href={focusedProduct.enlace_modelo} className="odoo-link" target="_blank" rel="noreferrer">Abrir enlace</a> : "-"}</span></div>
+                      <div className="odoo-field"><span className="odoo-field-label">Material base</span><span className="odoo-field-value">{focusedProduct.material_nombre}</span></div>
+                      <div className="odoo-field"><span className="odoo-field-label">Gramos estimados</span><span className="odoo-field-value">{focusedProduct.gramos_estimados} g</span></div>
+                      <div className="odoo-field"><span className="odoo-field-label">Coste total</span><span className="odoo-field-value">{currency(focusedProduct.coste_total_producto)}</span></div>
+                      <div className="odoo-field"><span className="odoo-field-label">PVP</span><span className="odoo-field-value">{currency(focusedProduct.pvp)}</span></div>
+                      <div className="odoo-field"><span className="odoo-field-label">Margen</span><span className="odoo-field-value">{currency(focusedProduct.margen)}</span></div>
+                    </div>
+                    <div className="odoo-record-body space-y-4">
+                      <div>
+                        <div className="odoo-action-bar"><span className="eyebrow">Clientes que lo han comprado</span></div>
+                        <div className="table-wrap">
+                          <table className="odoo-list-table">
+                            <thead><tr><th>Cliente</th><th>Cantidad total</th></tr></thead>
+                            <tbody>
+                              {focusedProductCustomers.length === 0 ? (
+                                <tr><td colSpan={2} className="text-sm text-[color:var(--muted)]">Sin clientes relacionados.</td></tr>
+                              ) : (
+                                focusedProductCustomers.map((customer) => (
+                                  <tr key={`${focusedProduct.id}-${customer.clienteId}`}>
+                                    <td>
+                                      <Link href={`/?section=clientes&clienteId=${encodeURIComponent(customer.clienteCodigo)}`} className="odoo-link">
+                                        {customer.clienteCodigo} · {customer.clienteNombre}
+                                      </Link>
+                                    </td>
+                                    <td>{customer.cantidad} uds</td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="odoo-action-bar"><span className="eyebrow">Pedidos relacionados</span></div>
+                        <div className="table-wrap">
+                          <table className="odoo-list-table">
+                            <thead><tr><th>Pedido</th><th>Fecha</th><th>Estado</th><th>Cantidad</th></tr></thead>
+                            <tbody>
+                              {focusedProductOrders.length === 0 ? (
+                                <tr><td colSpan={4} className="text-sm text-[color:var(--muted)]">Sin pedidos relacionados.</td></tr>
+                              ) : (
+                                focusedProductOrders.map((order) => {
+                                  const quantity = order.lineas.filter((line) => line.producto_id === focusedProduct.id).reduce((sum, line) => sum + line.cantidad, 0);
+                                  return (
+                                    <tr key={`${focusedProduct.id}-${order.id}`}>
+                                      <td><Link href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.codigo)}`} className="odoo-link">{order.codigo}</Link></td>
+                                      <td>{dateLabel(order.fecha_pedido)}</td>
+                                      <td><StatusPill label={orderStatusLabels[order.estado]} tone={orderStatusTone(order.estado)} /></td>
+                                      <td>{quantity} uds</td>
+                                    </tr>
+                                  );
+                                })
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="odoo-action-bar"><span className="eyebrow">Facturas relacionadas</span></div>
+                        <div className="table-wrap">
+                          <table className="odoo-list-table">
+                            <thead><tr><th>Factura</th><th>Fecha</th><th>Estado</th><th>Total</th></tr></thead>
+                            <tbody>
+                              {focusedProductInvoices.length === 0 ? (
+                                <tr><td colSpan={4} className="text-sm text-[color:var(--muted)]">Sin facturas relacionadas.</td></tr>
+                              ) : (
+                                focusedProductInvoices.map((invoice) => (
+                                  <tr key={`${focusedProduct.id}-${invoice.id}`}>
+                                    <td><Link href={`/?section=facturas&facturaId=${encodeURIComponent(invoice.codigo)}`} className="odoo-link">{invoice.codigo}</Link></td>
+                                    <td>{dateLabel(invoice.fecha)}</td>
+                                    <td>{invoice.estado_pago.toLowerCase()}</td>
+                                    <td>{currency(invoice.total)}</td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="odoo-action-bar"><span className="eyebrow">Impresoras utilizadas</span></div>
+                        <div className="table-wrap">
+                          <table className="odoo-list-table">
+                            <thead><tr><th>Impresora</th><th>Fabricaciones</th><th>Cantidad fabricada</th></tr></thead>
+                            <tbody>
+                              {focusedProductPrinters.length === 0 ? (
+                                <tr><td colSpan={3} className="text-sm text-[color:var(--muted)]">Sin impresoras relacionadas.</td></tr>
+                              ) : (
+                                focusedProductPrinters.map((printer) => (
+                                  <tr key={`${focusedProduct.id}-${printer.impresoraId}`}>
+                                    <td><Link href={`/?section=impresoras&impresoraId=${encodeURIComponent(printer.impresoraCodigo)}&origen=producto`} className="odoo-link">{printer.impresoraCodigo} · {printer.impresoraNombre}</Link></td>
+                                    <td>{printer.fabricaciones}</td>
+                                    <td>{printer.cantidad} uds</td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </article>
                 ) : null}
                 <div className="table-wrap table-scroll">
                   <ProductsInlineTable
@@ -2262,6 +2601,7 @@ export default async function Home({
                     invoices={invoices}
                     manufacturingOrders={manufacturingOrders}
                     finishedInventory={finishedInventory}
+                    showFocusedDetails={false}
                   />
                 </div>
               </div>
@@ -2453,15 +2793,169 @@ export default async function Home({
                     itemLabel="clientes"
                     allItemsText="Mostrando todos los clientes"
                   />
-                    {focusedCustomerCode ? (
-                      <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50/85 px-4 py-3 text-sm text-sky-900">
-                        Mostrando la trazabilidad del cliente <span className="font-semibold">{focusedCustomerCode}</span> abierto desde {customerFocusOrigin ?? "pedido/factura/pago"}.
-                      </div>
-                    ) : null}
+                  {focusedCustomer ? (
+                    <div className="mt-4 odoo-page">
+                      <article className="odoo-record ring-2 ring-sky-200">
+                        <div className="odoo-record-header">
+                          <div>
+                            <p className="eyebrow">Cliente</p>
+                            <h4 className="mt-2 text-[1.7rem] font-semibold tracking-[-0.04em] text-slate-950">
+                              {focusedCustomer.nombre}
+                            </h4>
+                            <p className="mt-2 text-sm font-semibold text-sky-700">{focusedCustomer.codigo}</p>
+                            <div className="mt-3 inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-800">
+                              Cliente abierto desde {customerFocusOrigin ?? "pedido/factura/pago"}
+                            </div>
+                          </div>
+                          <StatusPill label={focusedCustomer.activo ? "activo" : "archivado"} tone={focusedCustomer.activo ? "success" : "neutral"} />
+                        </div>
+                        <div className="odoo-record-grid">
+                          <div className="odoo-field">
+                            <span className="odoo-field-label">Contacto</span>
+                            <span className="odoo-field-value">{focusedCustomer.telefono || focusedCustomer.email || "-"}</span>
+                          </div>
+                          <div className="odoo-field">
+                            <span className="odoo-field-label">Alta</span>
+                            <span className="odoo-field-value">{dateLabel(focusedCustomer.fecha_creacion)}</span>
+                          </div>
+                          <div className="odoo-field">
+                            <span className="odoo-field-label">Email</span>
+                            <span className="odoo-field-value">{focusedCustomer.email || "-"}</span>
+                          </div>
+                          <div className="odoo-field">
+                            <span className="odoo-field-label">Telefono</span>
+                            <span className="odoo-field-value">{focusedCustomer.telefono || "-"}</span>
+                          </div>
+                          <div className="odoo-field">
+                            <span className="odoo-field-label">Direccion</span>
+                            <span className="odoo-field-value">{focusedCustomer.direccion || "-"}</span>
+                          </div>
+                          <div className="odoo-field">
+                            <span className="odoo-field-label">Resumen</span>
+                            <span className="odoo-field-value">
+                              {focusedCustomerOrders.length} pedidos · {focusedCustomerInvoices.length} facturas · {focusedCustomerProducts.length} productos
+                            </span>
+                          </div>
+                        </div>
+                        <div className="odoo-record-body space-y-4">
+                          <div>
+                            <div className="odoo-action-bar">
+                              <span className="eyebrow">Pedidos relacionados</span>
+                            </div>
+                            <div className="table-wrap">
+                              <table className="odoo-list-table">
+                                <thead>
+                                  <tr>
+                                    <th>Pedido</th>
+                                    <th>Fecha</th>
+                                    <th>Estado</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {focusedCustomerOrders.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={3} className="text-sm text-[color:var(--muted)]">Sin pedidos registrados.</td>
+                                    </tr>
+                                  ) : (
+                                    focusedCustomerOrders.map((order) => (
+                                      <tr key={order.id}>
+                                        <td>
+                                          <Link href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.codigo)}`} className="odoo-link">
+                                            {order.codigo}
+                                          </Link>
+                                        </td>
+                                        <td>{dateLabel(order.fecha_pedido)}</td>
+                                        <td>
+                                          <StatusPill label={orderStatusLabels[order.estado]} tone={orderStatusTone(order.estado)} />
+                                        </td>
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                          <div>
+                            <div className="odoo-action-bar">
+                              <span className="eyebrow">Facturas relacionadas</span>
+                            </div>
+                            <div className="table-wrap">
+                              <table className="odoo-list-table">
+                                <thead>
+                                  <tr>
+                                    <th>Factura</th>
+                                    <th>Fecha</th>
+                                    <th>Estado</th>
+                                    <th>Total</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {focusedCustomerInvoices.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={4} className="text-sm text-[color:var(--muted)]">Sin facturas relacionadas.</td>
+                                    </tr>
+                                  ) : (
+                                    focusedCustomerInvoices.map((invoice) => (
+                                      <tr key={invoice.id}>
+                                        <td>
+                                          <Link href={`/?section=facturas&facturaId=${encodeURIComponent(invoice.codigo)}`} className="odoo-link">
+                                            {invoice.codigo}
+                                          </Link>
+                                        </td>
+                                        <td>{dateLabel(invoice.fecha)}</td>
+                                        <td>{invoice.estado_pago.toLowerCase()}</td>
+                                        <td>{currency(invoice.total)}</td>
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                          <div>
+                            <div className="odoo-action-bar">
+                              <span className="eyebrow">Productos comprados</span>
+                            </div>
+                            <div className="table-wrap">
+                              <table className="odoo-list-table">
+                                <thead>
+                                  <tr>
+                                    <th>Producto</th>
+                                    <th>Cantidad total</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {focusedCustomerProducts.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={2} className="text-sm text-[color:var(--muted)]">Sin productos comprados.</td>
+                                    </tr>
+                                  ) : (
+                                    focusedCustomerProducts.map((product) => (
+                                      <tr key={`${focusedCustomer.id}-${product.codigo}`}>
+                                        <td>
+                                          <Link
+                                            href={`/?section=productos&productoId=${encodeURIComponent(product.codigo)}&origen=cliente`}
+                                            className="odoo-link"
+                                          >
+                                            {product.codigo} · {product.nombre}
+                                          </Link>
+                                        </td>
+                                        <td>{product.cantidad} uds</td>
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    </div>
+                  ) : null}
                   <div className="table-wrap table-scroll">
                     <CustomersInlineTable
                       customers={filteredCustomers}
-                      focusedCustomerCode={focusedCustomerCode}
+                      focusedCustomerCode={null}
                       focusOriginLabel={customerFocusOrigin}
                       orders={orders.map((order) => ({
                         id: order.id,
