@@ -27,6 +27,13 @@ import {
 import { SubmitButton } from "./components/form-ui";
 import { FilterSummary } from "./components/filter-summary";
 import { getAppSnapshot, matchesOrderFocusCode, prioritizeOrdersByFocus } from "@/lib/erp-service";
+import {
+  INVOICE_STATUS_FILTERS,
+  MANUFACTURING_STATUS_FILTERS,
+  MANUFACTURING_STATUS_LABELS,
+  ORDER_STATUS_FILTERS,
+  ORDER_STATUS_LABELS,
+} from "@/lib/erp-status";
 
 const sectionKeys = [
   "dashboard",
@@ -56,23 +63,6 @@ const sectionLabels: Record<(typeof sectionKeys)[number], string> = {
   movimientos: "Movimientos",
 };
 
-const orderStatusLabels: Record<string, string> = {
-  BORRADOR: "borrador",
-  CONFIRMADO: "confirmado",
-  EN_PRODUCCION: "en produccion",
-  LISTO: "listo",
-  ENTREGADO: "entregado",
-  FACTURADO: "facturado",
-  INCIDENCIA_STOCK: "incidencia stock",
-};
-
-const manufacturingStatusLabels: Record<string, string> = {
-  PENDIENTE: "pendiente",
-  INICIADA: "iniciada",
-  COMPLETADA: "completada",
-  BLOQUEADA_POR_STOCK: "bloqueada por stock",
-};
-
 const printerStatusLabels: Record<string, string> = {
   LIBRE: "libre",
   IMPRIMIENDO: "imprimiendo",
@@ -90,6 +80,7 @@ const invoicePaymentLabels: Record<string, string> = {
   PENDIENTE: "pendientes",
   PARCIAL: "parciales",
   PAGADA: "pagadas",
+  VENCIDA: "vencidas",
 };
 
 function currency(value: number) {
@@ -126,6 +117,7 @@ function invoiceStatusFilterLabel(status: string) {
   if (status === "PENDIENTE") return "pendientes";
   if (status === "PARCIAL") return "parciales";
   if (status === "PAGADA") return "pagadas";
+  if (status === "VENCIDA") return "vencidas";
   return "todas";
 }
 
@@ -141,20 +133,14 @@ function toPlainData<T>(value: T): T {
 type Snapshot = Awaited<ReturnType<typeof getAppSnapshot>>;
 type OrderView = Snapshot["orders"][number];
 
-function badgeClass(tone: "success" | "warn" | "danger" | "info" | "neutral") {
+function badgeClass(tone: "success" | "warn" | "danger" | "info" | "neutral" | "accent" | "strong") {
   if (tone === "success") return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (tone === "warn") return "border-amber-200 bg-amber-50 text-amber-700";
   if (tone === "danger") return "border-rose-200 bg-rose-50 text-rose-700";
   if (tone === "info") return "border-sky-200 bg-sky-50 text-sky-700";
+  if (tone === "accent") return "border-violet-200 bg-violet-50 text-violet-700";
+  if (tone === "strong") return "border-slate-800 bg-slate-900 text-slate-50";
   return "border-black/10 bg-white text-[color:var(--muted)]";
-}
-
-function orderStatusTone(status: string) {
-  if (status === "FACTURADO") return "success";
-  if (status === "LISTO" || status === "ENTREGADO") return "info";
-  if (status === "INCIDENCIA_STOCK") return "danger";
-  if (status === "EN_PRODUCCION") return "warn";
-  return "neutral";
 }
 
 function cardHighlightClass(level?: "danger" | "warn" | "attention" | null) {
@@ -171,13 +157,17 @@ function cardHighlightClass(level?: "danger" | "warn" | "attention" | null) {
 }
 
 function orderNextStep(order: OrderView) {
-  if (order.estado === "BORRADOR") return "Confirmar pedido para reservar stock y decidir si sale de almacen o va a fabricacion.";
-  if (order.estado === "CONFIRMADO") return "Abrir fabricacion y arrancar las ordenes pendientes.";
-  if (order.estado === "EN_PRODUCCION") return "Completar la produccion pendiente para dejar el pedido listo.";
-  if (order.estado === "LISTO") return "Entregar el pedido al cliente.";
-  if (order.estado === "ENTREGADO") return "Generar la factura del pedido.";
-  if (order.estado === "INCIDENCIA_STOCK") return "Reponer material y reintentar la validacion.";
+  if (order.estado_derivado === "BORRADOR") return "Procesa el pedido para reservar stock y decidir si sale de almacen o va a fabricacion.";
+  if (order.tiene_incidencia_stock) return "Reponer material y volver a procesar el pedido para revalidar la planificacion.";
+  if (order.estado_derivado === "CONFIRMADO") return "Revisa la fabricacion pendiente antes de avanzar el pedido.";
+  if (order.estado_derivado === "EN_PRODUCCION") return "Completar la produccion pendiente para dejar el pedido listo.";
+  if (order.estado_derivado === "LISTO") return "Entregar el pedido al cliente.";
+  if (order.estado_derivado === "ENTREGADO") return "Generar la factura del pedido.";
   return "Pedido cerrado y trazado.";
+}
+
+function hasAction(actions: string[] | undefined, action: string) {
+  return Boolean(actions?.includes(action));
 }
 
 function movementQuantityLabel(movement: { inventario_tipo: string; cantidad: number }) {
@@ -215,7 +205,7 @@ function StatusPill({
   tone,
 }: {
   label: string;
-  tone: "success" | "warn" | "danger" | "info" | "neutral";
+  tone: "success" | "warn" | "danger" | "info" | "neutral" | "accent" | "strong";
 }) {
   return (
     <span className={`erp-badge ${badgeClass(tone)}`}>
@@ -596,7 +586,7 @@ export default async function Home({
   const filteredInvoicesBase =
     invoiceFilter === "ALL"
       ? invoices
-      : invoices.filter((invoice: Snapshot["invoices"][number]) => invoice.estado_pago === invoiceFilter);
+      : invoices.filter((invoice: Snapshot["invoices"][number]) => invoice.estado_pago_derivado === invoiceFilter);
   const filteredInvoices = focusedInvoiceCode
     ? [
         ...filteredInvoicesBase.filter((invoice) => invoice.codigo === focusedInvoiceCode),
@@ -627,9 +617,9 @@ export default async function Home({
     (sum, item) => sum + item.cantidad_disponible * item.coste_unitario,
     0,
   );
-  const openOrders = orders.filter((order) => order.estado !== "FACTURADO").length;
-  const pendingManufacturing = manufacturingOrders.filter((order) => order.estado !== "COMPLETADA").length;
-  const pendingInvoices = invoices.filter((invoice) => invoice.estado_pago !== "PAGADA").length;
+  const openOrders = orders.filter((order) => order.estado_derivado !== "FACTURADO").length;
+  const pendingManufacturing = manufacturingOrders.filter((order) => order.estado_derivado !== "COMPLETADA").length;
+  const pendingInvoices = invoices.filter((invoice) => invoice.estado_pago_derivado !== "PAGADA").length;
   const filteredPaymentsCount = dateFilteredInvoices.reduce((sum, invoice) => {
     return (
       sum +
@@ -652,12 +642,12 @@ export default async function Home({
   const rangedTotalCollected = dateFilteredInvoices.reduce((sum, invoice) => sum + invoice.total_pagado, 0);
   const rangedTotalOutstanding = dateFilteredInvoices.reduce((sum, invoice) => sum + invoice.importe_pendiente, 0);
   const rangedInvoiceCount = dateFilteredInvoices.length;
-  const rangedPendingInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PENDIENTE").length;
-  const rangedPartialInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PARCIAL").length;
-  const rangedPaidInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago === "PAGADA").length;
+  const rangedPendingInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago_derivado === "PENDIENTE").length;
+  const rangedPartialInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago_derivado === "PARCIAL").length;
+  const rangedPaidInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago_derivado === "PAGADA").length;
   const hasActiveOrderFilters = orderFilter !== "ALL";
   const activeOrderFilterSegments: string[] = [
-    hasActiveOrderFilters ? `estado: ${orderStatusLabels[orderFilter]}` : null,
+    hasActiveOrderFilters ? `estado: ${ORDER_STATUS_LABELS[orderFilter as keyof typeof ORDER_STATUS_LABELS]}` : null,
   ].filter((segment): segment is string => Boolean(segment));
   const hasActiveMaterialFilters = materialFilter !== "ALL";
   const activeMaterialFilterSegments: string[] = [
@@ -685,15 +675,15 @@ export default async function Home({
     invoiceDateStart ? `desde: ${invoiceDateStart}` : null,
     invoiceDateEnd ? `hasta: ${invoiceDateEnd}` : null,
   ].filter((segment): segment is string => Boolean(segment));
-  const readyToDeliver = orders.filter((order) => order.estado === "LISTO").length;
-  const readyToInvoice = orders.filter((order) => order.estado === "ENTREGADO").length;
+  const readyToDeliver = orders.filter((order) => order.estado_derivado === "LISTO").length;
+  const readyToInvoice = orders.filter((order) => order.estado_derivado === "ENTREGADO").length;
   const busyPrinters = printers.filter((printer) => printer.estado === "IMPRIMIENDO").length;
   const maintenancePrinters = activePrinters.filter((printer) => printer.estado === "MANTENIMIENTO");
-  const blockedOrders = orders.filter((order) => order.estado === "INCIDENCIA_STOCK");
-  const blockedManufacturing = manufacturingOrders.filter((order) => order.estado === "BLOQUEADA_POR_STOCK");
-  const pendingManufacturingOrders = manufacturingOrders.filter((order) => order.estado !== "COMPLETADA");
-  const partialInvoices = invoices.filter((invoice) => invoice.estado_pago === "PARCIAL");
-  const pendingPaymentInvoices = invoices.filter((invoice) => invoice.estado_pago === "PENDIENTE");
+  const blockedOrders = orders.filter((order) => order.tiene_incidencia_stock);
+  const blockedManufacturing = manufacturingOrders.filter((order) => order.tiene_incidencia_stock);
+  const pendingManufacturingOrders = manufacturingOrders.filter((order) => order.estado_derivado !== "COMPLETADA");
+  const partialInvoices = invoices.filter((invoice) => invoice.estado_pago_derivado === "PARCIAL");
+  const pendingPaymentInvoices = invoices.filter((invoice) => invoice.estado_pago_derivado === "PENDIENTE" || invoice.estado_pago_derivado === "VENCIDA");
   const lowStockPreview = lowStockMaterials
     .slice(0, 3)
     .map((material) => `${material.codigo} ${material.nombre} (${material.stock_actual_g}/${material.stock_minimo_g} g)`)
@@ -721,11 +711,11 @@ export default async function Home({
   const totalInvoiced = invoices.reduce((sum, invoice) => sum + invoice.total, 0);
   const totalCollected = invoices.reduce((sum, invoice) => sum + invoice.total_pagado, 0);
   const totalOutstanding = invoices.reduce((sum, invoice) => sum + invoice.importe_pendiente, 0);
-  const paidInvoicesCount = invoices.filter((invoice) => invoice.estado_pago === "PAGADA").length;
-  const activeOrdersCount = orders.filter((order) => order.estado !== "FACTURADO").length;
-  const ordersInProductionCount = orders.filter((order) => order.estado === "EN_PRODUCCION").length;
-  const deliveredOrdersCount = orders.filter((order) => order.estado === "ENTREGADO").length;
-  const activeManufacturingCount = manufacturingOrders.filter((order) => order.estado === "INICIADA").length;
+  const paidInvoicesCount = invoices.filter((invoice) => invoice.estado_pago_derivado === "PAGADA").length;
+  const activeOrdersCount = orders.filter((order) => order.estado_derivado !== "FACTURADO").length;
+  const ordersInProductionCount = orders.filter((order) => order.estado_derivado === "EN_PRODUCCION").length;
+  const deliveredOrdersCount = orders.filter((order) => order.estado_derivado === "ENTREGADO").length;
+  const activeManufacturingCount = manufacturingOrders.filter((order) => order.estado_derivado === "EN_CURSO").length;
   const availablePrintersCount = activePrinters.filter((printer) => printer.estado === "LIBRE").length;
   const unavailablePrinters = activePrinters.filter((printer) => printer.estado !== "LIBRE");
   const estimatedMaterialStockValue = activeMaterials.reduce(
@@ -736,7 +726,7 @@ export default async function Home({
   const productsById = new Map(products.map((product) => [product.id, product] as const));
   const topProductsByUnits = Array.from(
     orders
-      .filter((order) => order.estado !== "BORRADOR")
+      .filter((order) => order.estado_derivado !== "BORRADOR")
       .flatMap((order) => order.lineas)
       .reduce(
         (map, line) => {
@@ -795,15 +785,15 @@ export default async function Home({
     .sort((a, b) => b.orders - a.orders || a.codigo.localeCompare(b.codigo))
     .slice(0, 5);
   const pendingInvoiceRecords = [...invoices]
-    .filter((invoice) => invoice.estado_pago !== "PAGADA")
+    .filter((invoice) => invoice.estado_pago_derivado !== "PAGADA")
     .sort((a, b) => b.importe_pendiente - a.importe_pendiente || a.fecha.localeCompare(b.fecha))
     .slice(0, 5);
   const nonAvailablePrintersPreview = unavailablePrinters.slice(0, 5);
   const lowStockMaterialsPreview = lowStockMaterials.slice(0, 5);
   const dashboardActionLinks = [
     { href: "/?section=facturas&invoiceStatus=ALL", label: "Ver cobros", count: pendingInvoices },
-    { href: "/?section=pedidos&orderStatus=INCIDENCIA_STOCK", label: "Pedidos con incidencia", count: blockedOrders.length },
-    { href: "/?section=fabricacion&manufacturingStatus=INICIADA", label: "Fabricacion activa", count: activeManufacturingCount },
+    { href: "/?section=pedidos&orderStatus=EN_PRODUCCION", label: "Pedidos con incidencia", count: blockedOrders.length },
+    { href: "/?section=fabricacion&manufacturingStatus=EN_CURSO", label: "Fabricacion activa", count: activeManufacturingCount },
     { href: "/?section=impresoras&printerStatus=ALL&printerActiveFilter=ACTIVE", label: "Capacidad de impresoras", count: unavailablePrinters.length },
   ];
   const smartAlerts = [
@@ -816,7 +806,7 @@ export default async function Home({
               blockedOrders.length === 1
                 ? `Hay 1 pedido con incidencia de stock. ${blockedOrdersPreview}`
                 : `Hay ${blockedOrders.length} pedidos con incidencia de stock. ${blockedOrdersPreview}`,
-            href: "/?section=pedidos&orderStatus=INCIDENCIA_STOCK",
+            href: "/?section=pedidos&orderStatus=EN_PRODUCCION",
             actionLabel: "Ver pedidos",
           },
         ]
@@ -854,7 +844,7 @@ export default async function Home({
             description:
               blockedManufacturing.length > 0
                 ? `Hay ${pendingManufacturingOrders.length} ordenes sin completar, con ${blockedManufacturing.length} bloqueadas por stock. ${blockedManufacturingPreview}`
-                : `Hay ${pendingManufacturingOrders.length} ordenes sin completar, de las cuales ${manufacturingOrders.filter((order) => order.estado === "PENDIENTE").length} estan pendientes de iniciar.`,
+                : `Hay ${pendingManufacturingOrders.length} ordenes sin completar, de las cuales ${manufacturingOrders.filter((order) => order.estado_derivado === "PENDIENTE").length} estan pendientes de iniciar.`,
             href: "/?section=fabricacion",
             actionLabel: "Ver fabricacion",
           },
@@ -896,12 +886,12 @@ export default async function Home({
     {
       href: "/?section=pedidos&orderStatus=BORRADOR",
       label: "Pendientes de confirmar",
-      count: orders.filter((order) => order.estado === "BORRADOR").length,
+      count: orders.filter((order) => order.estado_derivado === "BORRADOR").length,
     },
     {
       href: "/?section=fabricacion&manufacturingStatus=PENDIENTE",
       label: "Pendientes de iniciar",
-      count: manufacturingOrders.filter((order) => order.estado === "PENDIENTE").length,
+      count: manufacturingOrders.filter((order) => order.estado_derivado === "PENDIENTE").length,
     },
     { href: "/?section=pedidos&orderStatus=LISTO", label: "Listos para entregar", count: readyToDeliver },
     { href: "/?section=pedidos&orderStatus=ENTREGADO", label: "Listos para facturar", count: readyToInvoice },
@@ -1073,7 +1063,7 @@ export default async function Home({
                   <DashboardKpiCard label="En fabricacion" value={ordersInProductionCount} detail="Pedidos ya lanzados" href="/?section=pedidos&orderStatus=EN_PRODUCCION" tone={ordersInProductionCount > 0 ? "warn" : "neutral"} />
                   <DashboardKpiCard label="Listos" value={readyToDeliver} detail="Preparados para entregar" href="/?section=pedidos&orderStatus=LISTO" tone={readyToDeliver > 0 ? "success" : "neutral"} />
                   <DashboardKpiCard label="Entregados" value={deliveredOrdersCount} detail="Pendientes de factura o cierre" href="/?section=pedidos&orderStatus=ENTREGADO" />
-                  <DashboardKpiCard label="Con incidencia" value={blockedOrders.length} detail="Bloqueados por stock" href="/?section=pedidos&orderStatus=INCIDENCIA_STOCK" tone={blockedOrders.length > 0 ? "danger" : "neutral"} />
+                  <DashboardKpiCard label="Con incidencia" value={blockedOrders.length} detail="Bloqueados por stock" href="/?section=pedidos&orderStatus=EN_PRODUCCION" tone={blockedOrders.length > 0 ? "danger" : "neutral"} />
                 </div>
               </article>
 
@@ -1086,8 +1076,8 @@ export default async function Home({
                   <StatusPill label={`${activePrinters.length} impresoras activas`} tone={busyPrinters > 0 ? "info" : "neutral"} />
                 </div>
                 <div className="odoo-record-grid">
-                  <DashboardKpiCard label="Ordenes activas" value={activeManufacturingCount} detail="Fabricacion iniciada" href="/?section=fabricacion&manufacturingStatus=INICIADA" tone={activeManufacturingCount > 0 ? "info" : "neutral"} />
-                  <DashboardKpiCard label="Ordenes pendientes" value={manufacturingOrders.filter((order) => order.estado === "PENDIENTE").length} detail="Aun sin arrancar" href="/?section=fabricacion&manufacturingStatus=PENDIENTE" tone={manufacturingOrders.some((order) => order.estado === "PENDIENTE") ? "warn" : "neutral"} />
+                  <DashboardKpiCard label="Ordenes activas" value={activeManufacturingCount} detail="Fabricacion iniciada" href="/?section=fabricacion&manufacturingStatus=EN_CURSO" tone={activeManufacturingCount > 0 ? "info" : "neutral"} />
+                  <DashboardKpiCard label="Ordenes pendientes" value={manufacturingOrders.filter((order) => order.estado_derivado === "PENDIENTE").length} detail="Aun sin arrancar" href="/?section=fabricacion&manufacturingStatus=PENDIENTE" tone={manufacturingOrders.some((order) => order.estado_derivado === "PENDIENTE") ? "warn" : "neutral"} />
                   <DashboardKpiCard label="Impresoras ocupadas" value={busyPrinters} detail="Ahora mismo imprimiendo" href="/?section=impresoras&printerStatus=IMPRIMIENDO&printerActiveFilter=ACTIVE" tone={busyPrinters > 0 ? "info" : "neutral"} />
                   <DashboardKpiCard label="Impresoras disponibles" value={availablePrintersCount} detail="Libres y activas" href="/?section=impresoras&printerStatus=LIBRE&printerActiveFilter=ACTIVE" tone={availablePrintersCount > 0 ? "success" : "warn"} />
                   <DashboardKpiCard label="Productos terminados" value={finishedInventory.length > 0 ? `${finishedUnits} uds` : "No disponible"} detail={finishedInventory.length > 0 ? "Stock disponible para venta" : "Sin inventario de producto terminado"} href="/?section=productos-terminados" />
@@ -1267,7 +1257,7 @@ export default async function Home({
                                   {invoice.codigo}
                                 </Link>
                               </td>
-                              <td><span className={`erp-badge ${badgeClass(invoice.estado_pago === "PENDIENTE" ? "danger" : "warn")}`}>{invoice.estado_pago.toLowerCase()}</span></td>
+                              <td><span className={`erp-badge ${badgeClass(invoice.estado_pago_badge_tone)}`}>{invoiceStatusFilterLabel(invoice.estado_pago_derivado)}</span></td>
                               <td>{currency(invoice.importe_pendiente)}</td>
                             </tr>
                           ))
@@ -1589,13 +1579,13 @@ export default async function Home({
                     </p>
                   </div>
                   {!focusedOrderCode ? <div className="flex flex-wrap gap-2">
-                    {["ALL", ...Object.keys(orderStatusLabels)].map((status) => (
+                    {["ALL", ...ORDER_STATUS_FILTERS].map((status) => (
                       <FilterLink
                         key={status}
                         href={`/?section=pedidos&orderStatus=${status}`}
-                        label={status === "ALL" ? "todos" : orderStatusLabels[status]}
+                        label={status === "ALL" ? "todos" : ORDER_STATUS_LABELS[status as keyof typeof ORDER_STATUS_LABELS]}
                         active={orderFilter === status}
-                        count={status === "ALL" ? orders.length : orders.filter((order) => order.estado === status).length}
+                        count={status === "ALL" ? orders.length : orders.filter((order) => order.estado_derivado === status).length}
                       />
                     ))}
                   </div> : null}
@@ -1629,7 +1619,7 @@ export default async function Home({
                               Pedido abierto desde {orderFocusOrigin ?? "factura/pago"}
                             </div>
                           </div>
-                          <StatusPill label={orderStatusLabels[focusedOrder.estado]} tone={orderStatusTone(focusedOrder.estado)} />
+                          <StatusPill label={ORDER_STATUS_LABELS[focusedOrder.estado_derivado as keyof typeof ORDER_STATUS_LABELS]} tone={focusedOrder.estado_badge_tone} />
                         </div>
                         <div className="odoo-record-grid">
                           <div className="odoo-field">
@@ -1645,11 +1635,11 @@ export default async function Home({
                           </div>
                           <div className="odoo-field">
                             <span className="odoo-field-label">Estado</span>
-                            <span className="odoo-field-value">{orderStatusLabels[focusedOrder.estado]}</span>
+                            <span className="odoo-field-value">{ORDER_STATUS_LABELS[focusedOrder.estado_derivado as keyof typeof ORDER_STATUS_LABELS]}</span>
                           </div>
                           <div className="odoo-field">
                             <span className="odoo-field-label">Pago</span>
-                            <span className="odoo-field-value">{focusedOrder.estado_pago.toLowerCase()}</span>
+                            <span className="odoo-field-value">{invoiceStatusFilterLabel(focusedOrder.estado_pago_derivado)}</span>
                           </div>
                           <div className="odoo-field">
                             <span className="odoo-field-label">Total</span>
@@ -1696,27 +1686,27 @@ export default async function Home({
                                 <p className="mt-2 text-sm text-[color:var(--muted-strong)]">{orderNextStep(focusedOrder)}</p>
                               </div>
                               <div className="flex flex-wrap gap-2">
-                                {(focusedOrder.estado === "BORRADOR" || focusedOrder.estado === "INCIDENCIA_STOCK") ? (
+                                {hasAction(focusedOrder.acciones_permitidas, "process_order") ? (
                                   <form action={processOrderAction}>
                                     <input type="hidden" name="pedidoId" value={focusedOrder.id} />
                                     <SubmitButton pendingText="Procesando pedido...">Procesar pedido</SubmitButton>
                                   </form>
                                 ) : null}
-                                {focusedOrder.estado === "LISTO" ? (
+                                {hasAction(focusedOrder.acciones_permitidas, "deliver_order") ? (
                                   <form action={deliverOrderAction}>
                                     <input type="hidden" name="pedidoId" value={focusedOrder.id} />
                                     <SubmitButton pendingText="Entregando pedido...">Entregar pedido</SubmitButton>
                                   </form>
                                 ) : null}
-                                {focusedOrder.estado === "ENTREGADO" ? (
+                                {hasAction(focusedOrder.acciones_permitidas, "invoice_order") ? (
                                   <form action={generateInvoiceAction}>
                                     <input type="hidden" name="pedidoId" value={focusedOrder.id} />
                                     <SubmitButton pendingText="Facturando pedido...">Facturar pedido</SubmitButton>
                                   </form>
                                 ) : null}
-                                {(focusedOrder.estado === "CONFIRMADO" || focusedOrder.estado === "EN_PRODUCCION") ? (
+                                {hasAction(focusedOrder.acciones_permitidas, "view_manufacturing") ? (
                                   <Link
-                                    href={`/?section=fabricacion${focusedOrder.estado === "CONFIRMADO" ? "&manufacturingStatus=PENDIENTE" : ""}`}
+                                    href={`/?section=fabricacion${focusedOrder.estado_derivado === "CONFIRMADO" ? "&manufacturingStatus=PENDIENTE" : ""}`}
                                     className="button-secondary"
                                   >
                                     Ver fabricacion
@@ -1729,7 +1719,7 @@ export default async function Home({
                                 ) : null}
                               </div>
                             </div>
-                            {focusedOrder.estado === "INCIDENCIA_STOCK" ? (
+                            {focusedOrder.tiene_incidencia_stock ? (
                               <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                                 Faltan materiales para completar el pedido. Puedes reponer stock y volver a procesarlo sin duplicar reservas.
                               </div>
@@ -1751,9 +1741,9 @@ export default async function Home({
                         <article
                           key={order.id}
                           className={`panel-muted p-5 ${
-                            order.estado === "INCIDENCIA_STOCK"
+                            order.tiene_incidencia_stock
                               ? cardHighlightClass("danger")
-                              : order.estado === "LISTO" || order.estado === "ENTREGADO"
+                              : order.estado_derivado === "LISTO" || order.estado_derivado === "ENTREGADO"
                                 ? cardHighlightClass("attention")
                                 : ""
                           }`}
@@ -1764,7 +1754,7 @@ export default async function Home({
                               <h4 className="mt-2 text-lg font-semibold">{order.cliente_nombre}</h4>
                               <p className="mt-2 text-sm text-[color:var(--muted)]">{dateLabel(order.fecha_pedido)}</p>
                             </div>
-                            <StatusPill label={orderStatusLabels[order.estado]} tone={orderStatusTone(order.estado)} />
+                            <StatusPill label={ORDER_STATUS_LABELS[order.estado_derivado as keyof typeof ORDER_STATUS_LABELS]} tone={order.estado_badge_tone} />
                           </div>
 
                           <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -1786,7 +1776,7 @@ export default async function Home({
                           <div className="mt-3 grid gap-3 sm:grid-cols-3">
                             <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
                               <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Estado pago</p>
-                              <p className="mt-2 text-sm font-semibold">{order.estado_pago.toLowerCase()}</p>
+                              <p className="mt-2 text-sm font-semibold">{invoiceStatusFilterLabel(order.estado_pago_derivado)}</p>
                             </div>
                             <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3">
                               <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Coste pedido</p>
@@ -1820,7 +1810,7 @@ export default async function Home({
                           </div>
 
                           <div className="mt-4 flex flex-wrap gap-2">
-                            {order.estado === "BORRADOR" ? (
+                            {hasAction(order.acciones_permitidas, "process_order") ? (
                               <form action={confirmOrderAction}>
                                 <input type="hidden" name="pedidoId" value={order.id} />
                                 <SubmitButton variant="chip-dark" pendingText="Confirmando...">
@@ -1828,7 +1818,7 @@ export default async function Home({
                                 </SubmitButton>
                               </form>
                             ) : null}
-                            {order.estado === "INCIDENCIA_STOCK" ? (
+                            {order.tiene_incidencia_stock ? (
                               <>
                                 <form action={retryOrderAction}>
                                   <input type="hidden" name="pedidoId" value={order.id} />
@@ -1844,15 +1834,15 @@ export default async function Home({
                                 </Link>
                               </>
                             ) : null}
-                            {(order.estado === "CONFIRMADO" || order.estado === "EN_PRODUCCION") && order.ordenesFabricacion.length > 0 ? (
+                            {hasAction(order.acciones_permitidas, "view_manufacturing") ? (
                               <Link
-                                href={`/?section=fabricacion${order.estado === "CONFIRMADO" ? "&manufacturingStatus=PENDIENTE" : ""}`}
+                                href={`/?section=fabricacion${order.estado_derivado === "CONFIRMADO" ? "&manufacturingStatus=PENDIENTE" : ""}`}
                                 className="inline-flex items-center rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[color:var(--muted)]"
                               >
                                 Ver fabricacion
                               </Link>
                             ) : null}
-                            {order.estado === "LISTO" ? (
+                            {hasAction(order.acciones_permitidas, "deliver_order") ? (
                               <form action={deliverOrderAction}>
                                 <input type="hidden" name="pedidoId" value={order.id} />
                                 <SubmitButton variant="chip-dark" pendingText="Entregando...">
@@ -1860,7 +1850,7 @@ export default async function Home({
                                 </SubmitButton>
                               </form>
                             ) : null}
-                            {order.estado === "ENTREGADO" ? (
+                            {hasAction(order.acciones_permitidas, "invoice_order") ? (
                               <form action={generateInvoiceAction}>
                                 <input type="hidden" name="pedidoId" value={order.id} />
                                 <SubmitButton variant="chip-dark" pendingText="Facturando...">
@@ -1933,16 +1923,16 @@ export default async function Home({
                                 className={`${
                                   matchesOrderFocusCode(order, focusedOrderCode)
                                     ? "bg-sky-50/85 ring-1 ring-inset ring-sky-200"
-                                    : order.estado === "INCIDENCIA_STOCK"
+                                    : order.tiene_incidencia_stock
                                       ? "row-danger"
-                                      : order.estado === "LISTO" || order.estado === "ENTREGADO"
+                                      : order.estado_derivado === "LISTO" || order.estado_derivado === "ENTREGADO"
                                         ? "row-attention"
                                         : ""
                                 }`}
                               >
                                 <td>
                                   <div className="table-action-group">
-                                    {order.estado === "BORRADOR" ? (
+                                    {hasAction(order.acciones_permitidas, "process_order") ? (
                                       <form action={processOrderAction}>
                                         <input type="hidden" name="pedidoId" value={order.id} />
                                         <SubmitButton variant="chip-dark" pendingText="Procesando...">
@@ -1950,15 +1940,7 @@ export default async function Home({
                                         </SubmitButton>
                                       </form>
                                     ) : null}
-                                    {order.estado === "INCIDENCIA_STOCK" ? (
-                                      <form action={processOrderAction}>
-                                        <input type="hidden" name="pedidoId" value={order.id} />
-                                        <SubmitButton variant="chip-dark" pendingText="Procesando...">
-                                          Procesar pedido
-                                        </SubmitButton>
-                                      </form>
-                                    ) : null}
-                                    {order.estado === "LISTO" ? (
+                                    {hasAction(order.acciones_permitidas, "deliver_order") ? (
                                       <form action={deliverOrderAction}>
                                         <input type="hidden" name="pedidoId" value={order.id} />
                                         <SubmitButton variant="chip-dark" pendingText="Entregando...">
@@ -1966,7 +1948,7 @@ export default async function Home({
                                         </SubmitButton>
                                       </form>
                                     ) : null}
-                                    {order.estado === "ENTREGADO" ? (
+                                    {hasAction(order.acciones_permitidas, "invoice_order") ? (
                                       <form action={generateInvoiceAction}>
                                         <input type="hidden" name="pedidoId" value={order.id} />
                                         <SubmitButton variant="chip-dark" pendingText="Facturando...">
@@ -1992,11 +1974,11 @@ export default async function Home({
                                 </td>
                                 <td>{dateLabel(order.fecha_pedido)}</td>
                                 <td>
-                                  <StatusPill label={orderStatusLabels[order.estado]} tone={orderStatusTone(order.estado)} />
+                                  <StatusPill label={ORDER_STATUS_LABELS[order.estado_derivado as keyof typeof ORDER_STATUS_LABELS]} tone={order.estado_badge_tone} />
                                 </td>
                                 <td>
-                                  <span className={`erp-badge ${order.estado_pago === "PAGADA" ? badgeClass("success") : badgeClass("neutral")}`}>
-                                    {order.estado_pago.toLowerCase()}
+                                  <span className={`erp-badge ${badgeClass(order.estado_pago_badge_tone)}`}>
+                                    {invoiceStatusFilterLabel(order.estado_pago_derivado)}
                                   </span>
                                 </td>
                                 <td>{currency(order.total)}</td>
@@ -2038,16 +2020,16 @@ export default async function Home({
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {["ALL", ...Object.keys(manufacturingStatusLabels)].map((status) => (
+                  {["ALL", ...MANUFACTURING_STATUS_FILTERS].map((status) => (
                     <FilterLink
                       key={status}
                       href={`/?section=fabricacion&manufacturingStatus=${status}`}
-                      label={status === "ALL" ? "todas" : manufacturingStatusLabels[status]}
+                      label={status === "ALL" ? "todas" : MANUFACTURING_STATUS_LABELS[status as keyof typeof MANUFACTURING_STATUS_LABELS]}
                       active={manufacturingFilter === status}
                       count={
                         status === "ALL"
                           ? manufacturingOrders.length
-                          : manufacturingOrders.filter((order) => order.estado === status).length
+                          : manufacturingOrders.filter((order) => order.estado_derivado === status).length
                       }
                     />
                   ))}
@@ -2253,7 +2235,7 @@ export default async function Home({
                   >
                     Exportar pagos CSV
                   </a>
-                  {Object.keys(invoicePaymentLabels).map((status) => (
+                  {["ALL", ...INVOICE_STATUS_FILTERS].map((status) => (
                     <FilterLink
                       key={status}
                       href={`/?section=facturas&invoiceStatus=${status}&fecha_inicio=${encodeURIComponent(invoiceDateStart)}&fecha_fin=${encodeURIComponent(invoiceDateEnd)}`}
@@ -2262,7 +2244,7 @@ export default async function Home({
                       count={
                         status === "ALL"
                           ? invoices.length
-                          : invoices.filter((invoice) => invoice.estado_pago === status).length
+                          : invoices.filter((invoice) => invoice.estado_pago_derivado === status).length
                       }
                     />
                   ))}
@@ -2440,7 +2422,7 @@ export default async function Home({
                                     </Link>
                                   </td>
                                   <td>{order.producto_nombre}</td>
-                                  <td>{manufacturingStatusLabels[order.estado]}</td>
+                                  <td>{MANUFACTURING_STATUS_LABELS[order.estado_derivado as keyof typeof MANUFACTURING_STATUS_LABELS]}</td>
                                   <td>{order.cantidad}</td>
                                 </tr>
                               ))
@@ -2642,7 +2624,7 @@ export default async function Home({
                                     <tr key={`${focusedProduct.id}-${order.id}`}>
                                       <td><Link href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.codigo)}`} className="odoo-link">{order.codigo}</Link></td>
                                       <td>{dateLabel(order.fecha_pedido)}</td>
-                                      <td><StatusPill label={orderStatusLabels[order.estado]} tone={orderStatusTone(order.estado)} /></td>
+                                      <td><StatusPill label={ORDER_STATUS_LABELS[order.estado_derivado as keyof typeof ORDER_STATUS_LABELS]} tone={order.estado_badge_tone} /></td>
                                       <td>{quantity} uds</td>
                                     </tr>
                                   );
@@ -2665,7 +2647,7 @@ export default async function Home({
                                   <tr key={`${focusedProduct.id}-${invoice.id}`}>
                                     <td><Link href={`/?section=facturas&facturaId=${encodeURIComponent(invoice.codigo)}`} className="odoo-link">{invoice.codigo}</Link></td>
                                     <td>{dateLabel(invoice.fecha)}</td>
-                                    <td>{invoice.estado_pago.toLowerCase()}</td>
+                                    <td>{invoiceStatusFilterLabel(invoice.estado_pago_derivado)}</td>
                                     <td>{currency(invoice.total)}</td>
                                   </tr>
                                 ))
@@ -2982,7 +2964,7 @@ export default async function Home({
                                         </td>
                                         <td>{dateLabel(order.fecha_pedido)}</td>
                                         <td>
-                                          <StatusPill label={orderStatusLabels[order.estado]} tone={orderStatusTone(order.estado)} />
+                                          <StatusPill label={ORDER_STATUS_LABELS[order.estado_derivado as keyof typeof ORDER_STATUS_LABELS]} tone={order.estado_badge_tone} />
                                         </td>
                                       </tr>
                                     ))
@@ -3019,7 +3001,7 @@ export default async function Home({
                                           </Link>
                                         </td>
                                         <td>{dateLabel(invoice.fecha)}</td>
-                                        <td>{invoice.estado_pago.toLowerCase()}</td>
+                                        <td>{invoiceStatusFilterLabel(invoice.estado_pago_derivado)}</td>
                                         <td>{currency(invoice.total)}</td>
                                       </tr>
                                     ))
@@ -3079,6 +3061,8 @@ export default async function Home({
                         cliente_id: order.cliente_id,
                         fecha_pedido: order.fecha_pedido,
                         estado: order.estado,
+                        estado_derivado: order.estado_derivado,
+                        estado_badge_tone: order.estado_badge_tone,
                         lineas: order.lineas.map((line) => ({
                           id: line.id,
                           producto_codigo: line.producto_codigo,
@@ -3092,6 +3076,8 @@ export default async function Home({
                         cliente_id: invoice.cliente_id,
                         fecha: invoice.fecha,
                         estado_pago: invoice.estado_pago,
+                        estado_pago_derivado: invoice.estado_pago_derivado,
+                        estado_pago_badge_tone: invoice.estado_pago_badge_tone,
                         total: invoice.total,
                       }))}
                     />

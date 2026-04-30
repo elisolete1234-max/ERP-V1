@@ -4,9 +4,9 @@ import { Fragment, useState, type FormEvent } from "react";
 import {
   collectInvoicePaymentAction,
   completeManufacturingAction,
-  confirmOrderAction,
   deliverOrderAction,
   generateInvoiceAction,
+  processOrderAction,
   registerInvoicePaymentAction,
   retryOrderAction,
   toggleCustomerActiveAction,
@@ -22,6 +22,14 @@ import {
   updatePrinterAction,
   updateProductAction,
 } from "@/app/actions";
+import {
+  deriveInvoiceStatus,
+  getInvoiceStatusTone,
+  INVOICE_STATUS_LABELS,
+  MANUFACTURING_STATUS_LABELS,
+  ORDER_STATUS_LABELS,
+} from "@/lib/erp-status";
+import type { StatusTone } from "@/lib/erp-status";
 import { SubmitButton } from "./form-ui";
 
 type Customer = {
@@ -101,6 +109,10 @@ type ManufacturingOrder = {
   producto_nombre: string;
   impresora_codigo: string | null;
   impresora_nombre: string | null;
+  estado_derivado: string;
+  estado_badge_tone: StatusTone;
+  tiene_incidencia_stock: boolean;
+  acciones_permitidas: string[];
 };
 
 type Invoice = {
@@ -117,6 +129,9 @@ type Invoice = {
   total_pagado: number;
   importe_pendiente: number;
   estado_pago: string;
+  estado_pago_derivado: string;
+  estado_pago_badge_tone: StatusTone;
+  acciones_permitidas: string[];
   pedido_codigo: string;
   cliente_nombre: string;
   pagos: Array<{
@@ -186,6 +201,8 @@ type CustomerOrderSummary = {
   cliente_id: string;
   fecha_pedido: string;
   estado: string;
+  estado_derivado: string;
+  estado_badge_tone: StatusTone;
   lineas: Array<{
     id: string;
     producto_codigo: string;
@@ -200,6 +217,8 @@ type CustomerInvoiceSummary = {
   cliente_id: string;
   fecha: string;
   estado_pago: string;
+  estado_pago_derivado: string;
+  estado_pago_badge_tone: StatusTone;
   total: number;
 };
 
@@ -225,7 +244,13 @@ type OrderCard = {
   cliente_nombre: string;
   fecha_pedido: string;
   estado: string;
+  estado_derivado: string;
+  estado_badge_tone: StatusTone;
+  tiene_incidencia_stock: boolean;
+  acciones_permitidas: string[];
   estado_pago: string;
+  estado_pago_derivado: string;
+  estado_pago_badge_tone: StatusTone;
   subtotal: number;
   descuento: number;
   iva: number;
@@ -253,7 +278,7 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-function badgeClasses(tone: "neutral" | "success" | "warn" | "danger" | "info") {
+function badgeClasses(tone: "neutral" | "success" | "warn" | "danger" | "info" | "accent" | "strong") {
   if (tone === "success") {
     return "border border-emerald-200 bg-emerald-50/90 text-emerald-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]";
   }
@@ -265,6 +290,12 @@ function badgeClasses(tone: "neutral" | "success" | "warn" | "danger" | "info") 
   }
   if (tone === "info") {
     return "border border-sky-200 bg-sky-50/90 text-sky-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]";
+  }
+  if (tone === "accent") {
+    return "border border-violet-200 bg-violet-50/90 text-violet-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]";
+  }
+  if (tone === "strong") {
+    return "border border-slate-800 bg-slate-900 text-slate-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]";
   }
   return "border border-black/10 bg-white/90 text-[color:var(--muted-strong)] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]";
 }
@@ -283,9 +314,7 @@ function orderTone(status: string) {
 }
 
 function paymentTone(status: string) {
-  if (status === "PAGADA") return "success";
-  if (status === "PARCIAL") return "info";
-  return "warn";
+  return getInvoiceStatusTone(status as never);
 }
 
 function paymentMethodLabel(method: string) {
@@ -296,8 +325,11 @@ function deriveInvoicePaymentView(invoice: Pick<Invoice, "total" | "total_pagado
   const total = Number(invoice.total.toFixed(2));
   const totalPaid = Number(invoice.total_pagado.toFixed(2));
   const pendingAmount = Number(Math.max(total - totalPaid, 0).toFixed(2));
-  const paymentStatus =
-    totalPaid <= 0 ? "PENDIENTE" : totalPaid < total ? "PARCIAL" : "PAGADA";
+  const paymentStatus = deriveInvoiceStatus({
+    total,
+    total_pagado: totalPaid,
+    importe_pendiente: pendingAmount,
+  });
   const canRegisterPayment = pendingAmount > 0 && totalPaid < total;
 
   return {
@@ -320,16 +352,8 @@ function rowHighlight(level?: "danger" | "warn" | "attention" | null) {
   return "";
 }
 
-function orderStatusTone(status: string) {
-  if (status === "FACTURADO") return "success";
-  if (status === "LISTO" || status === "ENTREGADO") return "info";
-  if (status === "INCIDENCIA_STOCK") return "danger";
-  if (status === "BORRADOR" || status === "CONFIRMADO" || status === "EN_PRODUCCION") return "warn";
-  return "neutral";
-}
-
 function orderStatusLabel(status: string) {
-  return status.toLowerCase().replaceAll("_", " ");
+  return ORDER_STATUS_LABELS[status as keyof typeof ORDER_STATUS_LABELS] ?? status.toLowerCase().replaceAll("_", " ");
 }
 
 const tableInputClass = "input table-input";
@@ -724,8 +748,8 @@ export function CustomersInlineTable({
                               </td>
                               <td>{formatDate(order.fecha_pedido)}</td>
                               <td>
-                                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(orderStatusTone(order.estado))}`}>
-                                  {orderStatusLabel(order.estado)}
+                                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_badge_tone)}`}>
+                                  {orderStatusLabel(order.estado_derivado)}
                                 </span>
                               </td>
                             </tr>
@@ -760,8 +784,8 @@ export function CustomersInlineTable({
                               </td>
                               <td>{formatDate(invoice.fecha)}</td>
                               <td>
-                                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>
-                                  {invoice.estado_pago.toLowerCase()}
+                                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(invoice.estado_pago_badge_tone)}`}>
+                                  {INVOICE_STATUS_LABELS[invoice.estado_pago_derivado as keyof typeof INVOICE_STATUS_LABELS] ?? invoice.estado_pago_derivado.toLowerCase()}
                                 </span>
                               </td>
                               <td>{formatCurrency(invoice.total)}</td>
@@ -981,8 +1005,8 @@ export function CustomersInlineTable({
                               </td>
                               <td>{formatDate(order.fecha_pedido)}</td>
                               <td>
-                                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(orderStatusTone(order.estado))}`}>
-                                  {orderStatusLabel(order.estado)}
+                                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_badge_tone)}`}>
+                                  {orderStatusLabel(order.estado_derivado)}
                                 </span>
                               </td>
                               <td>{quantity} uds</td>
@@ -1019,8 +1043,8 @@ export function CustomersInlineTable({
                             </td>
                             <td>{formatDate(invoice.fecha)}</td>
                             <td>
-                              <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>
-                                {invoice.estado_pago.toLowerCase()}
+                              <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(invoice.estado_pago_badge_tone)}`}>
+                                {INVOICE_STATUS_LABELS[invoice.estado_pago_derivado as keyof typeof INVOICE_STATUS_LABELS] ?? invoice.estado_pago_derivado.toLowerCase()}
                               </span>
                             </td>
                             <td>{formatCurrency(invoice.total)}</td>
@@ -1183,8 +1207,8 @@ export function CustomersInlineTable({
                                 >
                                   <span className="font-semibold text-sky-800">{order.codigo}</span>
                                   <span className="text-slate-600">{formatDate(order.fecha_pedido)}</span>
-                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${badgeClasses(orderStatusTone(order.estado))}`}>
-                                    {orderStatusLabel(order.estado)}
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${badgeClasses(order.estado_badge_tone)}`}>
+                                    {orderStatusLabel(order.estado_derivado)}
                                   </span>
                                 </a>
                               ))
@@ -1205,8 +1229,8 @@ export function CustomersInlineTable({
                                 >
                                   <span className="font-semibold text-sky-800">{invoice.codigo}</span>
                                   <span className="text-slate-600">{formatDate(invoice.fecha)}</span>
-                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>
-                                    {invoice.estado_pago.toLowerCase()}
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${badgeClasses(invoice.estado_pago_badge_tone)}`}>
+                                    {INVOICE_STATUS_LABELS[invoice.estado_pago_derivado as keyof typeof INVOICE_STATUS_LABELS] ?? invoice.estado_pago_derivado.toLowerCase()}
                                   </span>
                                   <span className="font-semibold text-slate-900">{formatCurrency(invoice.total)}</span>
                                 </a>
@@ -1282,9 +1306,9 @@ export function OrdersInlineBoard({
               className={`odoo-record ${
                 focused
                   ? "ring-2 ring-[color:var(--brand)] ring-offset-2 ring-offset-[color:var(--surface)] shadow-[0_22px_55px_rgba(37,99,235,0.18)]"
-                : order.estado === "INCIDENCIA_STOCK"
+                : order.tiene_incidencia_stock
                 ? rowHighlight("danger")
-                : order.estado === "LISTO" || order.estado === "ENTREGADO"
+                : order.estado_derivado === "LISTO" || order.estado_derivado === "ENTREGADO"
                   ? rowHighlight("attention")
                   : ""
             }`}
@@ -1420,11 +1444,11 @@ export function OrdersInlineBoard({
                           <p className="mt-2 text-sm text-[color:var(--muted)]">{formatDate(order.fecha_pedido)}</p>
                         </div>
                         <div className="flex flex-col items-end gap-2">
-                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(orderStatusTone(order.estado))}`}>
-                            {orderStatusLabel(order.estado)}
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_badge_tone)}`}>
+                            {orderStatusLabel(order.estado_derivado)}
                           </span>
-                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_pago === "PAGADA" ? "success" : "neutral")}`}>
-                            pago: {order.estado_pago.toLowerCase()}
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_pago_badge_tone)}`}>
+                            pago: {INVOICE_STATUS_LABELS[order.estado_pago_derivado as keyof typeof INVOICE_STATUS_LABELS] ?? order.estado_pago_derivado.toLowerCase()}
                           </span>
                             {focused ? (
                               <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("info")}`}>
@@ -1527,20 +1551,20 @@ export function OrdersInlineBoard({
                       <PencilIcon />
                     </button>
                   ) : null}
-                  {order.estado === "BORRADOR" ? (
-                    <form action={confirmOrderAction}>
+                  {order.acciones_permitidas.includes("process_order") ? (
+                    <form action={processOrderAction}>
                       <input type="hidden" name="pedidoId" value={order.id} />
                       <SubmitButton
                         variant="icon-dark"
                         pendingText={<SpinnerIcon />}
-                        title="Confirmar pedido"
-                        aria-label="Confirmar pedido"
+                        title="Procesar pedido"
+                        aria-label="Procesar pedido"
                       >
                         <CheckIcon />
                       </SubmitButton>
                     </form>
                   ) : null}
-                  {order.estado === "INCIDENCIA_STOCK" ? (
+                  {order.tiene_incidencia_stock ? (
                     <form action={retryOrderAction}>
                       <input type="hidden" name="pedidoId" value={order.id} />
                       <SubmitButton
@@ -1553,7 +1577,7 @@ export function OrdersInlineBoard({
                       </SubmitButton>
                     </form>
                   ) : null}
-                  {order.estado === "LISTO" ? (
+                  {order.acciones_permitidas.includes("deliver_order") ? (
                     <form action={deliverOrderAction}>
                       <input type="hidden" name="pedidoId" value={order.id} />
                       <SubmitButton
@@ -1566,7 +1590,7 @@ export function OrdersInlineBoard({
                       </SubmitButton>
                     </form>
                   ) : null}
-                  {order.estado === "ENTREGADO" ? (
+                  {order.acciones_permitidas.includes("invoice_order") ? (
                     <form action={generateInvoiceAction}>
                       <input type="hidden" name="pedidoId" value={order.id} />
                       <SubmitButton
@@ -1579,7 +1603,7 @@ export function OrdersInlineBoard({
                       </SubmitButton>
                     </form>
                   ) : null}
-                  {(order.estado === "CONFIRMADO" || order.estado === "EN_PRODUCCION") && order.ordenesFabricacion.length > 0 ? (
+                  {order.acciones_permitidas.includes("view_manufacturing") ? (
                     <span className="rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[color:var(--muted)]">
                       Fabricacion pendiente en cola
                     </span>
@@ -1742,7 +1766,7 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
                             <tr key={`${focusedProduct.id}-${order.id}`}>
                               <td><a href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.codigo)}`} className="odoo-link">{order.codigo}</a></td>
                               <td>{formatDate(order.fecha_pedido)}</td>
-                              <td><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(orderStatusTone(order.estado))}`}>{orderStatusLabel(order.estado)}</span></td>
+                              <td><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_badge_tone)}`}>{orderStatusLabel(order.estado_derivado)}</span></td>
                               <td>{quantity} uds</td>
                             </tr>
                           );
@@ -1766,7 +1790,7 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
                           <tr key={`${focusedProduct.id}-${invoice.id}`}>
                             <td><a href={`/?section=facturas&facturaId=${encodeURIComponent(invoice.codigo)}`} className="odoo-link">{invoice.codigo}</a></td>
                             <td>{formatDate(invoice.fecha)}</td>
-                            <td><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>{invoice.estado_pago.toLowerCase()}</span></td>
+                            <td><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(invoice.estado_pago_badge_tone)}`}>{INVOICE_STATUS_LABELS[invoice.estado_pago_derivado as keyof typeof INVOICE_STATUS_LABELS] ?? invoice.estado_pago_derivado.toLowerCase()}</span></td>
                             <td>{formatCurrency(invoice.total)}</td>
                           </tr>
                         ))}
@@ -2117,8 +2141,8 @@ export function ProductsInlineTable({
             </div>
             <div className="odoo-record-body">
               {activeProductTab === "customers" ? (customerPurchases.length === 0 ? <div className="odoo-muted-box text-sm text-[color:var(--muted)]">Sin clientes relacionados.</div> : <div className="table-wrap"><table className="odoo-list-table"><thead><tr><th>Cliente</th><th>Cantidad total</th></tr></thead><tbody>{customerPurchases.map((customer) => <tr key={`${focusedProduct.id}-${customer.clienteId}`}><td><a href={`/?section=clientes&clienteId=${encodeURIComponent(customer.clienteCodigo)}`} className="odoo-link">{customer.clienteCodigo} · {customer.clienteNombre}</a></td><td>{customer.cantidad} uds</td></tr>)}</tbody></table></div>) : null}
-              {activeProductTab === "orders" ? (productOrders.length === 0 ? <div className="odoo-muted-box text-sm text-[color:var(--muted)]">Sin pedidos relacionados.</div> : <div className="table-wrap"><table className="odoo-list-table"><thead><tr><th>Pedido</th><th>Fecha</th><th>Estado</th><th>Cantidad</th></tr></thead><tbody>{productOrders.map((order) => { const quantity = order.lineas.filter((line) => line.producto_id === focusedProduct.id).reduce((sum, line) => sum + line.cantidad, 0); return <tr key={`${focusedProduct.id}-${order.id}`}><td><a href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.codigo)}`} className="odoo-link">{order.codigo}</a></td><td>{formatDate(order.fecha_pedido)}</td><td><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(orderStatusTone(order.estado))}`}>{orderStatusLabel(order.estado)}</span></td><td>{quantity} uds</td></tr>; })}</tbody></table></div>) : null}
-              {activeProductTab === "invoices" ? (relatedInvoices.length === 0 ? <div className="odoo-muted-box text-sm text-[color:var(--muted)]">Sin facturas relacionadas.</div> : <div className="table-wrap"><table className="odoo-list-table"><thead><tr><th>Factura</th><th>Fecha</th><th>Estado</th><th>Total</th></tr></thead><tbody>{relatedInvoices.map((invoice) => <tr key={`${focusedProduct.id}-${invoice.id}`}><td><a href={`/?section=facturas&facturaId=${encodeURIComponent(invoice.codigo)}`} className="odoo-link">{invoice.codigo}</a></td><td>{formatDate(invoice.fecha)}</td><td><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(invoice.estado_pago))}`}>{invoice.estado_pago.toLowerCase()}</span></td><td>{formatCurrency(invoice.total)}</td></tr>)}</tbody></table></div>) : null}
+              {activeProductTab === "orders" ? (productOrders.length === 0 ? <div className="odoo-muted-box text-sm text-[color:var(--muted)]">Sin pedidos relacionados.</div> : <div className="table-wrap"><table className="odoo-list-table"><thead><tr><th>Pedido</th><th>Fecha</th><th>Estado</th><th>Cantidad</th></tr></thead><tbody>{productOrders.map((order) => { const quantity = order.lineas.filter((line) => line.producto_id === focusedProduct.id).reduce((sum, line) => sum + line.cantidad, 0); return <tr key={`${focusedProduct.id}-${order.id}`}><td><a href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.codigo)}`} className="odoo-link">{order.codigo}</a></td><td>{formatDate(order.fecha_pedido)}</td><td><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_badge_tone)}`}>{orderStatusLabel(order.estado_derivado)}</span></td><td>{quantity} uds</td></tr>; })}</tbody></table></div>) : null}
+              {activeProductTab === "invoices" ? (relatedInvoices.length === 0 ? <div className="odoo-muted-box text-sm text-[color:var(--muted)]">Sin facturas relacionadas.</div> : <div className="table-wrap"><table className="odoo-list-table"><thead><tr><th>Factura</th><th>Fecha</th><th>Estado</th><th>Total</th></tr></thead><tbody>{relatedInvoices.map((invoice) => <tr key={`${focusedProduct.id}-${invoice.id}`}><td><a href={`/?section=facturas&facturaId=${encodeURIComponent(invoice.codigo)}`} className="odoo-link">{invoice.codigo}</a></td><td>{formatDate(invoice.fecha)}</td><td><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(invoice.estado_pago_badge_tone)}`}>{INVOICE_STATUS_LABELS[invoice.estado_pago_derivado as keyof typeof INVOICE_STATUS_LABELS] ?? invoice.estado_pago_derivado.toLowerCase()}</span></td><td>{formatCurrency(invoice.total)}</td></tr>)}</tbody></table></div>) : null}
               {activeProductTab === "printers" ? (printerUsage.length === 0 ? <div className="odoo-muted-box text-sm text-[color:var(--muted)]">Sin impresoras relacionadas.</div> : <div className="table-wrap"><table className="odoo-list-table"><thead><tr><th>Impresora</th><th>Fabricaciones</th><th>Cantidad fabricada</th></tr></thead><tbody>{printerUsage.map((printer) => <tr key={`${focusedProduct.id}-${printer.impresoraId}`}><td><a href={`/?section=impresoras&impresoraId=${encodeURIComponent(printer.impresoraCodigo)}&origen=producto`} className="odoo-link">{printer.impresoraCodigo} · {printer.impresoraNombre}</a></td><td>{printer.fabricaciones}</td><td>{printer.cantidad} uds</td></tr>)}</tbody></table></div>) : null}
             </div>
           </article>
@@ -2500,9 +2524,9 @@ export function ManufacturingInlineTable({
             <tr
               key={order.id}
               className={rowHighlight(
-                order.estado === "BLOQUEADA_POR_STOCK" || order.incidencia
+                order.tiene_incidencia_stock || order.incidencia
                   ? "danger"
-                  : order.estado === "INICIADA"
+                  : order.estado_derivado === "EN_CURSO"
                     ? "attention"
                     : null,
               )}
@@ -2512,7 +2536,7 @@ export function ManufacturingInlineTable({
                   <input type="hidden" name="id" value={order.id} />
                 </form>
                 <div className="table-action-group">
-                  {!editing && (order.estado === "PENDIENTE" || order.estado === "INICIADA") ? (
+                  {!editing && order.acciones_permitidas.includes("complete_manufacturing") ? (
                     <form action={completeManufacturingAction}>
                       <input type="hidden" name="fabricacionId" value={order.id} />
                       <SubmitButton
@@ -2553,8 +2577,8 @@ export function ManufacturingInlineTable({
                     <option value="BLOQUEADA_POR_STOCK">bloqueada_por_stock</option>
                   </select>
                 ) : (
-                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(orderTone(order.estado))}`}>
-                    {order.estado.toLowerCase()}
+                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_badge_tone)}`}>
+                    {MANUFACTURING_STATUS_LABELS[order.estado_derivado as keyof typeof MANUFACTURING_STATUS_LABELS] ?? order.estado_derivado.toLowerCase()}
                   </span>
                 )}
               </td>

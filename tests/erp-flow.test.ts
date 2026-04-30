@@ -3,6 +3,13 @@ import assert from "node:assert/strict";
 import { buildCsvFilename, formatCsvDateTime, formatCsvMoney, serializeCsv } from "../lib/csv";
 import { row, rows, run } from "../lib/db";
 import {
+  deriveInvoiceStatus,
+  deriveManufacturingStatus,
+  deriveOrderStatus,
+  getNextAllowedActions,
+  normalizeOrderStatus,
+} from "../lib/erp-status";
+import {
   collectInvoicePayment,
   completeManufacturingOrder,
   completeManufacturingWorkflow,
@@ -131,6 +138,38 @@ test("serializeCsv escapa comillas, delimitadores y preserva encabezados", () =>
   );
 });
 
+test("los helpers de estado normalizan estados legacy y exponen acciones permitidas", () => {
+  assert.equal(normalizeOrderStatus("INCIDENCIA_STOCK"), "EN_PRODUCCION");
+  assert.equal(
+    deriveOrderStatus({
+      estado: "CONFIRMADO",
+      ordenesFabricacion: [{ estado: "PENDIENTE" }],
+    }),
+    "EN_PRODUCCION",
+  );
+  assert.equal(deriveManufacturingStatus({ estado: "INICIADA" }), "EN_CURSO");
+  assert.equal(
+    deriveInvoiceStatus({
+      fecha: "2026-03-01T10:00:00.000Z",
+      total: 100,
+      total_pagado: 0,
+      importe_pendiente: 100,
+      now: new Date("2026-04-29T10:00:00.000Z"),
+    }),
+    "VENCIDA",
+  );
+  assert.deepEqual(
+    getNextAllowedActions({
+      module: "order",
+      rawStatus: "INCIDENCIA_STOCK",
+      derivedStatus: "EN_PRODUCCION",
+      hasManufacturing: true,
+      hasStockIncident: true,
+    }),
+    ["process_order", "restock_material", "view_manufacturing"],
+  );
+});
+
 test("helpers CSV formatean importes, fechas y nombres de archivo de forma estable", () => {
   assert.equal(formatCsvMoney(1234.5), "1234,50");
   assert.equal(formatCsvDateTime("2026-04-17T08:05:00"), "2026-04-17 08:05");
@@ -232,12 +271,56 @@ test("procesar pedido reutiliza la logica existente y evita duplicados al pulsar
   assert.equal(firstRun.action, "processed");
   assert.equal(firstRun.fromStockUnits, 2);
   assert.equal(firstRun.toManufactureUnits, 2);
-  assert.equal(firstRun.orderStatus, "CONFIRMADO");
+  assert.equal(firstRun.orderStatus, "EN_PRODUCCION");
   assert.equal(secondRun.action, "noop");
-  assert.equal(secondRun.orderStatus, "CONFIRMADO");
+  assert.equal(secondRun.orderStatus, "EN_PRODUCCION");
   assert.equal(stock.cantidad_disponible, 0);
   assert.equal(manufacturingCount.total, 1);
   assert.equal(order.estado, "CONFIRMADO");
+});
+
+test("el snapshot expone estados derivados y acciones coherentes para pedidos, fabricacion y facturas", async () => {
+  const { customerId, productId } = await setupSingleProductFixture({ materialStock: 50, grams: 100 });
+  const blockedOrderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 2 }],
+  });
+
+  await processOrder(blockedOrderId);
+
+  let snapshot = await getAppSnapshot();
+  let visibleOrder = snapshot.orders.find((item) => item.id === blockedOrderId);
+  const visibleManufacturing = snapshot.manufacturingOrders.find((item) => item.pedido_id === blockedOrderId);
+
+  assert.ok(visibleOrder);
+  assert.equal(visibleOrder!.estado, "INCIDENCIA_STOCK");
+  assert.equal(visibleOrder!.estado_derivado, "EN_PRODUCCION");
+  assert.equal(visibleOrder!.tiene_incidencia_stock, true);
+  assert.deepEqual(visibleOrder!.acciones_permitidas, ["process_order", "restock_material", "view_manufacturing"]);
+
+  assert.ok(visibleManufacturing);
+  assert.equal(visibleManufacturing!.estado, "BLOQUEADA_POR_STOCK");
+  assert.equal(visibleManufacturing!.estado_derivado, "PENDIENTE");
+  assert.deepEqual(visibleManufacturing!.acciones_permitidas, ["restock_material"]);
+
+  await restockFinishedProduct(productId, 1, "Stock listo para facturar", "A1", 12);
+  const invoiceReadyOrderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 1 }],
+  });
+  await processOrder(invoiceReadyOrderId);
+  await deliverOrderWorkflow(invoiceReadyOrderId);
+  await invoiceOrderWorkflow(invoiceReadyOrderId);
+
+  snapshot = await getAppSnapshot();
+  visibleOrder = snapshot.orders.find((item) => item.id === invoiceReadyOrderId);
+  const visibleInvoice = snapshot.invoices.find((item) => item.pedido_id === invoiceReadyOrderId);
+
+  assert.ok(visibleOrder);
+  assert.ok(visibleInvoice);
+  assert.equal(visibleOrder!.estado_derivado, "FACTURADO");
+  assert.equal(visibleInvoice!.estado_pago_derivado, "PENDIENTE");
+  assert.deepEqual(visibleInvoice!.acciones_permitidas, ["collect_invoice_payment", "open_payment_detail"]);
 });
 
 test("flujo mixto usa stock terminado y fabrica el resto", async () => {

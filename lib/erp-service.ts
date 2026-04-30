@@ -1,5 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { row, rows, run, transaction } from "./db";
+import {
+  deriveInvoiceStatus,
+  deriveManufacturingStatus,
+  deriveOrderStatus,
+  getNextAllowedActions,
+  getInvoiceStatusTone,
+  getManufacturingStatusTone,
+  getOrderStatusTone,
+} from "./erp-status";
 
 type LineInput = {
   productId: string;
@@ -1026,10 +1035,8 @@ export async function getAppSnapshot() {
      ORDER BY o.fecha_pedido DESC`,
   );
 
-  const orders = await Promise.all(ordersBase.map(async (order) => ({
-    ...order,
-    subtotal: roundMoney(order.total + (order.descuento ?? 0)),
-    lineas: await rows<{
+  const orders = await Promise.all(ordersBase.map(async (order) => {
+    const lineas = await rows<{
       id: string;
       codigo: string;
       pedido_id: string;
@@ -1067,15 +1074,15 @@ export async function getAppSnapshot() {
        WHERE l.pedido_id = ?
        ORDER BY l.codigo ASC`,
       order.id,
-    ),
-    historial: await rows<{
+    );
+    const historial = await rows<{
       id: string;
       pedido_id: string;
       estado: string;
       nota: string;
       fecha: string;
-    }>(`SELECT * FROM order_status_history WHERE pedido_id = ? ORDER BY fecha DESC`, order.id),
-    ordenesFabricacion: await rows<{
+    }>(`SELECT * FROM order_status_history WHERE pedido_id = ? ORDER BY fecha DESC`, order.id);
+    const ordenesFabricacion = await rows<{
       id: string;
       codigo: string;
       pedido_id: string;
@@ -1094,11 +1101,60 @@ export async function getAppSnapshot() {
     }>(
       `SELECT * FROM manufacturing_orders WHERE pedido_id = ? ORDER BY codigo ASC`,
       order.id,
-    ),
-    factura: (await row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, order.id)) ?? null,
-  })));
+    );
+    const factura =
+      (await row<{
+        id: string;
+        fecha: string;
+        total: number;
+        total_pagado: number;
+        importe_pendiente: number;
+        estado_pago: string;
+      }>(
+        `SELECT id, fecha, total, total_pagado, importe_pendiente, estado_pago
+         FROM invoices
+         WHERE pedido_id = ?`,
+        order.id,
+      )) ?? null;
+    const estadoDerivado = deriveOrderStatus({
+      estado: order.estado,
+      factura,
+      lineas,
+      ordenesFabricacion,
+    });
+    const estadoPagoDerivado = factura
+      ? deriveInvoiceStatus(factura)
+      : order.estado_pago === "PAGADA"
+        ? "PAGADA"
+        : order.estado_pago === "PARCIAL"
+          ? "PARCIAL"
+          : "PENDIENTE";
 
-  const manufacturingOrders = await rows<{
+    return {
+      ...order,
+      subtotal: roundMoney(order.total + (order.descuento ?? 0)),
+      lineas,
+      historial,
+      ordenesFabricacion,
+      factura: factura ? { id: factura.id } : null,
+      estado_derivado: estadoDerivado,
+      estado_badge_tone: getOrderStatusTone(estadoDerivado),
+      tiene_incidencia_stock: order.estado === "INCIDENCIA_STOCK",
+      acciones_permitidas: getNextAllowedActions({
+        module: "order",
+        rawStatus: order.estado,
+        derivedStatus: estadoDerivado,
+        hasInvoice: Boolean(factura),
+        hasManufacturing: ordenesFabricacion.length > 0,
+        hasStockIncident: order.estado === "INCIDENCIA_STOCK",
+        invoiceStatus: factura ? deriveInvoiceStatus(factura) : null,
+      }),
+      estado_pago_derivado: estadoPagoDerivado,
+      estado_pago_badge_tone: getInvoiceStatusTone(estadoPagoDerivado),
+    };
+  }));
+
+  const manufacturingOrdersBase = await rows<{
     id: string;
     codigo: string;
     pedido_id: string;
@@ -1130,6 +1186,23 @@ export async function getAppSnapshot() {
      LEFT JOIN printers pr ON pr.id = mo.impresora_id
      ORDER BY mo.codigo ASC`,
   );
+  const manufacturingOrders = manufacturingOrdersBase.map((order) => {
+    const estadoDerivado = deriveManufacturingStatus(order);
+    const tieneIncidenciaStock = order.estado === "BLOQUEADA_POR_STOCK";
+
+    return {
+      ...order,
+      estado_derivado: estadoDerivado,
+      estado_badge_tone: getManufacturingStatusTone(estadoDerivado),
+      tiene_incidencia_stock: tieneIncidenciaStock,
+      acciones_permitidas: getNextAllowedActions({
+        module: "manufacturing",
+        rawStatus: order.estado,
+        derivedStatus: estadoDerivado,
+        hasStockIncident: tieneIncidenciaStock,
+      }),
+    };
+  });
 
   const stockMovements = await rows<{
     id: string;
@@ -1182,6 +1255,12 @@ export async function getAppSnapshot() {
       const importePendiente = roundMoney(Math.max(invoice.total - totalPagado, 0));
       const estadoPago =
         totalPagado <= 0 ? "PENDIENTE" : totalPagado < invoice.total ? "PARCIAL" : "PAGADA";
+      const estadoPagoDerivado = deriveInvoiceStatus({
+        fecha: invoice.fecha,
+        total: invoice.total,
+        total_pagado: totalPagado,
+        importe_pendiente: importePendiente,
+      });
 
       const pagos = await rows<{
         id: string;
@@ -1202,6 +1281,12 @@ export async function getAppSnapshot() {
         total_pagado: totalPagado,
         importe_pendiente: importePendiente,
         estado_pago: estadoPago,
+        estado_pago_derivado: estadoPagoDerivado,
+        estado_pago_badge_tone: getInvoiceStatusTone(estadoPagoDerivado),
+        acciones_permitidas: getNextAllowedActions({
+          module: "invoice",
+          derivedStatus: estadoPagoDerivado,
+        }),
         pagos: withPaymentDisplayCodes(pagos, invoice.pedido_codigo),
       };
     }),
@@ -2817,7 +2902,14 @@ export async function processOrder(orderId: string) {
   if (order.estado === "BORRADOR" || order.estado === "INCIDENCIA_STOCK") {
     const confirmation = await confirmOrder(orderId);
     const refreshedOrder = await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, orderId);
-    const nextStatus = refreshedOrder?.estado ?? order.estado;
+    const manufacturingStatuses = await rows<{ estado: string }>(
+      `SELECT estado FROM manufacturing_orders WHERE pedido_id = ?`,
+      orderId,
+    );
+    const nextStatus = deriveOrderStatus({
+      estado: refreshedOrder?.estado ?? order.estado,
+      ordenesFabricacion: manufacturingStatuses,
+    });
     const message = confirmation.ok
       ? confirmation.toManufactureUnits > 0
         ? `Pedido ${order.codigo} procesado. ${confirmation.fromStockUnits} uds reservadas y ${confirmation.toManufactureUnits} uds enviadas a fabricacion.`
@@ -2844,11 +2936,15 @@ export async function processOrder(orderId: string) {
     ENTREGADO: `El pedido ${order.codigo} ya estaba entregado.`,
     FACTURADO: `El pedido ${order.codigo} ya estaba facturado.`,
   };
+  const manufacturingStatuses = await rows<{ estado: string }>(
+    `SELECT estado FROM manufacturing_orders WHERE pedido_id = ?`,
+    orderId,
+  );
 
   return {
     action: "noop" as const,
     orderCode: order.codigo,
-    orderStatus: order.estado,
+    orderStatus: deriveOrderStatus({ estado: order.estado, ordenesFabricacion: manufacturingStatuses }),
     ok: order.estado !== "INCIDENCIA_STOCK",
     incidents: [],
     fromStockUnits: 0,
@@ -3308,8 +3404,8 @@ export async function completeManufacturingWorkflow(manufacturingOrderId: string
     return {
       action: "noop" as const,
       manufacturingCode: manufacturingOrder.codigo,
-      manufacturingStatus: manufacturingOrder.estado,
-      orderStatus: order?.estado ?? "LISTO",
+      manufacturingStatus: deriveManufacturingStatus(manufacturingOrder.estado),
+      orderStatus: deriveOrderStatus({ estado: order?.estado ?? "LISTO" }),
       autoStarted: false,
       message: `La fabricacion ${manufacturingOrder.codigo} ya estaba completada.`,
       tone: "success" as WorkflowTone,
@@ -3337,8 +3433,8 @@ export async function completeManufacturingWorkflow(manufacturingOrderId: string
   return {
     action: "completed" as const,
     manufacturingCode: manufacturingOrder.codigo,
-    manufacturingStatus: "COMPLETADA",
-    orderStatus: refreshed?.estado ?? "LISTO",
+    manufacturingStatus: "COMPLETADA" as const,
+    orderStatus: deriveOrderStatus({ estado: refreshed?.estado ?? "LISTO" }),
     autoStarted,
     grams: completion.grams,
     totalHours: completion.totalHours,
@@ -3403,7 +3499,7 @@ export async function deliverOrderWorkflow(orderId: string) {
     return {
       action: "noop" as const,
       orderCode: order.codigo,
-      orderStatus: order.estado,
+      orderStatus: deriveOrderStatus({ estado: order.estado, factura: order.estado === "FACTURADO" }),
       message:
         order.estado === "FACTURADO"
           ? `El pedido ${order.codigo} ya estaba facturado y entregado.`
@@ -3417,7 +3513,7 @@ export async function deliverOrderWorkflow(orderId: string) {
   return {
     action: "delivered" as const,
     orderCode: order.codigo,
-    orderStatus: "ENTREGADO",
+    orderStatus: "ENTREGADO" as const,
     message: `Pedido ${order.codigo} entregado correctamente.`,
     tone: "success" as WorkflowTone,
   };
@@ -3495,7 +3591,7 @@ export async function invoiceOrderWorkflow(orderId: string) {
       action: "noop" as const,
       orderCode: order.codigo,
       invoiceCode: existingInvoice.codigo,
-      orderStatus: order.estado,
+      orderStatus: deriveOrderStatus({ estado: order.estado, factura: true }),
       message: `El pedido ${order.codigo} ya tiene la factura ${existingInvoice.codigo}.`,
       tone: "success" as WorkflowTone,
     };
@@ -3509,7 +3605,7 @@ export async function invoiceOrderWorkflow(orderId: string) {
     action: "invoiced" as const,
     orderCode: order.codigo,
     invoiceCode: invoice?.codigo ?? null,
-    orderStatus: "FACTURADO",
+    orderStatus: "FACTURADO" as const,
     message: invoice?.codigo
       ? `Factura ${invoice.codigo} generada para el pedido ${order.codigo}.`
       : `Factura generada para el pedido ${order.codigo}.`,
@@ -3517,7 +3613,11 @@ export async function invoiceOrderWorkflow(orderId: string) {
   };
 }
 
-export async function collectInvoicePayment(invoiceId: string, paymentMethod: PaymentMethod = "TRANSFERENCIA") {
+export async function collectInvoicePayment(
+  invoiceId: string,
+  paymentMethod: PaymentMethod = "TRANSFERENCIA",
+  amountToCollect?: number,
+) {
   await syncInvoicePaymentSummary(invoiceId);
 
   const invoice = await row<{
@@ -3549,7 +3649,12 @@ export async function collectInvoicePayment(invoiceId: string, paymentMethod: Pa
     };
   }
 
-  const amount = roundMoney(invoice.importe_pendiente);
+  const requestedAmount =
+    amountToCollect == null ? invoice.importe_pendiente : Math.min(amountToCollect, invoice.importe_pendiente);
+  const amount = roundMoney(requestedAmount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("El cobro debe ser mayor que cero.");
+  }
   await createInvoicePaymentRecord({
     facturaId: invoice.id,
     metodoPago: paymentMethod,
@@ -3567,7 +3672,11 @@ export async function collectInvoicePayment(invoiceId: string, paymentMethod: Pa
   return {
     action: "collected" as const,
     invoiceCode: invoice.codigo,
-    paymentStatus: refreshed?.estado_pago ?? "PAGADA",
+    paymentStatus: deriveInvoiceStatus({
+      total: invoice.total,
+      total_pagado: refreshed?.total_pagado ?? invoice.total_pagado + amount,
+      importe_pendiente: refreshed?.importe_pendiente ?? Math.max(invoice.importe_pendiente - amount, 0),
+    }),
     amountCollected: amount,
     totalPaid: refreshed?.total_pagado ?? invoice.total,
     pendingAmount: refreshed?.importe_pendiente ?? 0,
