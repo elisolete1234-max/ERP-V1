@@ -460,6 +460,46 @@ test("el snapshot principal ordena los listados del mas nuevo al mas antiguo", a
   assert.equal(snapshot.inventoryMovements[0].referencia, "PED-002");
 });
 
+test("el snapshot de fabricacion ordena por codigo descendente cuando faltan fechas y mantiene para stock arriba", async () => {
+  const { customerId, productId, materialId } = await setupSingleProductFixture({ materialStock: 5000 });
+  const firstOrderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 1 }],
+  });
+  const secondOrderId = await createOrderRecord({
+    clienteId: customerId,
+    lines: [{ productId, quantity: 1 }],
+  });
+  await confirmOrder(firstOrderId);
+  await confirmOrder(secondOrderId);
+  const linkedManufacturing = await rows<{ id: string }>(
+    `SELECT id
+     FROM manufacturing_orders
+     ORDER BY codigo ASC`,
+  );
+  const stockManufacturing = await createStockManufacturingOrder({
+    productId,
+    quantity: 2,
+    materialId,
+  });
+
+  await run(`UPDATE manufacturing_orders SET codigo = ?, fecha_inicio = NULL, fecha_fin = NULL WHERE id = ?`, "OF-001", linkedManufacturing[0].id);
+  await run(`UPDATE manufacturing_orders SET codigo = ?, fecha_inicio = NULL, fecha_fin = NULL WHERE id = ?`, "OF-002", linkedManufacturing[1].id);
+  await run(`UPDATE manufacturing_orders SET codigo = ?, fecha_inicio = NULL, fecha_fin = NULL WHERE id = ?`, "OF-008", stockManufacturing.manufacturingId);
+
+  const snapshot = await getAppSnapshot();
+  const codes = snapshot.manufacturingOrders.slice(0, 3).map((item) => item.codigo);
+  const stockOrder = snapshot.manufacturingOrders.find((item) => item.id === stockManufacturing.manufacturingId);
+  const pendingCodes = snapshot.manufacturingOrders
+    .filter((item) => item.estado_derivado === "PENDIENTE")
+    .map((item) => item.codigo)
+    .slice(0, 3);
+
+  assert.deepEqual(codes, ["OF-008", "OF-002", "OF-001"]);
+  assert.equal(stockOrder?.origen_fabricacion, "PARA_STOCK");
+  assert.deepEqual(pendingCodes, ["OF-008", "OF-002", "OF-001"]);
+});
+
 test("flujo mixto usa stock terminado y fabrica el resto", async () => {
   const { customerId, productId, materialId } = await setupSingleProductFixture({ materialStock: 1000, grams: 120, hours: 3, electricity: 2 });
   await restockFinishedProduct(productId, 1, "Carga inicial", "A1", 9);

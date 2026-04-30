@@ -204,13 +204,18 @@ function compareIsoDateDescending(a: string | null | undefined, b: string | null
 function sortByNewest<T extends Record<string, unknown>>(items: T[], options: {
   dateKeys?: Array<keyof T>;
   codeKeys?: Array<keyof T>;
+  fallbackToCodeWhenDateMissing?: boolean;
 }) {
   return [...items].sort((left, right) => {
     for (const key of options.dateKeys ?? []) {
-      const comparison = compareIsoDateDescending(
-        typeof left[key] === "string" ? (left[key] as string) : null,
-        typeof right[key] === "string" ? (right[key] as string) : null,
-      );
+      const leftValue = typeof left[key] === "string" ? (left[key] as string) : null;
+      const rightValue = typeof right[key] === "string" ? (right[key] as string) : null;
+
+      if (options.fallbackToCodeWhenDateMissing && (!leftValue?.trim() || !rightValue?.trim())) {
+        continue;
+      }
+
+      const comparison = compareIsoDateDescending(leftValue, rightValue);
       if (comparison !== 0) {
         return comparison;
       }
@@ -1361,7 +1366,7 @@ export async function getAppSnapshot() {
         hasStockIncident: tieneIncidenciaStock,
       }),
     };
-  }), { dateKeys: ["fecha_inicio", "fecha_fin"], codeKeys: ["codigo"] });
+  }), { dateKeys: ["fecha_inicio", "fecha_fin"], codeKeys: ["codigo"], fallbackToCodeWhenDateMissing: true });
 
   const stockMovementsBase = await rows<{
     id: string;
