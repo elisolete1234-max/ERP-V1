@@ -161,6 +161,71 @@ function parseBoolean(value: number) {
   return value === 1;
 }
 
+function compareCodeDescending(a: string | null | undefined, b: string | null | undefined) {
+  const left = a?.trim() ?? "";
+  const right = b?.trim() ?? "";
+  const leftMatch = left.match(/(\d+)(?!.*\d)/);
+  const rightMatch = right.match(/(\d+)(?!.*\d)/);
+  const leftNumber = leftMatch ? Number(leftMatch[1]) : Number.NaN;
+  const rightNumber = rightMatch ? Number(rightMatch[1]) : Number.NaN;
+
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber) && leftNumber !== rightNumber) {
+    return rightNumber - leftNumber;
+  }
+
+  if (right && left && right !== left) {
+    return right.localeCompare(left);
+  }
+
+  return 0;
+}
+
+function compareIsoDateDescending(a: string | null | undefined, b: string | null | undefined) {
+  const left = a?.trim() ?? "";
+  const right = b?.trim() ?? "";
+
+  if (left && right && left !== right) {
+    return right.localeCompare(left);
+  }
+  if (right && !left) {
+    return 1;
+  }
+  if (left && !right) {
+    return -1;
+  }
+
+  return 0;
+}
+
+function sortByNewest<T extends Record<string, unknown>>(items: T[], options: {
+  dateKeys?: Array<keyof T>;
+  codeKeys?: Array<keyof T>;
+}) {
+  return [...items].sort((left, right) => {
+    for (const key of options.dateKeys ?? []) {
+      const comparison = compareIsoDateDescending(
+        typeof left[key] === "string" ? (left[key] as string) : null,
+        typeof right[key] === "string" ? (right[key] as string) : null,
+      );
+      if (comparison !== 0) {
+        return comparison;
+      }
+    }
+
+    for (const key of options.codeKeys ?? []) {
+      const comparison = compareCodeDescending(
+        typeof left[key] === "string" ? (left[key] as string) : null,
+        typeof right[key] === "string" ? (right[key] as string) : null,
+      );
+      if (comparison !== 0) {
+        return comparison;
+      }
+    }
+
+    return 0;
+  });
+}
+
 async function nextCode(table: string, prefix: string) {
   const result = await row<{ codigo: string }>(
     `SELECT codigo FROM ${table} WHERE codigo LIKE ? ORDER BY codigo DESC LIMIT 1`,
@@ -934,11 +999,11 @@ export async function getAppSnapshot() {
     direccion: string | null;
     activo: number;
     fecha_creacion: string;
-  }>(`SELECT * FROM customers ORDER BY fecha_creacion DESC`);
-  const normalizedCustomers = customers.map((customer) => ({
+  }>(`SELECT * FROM customers`);
+  const normalizedCustomers = sortByNewest(customers.map((customer) => ({
     ...customer,
     activo: parseBoolean(customer.activo),
-  }));
+  })), { dateKeys: ["fecha_creacion"], codeKeys: ["codigo"] });
 
   const materialsBase = await rows<{
     id: string;
@@ -962,11 +1027,11 @@ export async function getAppSnapshot() {
     notas: string | null;
     activo: number;
     fecha_actualizacion: string;
-  }>(`SELECT * FROM materials ORDER BY nombre ASC`);
-  const materials = materialsBase.map((material) => ({
+  }>(`SELECT * FROM materials`);
+  const materials = sortByNewest(materialsBase.map((material) => ({
     ...material,
     activo: Boolean(material.activo),
-  }));
+  })), { codeKeys: ["codigo"] });
 
   const productsBase = await rows<{
     id: string;
@@ -990,11 +1055,10 @@ export async function getAppSnapshot() {
   }>(
     `SELECT p.*, m.nombre AS material_nombre, m.precio_kg
      FROM products p
-     JOIN materials m ON m.id = p.material_id
-     ORDER BY p.nombre ASC`,
+     JOIN materials m ON m.id = p.material_id`,
   );
 
-  const products = productsBase.map((product) => {
+  const products = sortByNewest(productsBase.map((product) => {
     const costeMaterial = roundMoney((product.precio_kg / 1000) * product.gramos_estimados);
     const costeTotalReceta = roundMoney(
       costeMaterial +
@@ -1010,7 +1074,7 @@ export async function getAppSnapshot() {
       coste_material_estimado: costeMaterial,
       coste_total_producto: costeTotalReceta,
     };
-  });
+  }), { codeKeys: ["codigo"] });
 
   const ordersBase = await rows<{
     id: string;
@@ -1031,11 +1095,10 @@ export async function getAppSnapshot() {
   }>(
     `SELECT o.*, c.codigo AS cliente_codigo, c.nombre AS cliente_nombre
      FROM orders o
-     JOIN customers c ON c.id = o.cliente_id
-     ORDER BY o.fecha_pedido DESC`,
+     JOIN customers c ON c.id = o.cliente_id`,
   );
 
-  const orders = await Promise.all(ordersBase.map(async (order) => {
+  const orders = sortByNewest(await Promise.all(ordersBase.map(async (order) => {
     const lineas = await rows<{
       id: string;
       codigo: string;
@@ -1152,7 +1215,7 @@ export async function getAppSnapshot() {
       estado_pago_derivado: estadoPagoDerivado,
       estado_pago_badge_tone: getInvoiceStatusTone(estadoPagoDerivado),
     };
-  }));
+  })), { dateKeys: ["fecha_pedido"], codeKeys: ["codigo"] });
 
   const manufacturingOrdersBase = await rows<{
     id: string;
@@ -1183,10 +1246,9 @@ export async function getAppSnapshot() {
      FROM manufacturing_orders mo
      JOIN orders o ON o.id = mo.pedido_id
      JOIN products p ON p.id = mo.producto_id
-     LEFT JOIN printers pr ON pr.id = mo.impresora_id
-     ORDER BY mo.codigo ASC`,
+     LEFT JOIN printers pr ON pr.id = mo.impresora_id`,
   );
-  const manufacturingOrders = manufacturingOrdersBase.map((order) => {
+  const manufacturingOrders = sortByNewest(manufacturingOrdersBase.map((order) => {
     const estadoDerivado = deriveManufacturingStatus(order);
     const tieneIncidenciaStock = order.estado === "BLOQUEADA_POR_STOCK";
 
@@ -1202,9 +1264,9 @@ export async function getAppSnapshot() {
         hasStockIncident: tieneIncidenciaStock,
       }),
     };
-  });
+  }), { dateKeys: ["fecha_inicio", "fecha_fin"], codeKeys: ["codigo"] });
 
-  const stockMovements = await rows<{
+  const stockMovementsBase = await rows<{
     id: string;
     codigo: string;
     material_id: string;
@@ -1217,9 +1279,9 @@ export async function getAppSnapshot() {
   }>(
     `SELECT sm.*, m.nombre AS material_nombre
      FROM stock_movements sm
-     JOIN materials m ON m.id = sm.material_id
-     ORDER BY sm.fecha DESC`,
+     JOIN materials m ON m.id = sm.material_id`,
   );
+  const stockMovements = sortByNewest(stockMovementsBase, { dateKeys: ["fecha"], codeKeys: ["codigo"] });
 
   const invoicesBase = await rows<{
     id: string;
@@ -1245,11 +1307,10 @@ export async function getAppSnapshot() {
        c.nombre AS cliente_nombre
      FROM invoices i
      JOIN orders o ON o.id = i.pedido_id
-     JOIN customers c ON c.id = i.cliente_id
-     ORDER BY i.fecha DESC`,
+     JOIN customers c ON c.id = i.cliente_id`,
   );
 
-  const invoices = await Promise.all(
+  const invoices = sortByNewest(await Promise.all(
     invoicesBase.map(async (invoice) => {
       const totalPagado = roundMoney(invoice.total_pagado ?? 0);
       const importePendiente = roundMoney(Math.max(invoice.total - totalPagado, 0));
@@ -1290,7 +1351,7 @@ export async function getAppSnapshot() {
         pagos: withPaymentDisplayCodes(pagos, invoice.pedido_codigo),
       };
     }),
-  );
+  ), { dateKeys: ["fecha"], codeKeys: ["codigo"] });
 
   const finishedInventory = await rows<{
     id: string;
@@ -1312,9 +1373,11 @@ export async function getAppSnapshot() {
        p.codigo AS producto_codigo,
        p.nombre AS producto_nombre
      FROM finished_product_inventory fi
-     JOIN products p ON p.id = fi.product_id
-     ORDER BY p.nombre ASC`,
+     JOIN products p ON p.id = fi.product_id`,
   );
+  const normalizedFinishedInventory = sortByNewest(finishedInventory, {
+    codeKeys: ["codigo", "producto_codigo"],
+  });
 
   const printers = await rows<{
     id: string;
@@ -1334,15 +1397,14 @@ export async function getAppSnapshot() {
      FROM printers pr
      LEFT JOIN manufacturing_orders mo
        ON mo.impresora_id = pr.id
-     AND mo.estado = 'INICIADA'
-     ORDER BY pr.codigo ASC, pr.nombre ASC`,
+     AND mo.estado = 'INICIADA'`,
   );
-  const normalizedPrinters = printers.map((printer) => ({
+  const normalizedPrinters = sortByNewest(printers.map((printer) => ({
     ...printer,
     activo: parseBoolean(printer.activo),
-  }));
+  })), { codeKeys: ["codigo"] });
 
-  const inventoryMovements = await rows<{
+  const inventoryMovementsBase = await rows<{
     id: string;
     codigo: string;
     inventario_tipo: string;
@@ -1353,7 +1415,8 @@ export async function getAppSnapshot() {
     cantidad: number;
     motivo: string;
     referencia: string;
-  }>(`SELECT * FROM inventory_movements ORDER BY fecha DESC, codigo DESC`);
+  }>(`SELECT * FROM inventory_movements`);
+  const inventoryMovements = sortByNewest(inventoryMovementsBase, { dateKeys: ["fecha"], codeKeys: ["codigo"] });
 
   return {
     customers: normalizedCustomers,
@@ -1362,7 +1425,7 @@ export async function getAppSnapshot() {
     orders,
     manufacturingOrders,
     stockMovements,
-    finishedInventory,
+    finishedInventory: normalizedFinishedInventory,
     printers: normalizedPrinters,
     inventoryMovements,
     invoices,

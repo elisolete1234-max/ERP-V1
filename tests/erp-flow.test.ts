@@ -323,6 +323,79 @@ test("el snapshot expone estados derivados y acciones coherentes para pedidos, f
   assert.deepEqual(visibleInvoice!.acciones_permitidas, ["collect_invoice_payment", "open_payment_detail"]);
 });
 
+test("el snapshot principal ordena los listados del mas nuevo al mas antiguo", async () => {
+  await createCustomerRecord({ nombre: "Cliente Uno" });
+  await createCustomerRecord({ nombre: "Cliente Dos" });
+  await createMaterialRecord({
+    nombre: "Material Uno",
+    marca: "Marca",
+    tipo: "PLA",
+    color: "Negro",
+    precioKg: 18,
+    stockActualG: 800,
+    stockMinimoG: 100,
+  });
+  await createMaterialRecord({
+    nombre: "Material Dos",
+    marca: "Marca",
+    tipo: "PLA",
+    color: "Blanco",
+    precioKg: 19,
+    stockActualG: 900,
+    stockMinimoG: 100,
+  });
+
+  const customerRows = await rows<{ id: string; codigo: string }>(`SELECT id, codigo FROM customers ORDER BY codigo ASC`);
+  const materialRows = await rows<{ id: string; codigo: string }>(`SELECT id, codigo FROM materials ORDER BY codigo ASC`);
+
+  await createProductRecord({
+    nombre: "Producto Uno",
+    gramosEstimados: 90,
+    tiempoImpresionHoras: 2,
+    costeElectricidad: 1.2,
+    margen: 10,
+    pvp: 25,
+    materialId: materialRows[0].id,
+  });
+  await createProductRecord({
+    nombre: "Producto Dos",
+    gramosEstimados: 95,
+    tiempoImpresionHoras: 2.5,
+    costeElectricidad: 1.3,
+    margen: 10,
+    pvp: 28,
+    materialId: materialRows[1].id,
+  });
+  await createPrinterRecord({ nombre: "Impresora Uno", costeHora: 2, horasUsoAcumuladas: 0, estado: "LIBRE" });
+  await createPrinterRecord({ nombre: "Impresora Dos", costeHora: 2.5, horasUsoAcumuladas: 0, estado: "LIBRE" });
+
+  const productRows = await rows<{ id: string; codigo: string }>(`SELECT id, codigo FROM products ORDER BY codigo ASC`);
+  const firstOrderId = await createOrderRecord({
+    clienteId: customerRows[0].id,
+    lines: [{ productId: productRows[0].id, quantity: 1 }],
+  });
+  const secondOrderId = await createOrderRecord({
+    clienteId: customerRows[1].id,
+    lines: [{ productId: productRows[1].id, quantity: 1 }],
+  });
+  await restockFinishedProduct(productRows[1].id, 1, "Carga inicial", "A1", 10);
+  await processOrder(secondOrderId);
+  await deliverOrderWorkflow(secondOrderId);
+  await invoiceOrderWorkflow(secondOrderId);
+
+  const snapshot = await getAppSnapshot();
+
+  assert.equal(snapshot.customers[0].codigo, "CLI-002");
+  assert.equal(snapshot.materials[0].codigo, "MAT-002");
+  assert.equal(snapshot.products[0].codigo, "PRO-002");
+  assert.equal(snapshot.printers[0].codigo, "IMP-002");
+  assert.equal(snapshot.orders[0].id, secondOrderId);
+  assert.equal(snapshot.orders[1].id, firstOrderId);
+  assert.equal(snapshot.invoices[0].pedido_id, secondOrderId);
+  assert.equal(snapshot.finishedInventory[0].producto_codigo, "PRO-002");
+  assert.equal(snapshot.inventoryMovements[0].referencia, "PED-002");
+});
+
 test("flujo mixto usa stock terminado y fabrica el resto", async () => {
   const { customerId, productId, materialId } = await setupSingleProductFixture({ materialStock: 1000, grams: 120, hours: 3, electricity: 2 });
   await restockFinishedProduct(productId, 1, "Carga inicial", "A1", 9);
