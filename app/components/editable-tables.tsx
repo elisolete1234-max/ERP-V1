@@ -295,7 +295,7 @@ function badgeClasses(tone: "neutral" | "success" | "warn" | "danger" | "info" |
     return "border border-violet-200 bg-violet-50/90 text-violet-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]";
   }
   if (tone === "strong") {
-    return "border border-slate-800 bg-slate-900 text-slate-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]";
+    return "border border-slate-500 bg-slate-300/90 text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]";
   }
   return "border border-black/10 bg-white/90 text-[color:var(--muted-strong)] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]";
 }

@@ -139,7 +139,7 @@ function badgeClass(tone: "success" | "warn" | "danger" | "info" | "neutral" | "
   if (tone === "danger") return "border-rose-200 bg-rose-50 text-rose-700";
   if (tone === "info") return "border-sky-200 bg-sky-50 text-sky-700";
   if (tone === "accent") return "border-violet-200 bg-violet-50 text-violet-700";
-  if (tone === "strong") return "border-slate-800 bg-slate-900 text-slate-50";
+  if (tone === "strong") return "border-slate-500 bg-slate-300/90 text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]";
   return "border-black/10 bg-white text-[color:var(--muted)]";
 }
 
