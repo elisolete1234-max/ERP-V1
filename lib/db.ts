@@ -164,6 +164,7 @@ async function rebuildManufacturingOrdersForStockSupport() {
       pedido_id TEXT,
       linea_pedido_id TEXT,
       producto_id TEXT NOT NULL,
+      material_id TEXT,
       impresora_id TEXT,
       cantidad INTEGER NOT NULL,
       estado TEXT NOT NULL,
@@ -179,12 +180,12 @@ async function rebuildManufacturingOrdersForStockSupport() {
       FOREIGN KEY(producto_id) REFERENCES products(id) ON DELETE RESTRICT
     );
     INSERT INTO manufacturing_orders (
-      id, codigo, pedido_id, linea_pedido_id, producto_id, impresora_id, cantidad, estado,
+      id, codigo, pedido_id, linea_pedido_id, producto_id, material_id, impresora_id, cantidad, estado,
       tiempo_estimado_horas, fecha_inicio, fecha_fin, gramos_consumidos, tiempo_real_horas,
       coste_impresora_total, incidencia
     )
     SELECT
-      id, codigo, pedido_id, linea_pedido_id, producto_id, impresora_id, cantidad, estado,
+      id, codigo, pedido_id, linea_pedido_id, producto_id, NULL, impresora_id, cantidad, estado,
       tiempo_estimado_horas, fecha_inicio, fecha_fin, gramos_consumidos, tiempo_real_horas,
       coste_impresora_total, incidencia
     FROM manufacturing_orders_legacy_stock;
@@ -316,6 +317,7 @@ async function migrateDatabase() {
   await ensureColumn("manufacturing_orders", "coste_impresora_total", "REAL DEFAULT 0");
   await ensureColumn("manufacturing_orders", "tiempo_estimado_horas", "REAL");
   await rebuildManufacturingOrdersForStockSupport();
+  await ensureColumn("manufacturing_orders", "material_id", "TEXT");
   await ensureColumn("invoices", "total_pagado", "REAL DEFAULT 0");
   await ensureColumn("invoices", "importe_pendiente", "REAL DEFAULT 0");
   await ensureColumn("invoices", "descuento", "REAL DEFAULT 0");
@@ -437,6 +439,7 @@ async function createSchema() {
       pedido_id TEXT,
       linea_pedido_id TEXT,
       producto_id TEXT NOT NULL,
+      material_id TEXT,
       impresora_id TEXT,
       cantidad INTEGER NOT NULL,
       estado TEXT NOT NULL,
@@ -449,7 +452,8 @@ async function createSchema() {
       incidencia TEXT,
       FOREIGN KEY(pedido_id) REFERENCES orders(id) ON DELETE RESTRICT,
       FOREIGN KEY(linea_pedido_id) REFERENCES order_lines(id) ON DELETE CASCADE,
-      FOREIGN KEY(producto_id) REFERENCES products(id) ON DELETE RESTRICT
+      FOREIGN KEY(producto_id) REFERENCES products(id) ON DELETE RESTRICT,
+      FOREIGN KEY(material_id) REFERENCES materials(id) ON DELETE RESTRICT
     );
 
     CREATE TABLE IF NOT EXISTS stock_movements (

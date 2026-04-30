@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { row, rows, run, transaction } from "./db";
 import {
+  calculateProductionCost,
+  calculateProfitability,
+} from "./production-costs";
+import {
   deriveInvoiceStatus,
   deriveManufacturingStatus,
   deriveOrderStatus,
@@ -299,7 +303,11 @@ function calculateLineCosts(input: {
   unitPrice: number;
   gramsPerUnit: number;
   materialPricePerKg: number;
-  electricityCostPerUnit: number;
+  printHoursPerUnit?: number;
+  electricityCostPerUnit?: number;
+  machineCostPerUnit?: number;
+  laborCostPerUnit?: number;
+  postProcessingCostPerUnit?: number;
   fromStockUnits?: number;
   finishedUnitCost?: number;
   printerCostTotal?: number;
@@ -309,22 +317,50 @@ function calculateLineCosts(input: {
   const producedUnits = Math.max(0, quantity - fromStockUnits);
   const gramosTotales = input.gramsPerUnit * quantity;
   const stockMaterialCost = roundMoney((input.finishedUnitCost ?? 0) * fromStockUnits);
-  const producedMaterialCost = roundMoney(
-    (input.materialPricePerKg / 1000) * (input.gramsPerUnit * producedUnits),
+  const producedCosts = calculateProductionCost({
+    quantity: producedUnits,
+    gramsPerUnit: input.gramsPerUnit,
+    materialPricePerKg: input.materialPricePerKg,
+    printHoursPerUnit: input.printHoursPerUnit ?? 0,
+    salePricePerUnit: input.unitPrice,
+    electricityCostPerUnit: input.electricityCostPerUnit ?? 0,
+    machineCostPerUnit: input.machineCostPerUnit ?? 0,
+    laborCostPerUnit: input.laborCostPerUnit ?? 0,
+    postProcessingCostPerUnit: input.postProcessingCostPerUnit ?? 0,
+    machineCostPerHour:
+      input.printerCostTotal != null || (input.machineCostPerUnit ?? 0) > 0
+        ? null
+        : 0,
+    machineCostTotalOverride: input.printerCostTotal ?? null,
+  });
+  const costeMaterial = roundMoney(stockMaterialCost + producedCosts.costeFilamento);
+  const costeElectricidadTotal = roundMoney(producedCosts.costeElectricidad);
+  const costeImpresoraTotal = roundMoney(producedCosts.costeMaquina);
+  const costePostprocesadoTotal = roundMoney(producedCosts.costePostprocesado);
+  const costeManoObraTotal = roundMoney(producedCosts.costeManoObra);
+  const costeTotal = roundMoney(
+    stockMaterialCost +
+      producedCosts.costeFilamento +
+      producedCosts.costeElectricidad +
+      producedCosts.costeMaquina +
+      producedCosts.costePostprocesado +
+      producedCosts.costeManoObra,
   );
-  const costeMaterial = roundMoney(stockMaterialCost + producedMaterialCost);
-  const costeElectricidadTotal = roundMoney(input.electricityCostPerUnit * producedUnits);
-  const costeImpresoraTotal = roundMoney(input.printerCostTotal ?? 0);
-  const costeTotal = roundMoney(costeMaterial + costeElectricidadTotal + costeImpresoraTotal);
-  const beneficio = roundMoney(input.unitPrice * quantity - costeTotal);
+  const profitability = calculateProfitability({
+    quantity,
+    salePricePerUnit: input.unitPrice,
+    totalCost: costeTotal,
+  });
 
   return {
     gramosTotales,
     costeMaterial,
     costeElectricidadTotal,
     costeImpresoraTotal,
+    costePostprocesadoTotal,
+    costeManoObraTotal,
     costeTotal,
-    beneficio,
+    beneficio: profitability.beneficioTotal,
   };
 }
 
@@ -335,7 +371,11 @@ function draftLineCalculations(product: Awaited<ReturnType<typeof getProductOrTh
     unitPrice: precioUnitario,
     gramsPerUnit: product.gramos_estimados,
     materialPricePerKg: product.precio_kg,
+    printHoursPerUnit: product.tiempo_impresion_horas,
     electricityCostPerUnit: product.coste_electricidad,
+    machineCostPerUnit: product.coste_maquina,
+    laborCostPerUnit: product.coste_mano_obra,
+    postProcessingCostPerUnit: product.coste_postprocesado,
   });
 
   return {
@@ -1059,20 +1099,23 @@ export async function getAppSnapshot() {
   );
 
   const products = sortByNewest(productsBase.map((product) => {
-    const costeMaterial = roundMoney((product.precio_kg / 1000) * product.gramos_estimados);
-    const costeTotalReceta = roundMoney(
-      costeMaterial +
-        product.coste_electricidad +
-        product.coste_maquina +
-        product.coste_mano_obra +
-        product.coste_postprocesado,
-    );
+    const recipeCost = calculateProductionCost({
+      quantity: 1,
+      gramsPerUnit: product.gramos_estimados,
+      materialPricePerKg: product.precio_kg,
+      printHoursPerUnit: product.tiempo_impresion_horas,
+      salePricePerUnit: product.pvp,
+      electricityCostPerUnit: product.coste_electricidad,
+      machineCostPerUnit: product.coste_maquina,
+      laborCostPerUnit: product.coste_mano_obra,
+      postProcessingCostPerUnit: product.coste_postprocesado,
+    });
 
     return {
       ...product,
       activo: parseBoolean(product.activo),
-      coste_material_estimado: costeMaterial,
-      coste_total_producto: costeTotalReceta,
+      coste_material_estimado: recipeCost.costeFilamento,
+      coste_total_producto: recipeCost.costeTotal,
     };
   }), { codeKeys: ["codigo"] });
 
@@ -1225,6 +1268,7 @@ export async function getAppSnapshot() {
     producto_id: string;
     cantidad: number;
     estado: string;
+    material_id: string | null;
     impresora_id: string | null;
     fecha_inicio: string | null;
     fecha_fin: string | null;
@@ -1234,6 +1278,17 @@ export async function getAppSnapshot() {
     incidencia: string | null;
     pedido_codigo: string | null;
     producto_nombre: string;
+    gramos_estimados: number;
+    tiempo_impresion_horas: number;
+    coste_electricidad: number;
+    coste_maquina: number;
+    coste_mano_obra: number;
+    coste_postprocesado: number;
+    pvp: number;
+    material_codigo: string | null;
+    material_nombre: string | null;
+    material_color: string | null;
+    precio_kg: number | null;
     impresora_codigo: string | null;
     impresora_nombre: string | null;
   }>(
@@ -1241,22 +1296,61 @@ export async function getAppSnapshot() {
        mo.*,
        o.codigo AS pedido_codigo,
        p.nombre AS producto_nombre,
+       p.gramos_estimados,
+       p.tiempo_impresion_horas,
+       p.coste_electricidad,
+       p.coste_maquina,
+       p.coste_mano_obra,
+       p.coste_postprocesado,
+       p.pvp,
+       m.codigo AS material_codigo,
+       m.nombre AS material_nombre,
+       m.color AS material_color,
+       m.precio_kg,
        pr.codigo AS impresora_codigo,
        pr.nombre AS impresora_nombre
      FROM manufacturing_orders mo
      LEFT JOIN orders o ON o.id = mo.pedido_id
      JOIN products p ON p.id = mo.producto_id
+     LEFT JOIN materials m ON m.id = COALESCE(mo.material_id, p.material_id)
      LEFT JOIN printers pr ON pr.id = mo.impresora_id`,
   );
   const manufacturingOrders = sortByNewest(manufacturingOrdersBase.map((order) => {
     const estadoDerivado = deriveManufacturingStatus(order);
     const tieneIncidenciaStock = order.estado === "BLOQUEADA_POR_STOCK";
+    const quantity = Math.max(0, Math.round(order.cantidad));
+    const hoursPerUnit =
+      quantity > 0 && order.tiempo_real_horas && order.tiempo_real_horas > 0
+        ? order.tiempo_real_horas / quantity
+        : order.tiempo_impresion_horas;
+    const costEstimate = calculateProductionCost({
+      quantity,
+      gramsPerUnit: order.gramos_estimados,
+      materialPricePerKg: order.precio_kg ?? 0,
+      printHoursPerUnit: hoursPerUnit,
+      salePricePerUnit: order.pvp,
+      electricityCostPerUnit: order.coste_electricidad,
+      machineCostPerUnit: order.coste_maquina,
+      laborCostPerUnit: order.coste_mano_obra,
+      postProcessingCostPerUnit: order.coste_postprocesado,
+      machineCostTotalOverride: order.coste_impresora_total ?? null,
+    });
 
     return {
       ...order,
       pedido_codigo: order.pedido_codigo ?? null,
       origen_fabricacion: order.pedido_id ? "BAJO_PEDIDO" : "PARA_STOCK",
       origen_fabricacion_label: order.pedido_id ? "Bajo pedido" : "Para stock",
+      material_id: order.material_id ?? null,
+      material_codigo: order.material_codigo ?? null,
+      material_nombre: order.material_nombre ?? "Material no disponible",
+      material_color: order.material_color ?? null,
+      coste_estimado_total: costEstimate.costeTotal,
+      coste_estimado_unitario: costEstimate.costeUnitario,
+      gramos_estimados_totales: costEstimate.gramsUsed,
+      beneficio_estimado_total: costEstimate.beneficioTotal,
+      margen_estimado_porcentaje: costEstimate.margenPorcentaje,
+      coste_warnings: costEstimate.warnings,
       estado_derivado: estadoDerivado,
       estado_badge_tone: getManufacturingStatusTone(estadoDerivado),
       tiene_incidencia_stock: tieneIncidenciaStock,
@@ -2792,7 +2886,11 @@ export async function confirmOrder(orderId: string) {
     gramos_totales: number;
     producto_nombre: string;
     gramos_estimados: number;
+    tiempo_impresion_horas: number;
     coste_electricidad: number;
+    coste_maquina: number;
+    coste_mano_obra: number;
+    coste_postprocesado: number;
     material_id: string;
     material_codigo: string;
     material_nombre: string;
@@ -2811,7 +2909,11 @@ export async function confirmOrder(orderId: string) {
        l.gramos_totales,
        p.nombre AS producto_nombre,
        p.gramos_estimados,
+       p.tiempo_impresion_horas,
        p.coste_electricidad,
+       p.coste_maquina,
+       p.coste_mano_obra,
+       p.coste_postprocesado,
        m.id AS material_id,
        m.codigo AS material_codigo,
        m.nombre AS material_nombre,
@@ -2847,7 +2949,11 @@ export async function confirmOrder(orderId: string) {
         unitPrice: line.precio_unitario,
         gramsPerUnit: line.gramos_estimados,
         materialPricePerKg: line.precio_kg,
+        printHoursPerUnit: line.tiempo_impresion_horas,
         electricityCostPerUnit: line.coste_electricidad,
+        machineCostPerUnit: line.coste_maquina,
+        laborCostPerUnit: line.coste_mano_obra,
+        postProcessingCostPerUnit: line.coste_postprocesado,
         fromStockUnits: fromStock,
         finishedUnitCost: line.stock_coste_unitario,
       });
@@ -2904,13 +3010,14 @@ export async function confirmOrder(orderId: string) {
 
       await run(
         `INSERT INTO manufacturing_orders
-          (id, codigo, pedido_id, linea_pedido_id, producto_id, cantidad, estado, fecha_inicio, fecha_fin, gramos_consumidos, tiempo_real_horas, coste_impresora_total, incidencia)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, codigo, pedido_id, linea_pedido_id, producto_id, material_id, cantidad, estado, fecha_inicio, fecha_fin, gramos_consumidos, tiempo_real_horas, coste_impresora_total, incidencia)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         randomUUID(),
         await nextCode("manufacturing_orders", "OF-"),
         orderId,
         line.id,
         line.producto_id,
+        line.material_id,
         line.toManufacture,
         incidents.length > 0 ? "BLOQUEADA_POR_STOCK" : "PENDIENTE",
         null,
@@ -3147,11 +3254,14 @@ export async function createStockManufacturingOrder(input: {
     id: string;
     codigo: string;
     nombre: string;
+    gramos_estimados: number;
     tiempo_impresion_horas: number;
+    coste_electricidad: number;
+    coste_maquina: number;
+    coste_mano_obra: number;
+    coste_postprocesado: number;
+    pvp: number;
     material_id: string;
-    material_codigo: string;
-    material_nombre: string;
-    material_color: string;
     activo: number;
     material_activo: number;
   }>(
@@ -3159,12 +3269,15 @@ export async function createStockManufacturingOrder(input: {
        p.id,
        p.codigo,
        p.nombre,
+       p.gramos_estimados,
        p.tiempo_impresion_horas,
+       p.coste_electricidad,
+       p.coste_maquina,
+       p.coste_mano_obra,
+       p.coste_postprocesado,
+       p.pvp,
        p.material_id,
        p.activo,
-       m.codigo AS material_codigo,
-       m.nombre AS material_nombre,
-       m.color AS material_color,
        m.activo AS material_activo
      FROM products p
      JOIN materials m ON m.id = p.material_id
@@ -3181,8 +3294,26 @@ export async function createStockManufacturingOrder(input: {
   if (!parseBoolean(product.material_activo)) {
     throw new Error("El material principal del producto esta archivado.");
   }
-  if (input.materialId?.trim() && input.materialId !== product.material_id) {
-    throw new Error("La fabricacion para stock solo puede usar el material principal configurado en el producto.");
+
+  const selectedMaterialId = input.materialId?.trim() || product.material_id;
+  const selectedMaterial = await row<{
+    id: string;
+    codigo: string;
+    nombre: string;
+    color: string;
+    precio_kg: number;
+    activo: number;
+  }>(
+    `SELECT id, codigo, nombre, color, precio_kg, activo
+     FROM materials
+     WHERE id = ?`,
+    selectedMaterialId,
+  );
+  if (!selectedMaterial) {
+    throw new Error("El material seleccionado no existe.");
+  }
+  if (!parseBoolean(selectedMaterial.activo)) {
+    throw new Error("El material seleccionado esta archivado.");
   }
 
   await ensureFinishedInventoryRow(product.id);
@@ -3193,11 +3324,14 @@ export async function createStockManufacturingOrder(input: {
      WHERE pedido_id IS NULL
        AND linea_pedido_id IS NULL
        AND producto_id = ?
+       AND COALESCE(material_id, ?) = ?
        AND cantidad = ?
        AND estado IN ('PENDIENTE', 'INICIADA', 'BLOQUEADA_POR_STOCK')
      ORDER BY codigo DESC
      LIMIT 1`,
     product.id,
+    product.material_id,
+    selectedMaterial.id,
     quantity,
   );
 
@@ -3218,13 +3352,14 @@ export async function createStockManufacturingOrder(input: {
 
   await run(
     `INSERT INTO manufacturing_orders
-      (id, codigo, pedido_id, linea_pedido_id, producto_id, cantidad, estado, tiempo_estimado_horas, fecha_inicio, fecha_fin, gramos_consumidos, tiempo_real_horas, coste_impresora_total, incidencia)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, codigo, pedido_id, linea_pedido_id, producto_id, material_id, cantidad, estado, tiempo_estimado_horas, fecha_inicio, fecha_fin, gramos_consumidos, tiempo_real_horas, coste_impresora_total, incidencia)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     manufacturingId,
     manufacturingCode,
     null,
     null,
     product.id,
+    selectedMaterial.id,
     quantity,
     "PENDIENTE",
     estimatedHours,
@@ -3241,7 +3376,18 @@ export async function createStockManufacturingOrder(input: {
     manufacturingId,
     manufacturingCode,
     manufacturingStatus: "PENDIENTE" as const,
-    materialLabel: `${product.material_codigo} ${product.material_nombre} ${product.material_color}`.trim(),
+    materialLabel: `${selectedMaterial.codigo} ${selectedMaterial.nombre} ${selectedMaterial.color}`.trim(),
+    estimatedCosts: calculateProductionCost({
+      quantity,
+      gramsPerUnit: product.gramos_estimados,
+      materialPricePerKg: selectedMaterial.precio_kg,
+      printHoursPerUnit: product.tiempo_impresion_horas,
+      salePricePerUnit: product.pvp,
+      electricityCostPerUnit: product.coste_electricidad,
+      machineCostPerUnit: product.coste_maquina,
+      laborCostPerUnit: product.coste_mano_obra,
+      postProcessingCostPerUnit: product.coste_postprocesado,
+    }),
     message: `Fabricacion ${manufacturingCode} creada para stock de ${product.nombre}.`,
     tone: "success" as WorkflowTone,
   };
@@ -3271,7 +3417,7 @@ export async function startManufacturingOrder(manufacturingOrderId: string) {
        mo.impresora_id
      FROM manufacturing_orders mo
      JOIN products p ON p.id = mo.producto_id
-     JOIN materials m ON m.id = p.material_id
+     JOIN materials m ON m.id = COALESCE(mo.material_id, p.material_id)
      WHERE mo.id = ?`,
     manufacturingOrderId,
   );
@@ -3386,6 +3532,10 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
     gramos_estimados: number;
     tiempo_impresion_horas: number;
     coste_electricidad: number;
+    coste_maquina: number;
+    coste_mano_obra: number;
+    coste_postprocesado: number;
+    pvp: number;
     material_id: string;
     precio_kg: number;
     stock_actual_g: number;
@@ -3411,6 +3561,10 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
        p.gramos_estimados,
        p.tiempo_impresion_horas,
        p.coste_electricidad,
+       p.coste_maquina,
+       p.coste_mano_obra,
+       p.coste_postprocesado,
+       p.pvp,
        m.id AS material_id,
        m.precio_kg,
        m.stock_actual_g,
@@ -3425,7 +3579,7 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
      FROM manufacturing_orders mo
      LEFT JOIN order_lines l ON l.id = mo.linea_pedido_id
      JOIN products p ON p.id = mo.producto_id
-     JOIN materials m ON m.id = p.material_id
+     JOIN materials m ON m.id = COALESCE(mo.material_id, p.material_id)
      LEFT JOIN orders o ON o.id = mo.pedido_id
      LEFT JOIN printers pr ON pr.id = mo.impresora_id
      WHERE mo.id = ?`,
@@ -3453,12 +3607,20 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
       ? manufacturingOrder.tiempo_real_horas
       : manufacturingOrder.tiempo_impresion_horas * manufacturingOrder.cantidad,
   );
-  const materialCost = roundMoney((manufacturingOrder.precio_kg / 1000) * gramsRequired);
-  const electricityCost = roundMoney(
-    manufacturingOrder.coste_electricidad * manufacturingOrder.cantidad,
-  );
   const printerCost = roundMoney((manufacturingOrder.coste_hora ?? 0) * totalHours);
-  const unitCost = roundMoney((materialCost + electricityCost + printerCost) / manufacturingOrder.cantidad);
+  const productionCosts = calculateProductionCost({
+    quantity: manufacturingOrder.cantidad,
+    gramsPerUnit: manufacturingOrder.gramos_estimados,
+    materialPricePerKg: manufacturingOrder.precio_kg,
+    printHoursPerUnit: manufacturingOrder.cantidad > 0 ? totalHours / manufacturingOrder.cantidad : 0,
+    salePricePerUnit: manufacturingOrder.line_precio_unitario ?? manufacturingOrder.pvp,
+    electricityCostPerUnit: manufacturingOrder.coste_electricidad,
+    machineCostPerUnit: manufacturingOrder.coste_maquina,
+    laborCostPerUnit: manufacturingOrder.coste_mano_obra,
+    postProcessingCostPerUnit: manufacturingOrder.coste_postprocesado,
+    machineCostTotalOverride: printerCost,
+  });
+  const unitCost = productionCosts.costeUnitario;
   const isStockManufacturing = !manufacturingOrder.pedido_id || !manufacturingOrder.linea_pedido_id;
   const updatedLineCosts = isStockManufacturing
     ? null
@@ -3467,7 +3629,11 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
         unitPrice: manufacturingOrder.line_precio_unitario ?? 0,
         gramsPerUnit: manufacturingOrder.gramos_estimados,
         materialPricePerKg: manufacturingOrder.precio_kg,
+        printHoursPerUnit: manufacturingOrder.tiempo_impresion_horas,
         electricityCostPerUnit: manufacturingOrder.coste_electricidad,
+        machineCostPerUnit: manufacturingOrder.coste_maquina,
+        laborCostPerUnit: manufacturingOrder.coste_mano_obra,
+        postProcessingCostPerUnit: manufacturingOrder.coste_postprocesado,
         fromStockUnits: manufacturingOrder.line_cantidad_desde_stock ?? 0,
         finishedUnitCost:
           (manufacturingOrder.line_cantidad_desde_stock ?? 0) > 0
@@ -3567,8 +3733,8 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
 
   return {
     grams: gramsRequired,
-    materialCost,
-    electricityCost,
+    materialCost: productionCosts.costeFilamento,
+    electricityCost: productionCosts.costeElectricidad,
     printerCost,
     totalHours,
   };

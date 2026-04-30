@@ -47,6 +47,13 @@ import {
   updateOrderRecord,
   updatePrinterRecord,
 } from "../lib/erp-service";
+import {
+  calculateMaterialCost,
+  calculateProductionCost,
+  calculateProfitability,
+  DEFAULT_ELECTRICITY_COST_PER_HOUR,
+  DEFAULT_MACHINE_COST_PER_HOUR,
+} from "../lib/production-costs";
 import { GET as getInvoicePdfRoute } from "../app/api/exports/invoices/[id]/pdf/route";
 
 type CsvFixtureRow = {
@@ -169,6 +176,62 @@ test("los helpers de estado normalizan estados legacy y exponen acciones permiti
     }),
     ["process_order", "restock_material", "view_manufacturing"],
   );
+});
+
+test("calcula coste de filamento correctamente con precio por kilo", () => {
+  const result = calculateMaterialCost({
+    gramsPerUnit: 125,
+    quantity: 3,
+    materialPricePerKg: 24,
+  });
+
+  assert.equal(result.gramsUsed, 375);
+  assert.equal(result.pricePerGram, 0.02);
+  assert.equal(result.filamentCost, 7.5);
+});
+
+test("calcula coste total, coste unitario, beneficio y margen con electricidad, maquina y postprocesado", () => {
+  const result = calculateProductionCost({
+    quantity: 2,
+    gramsPerUnit: 100,
+    materialPricePerKg: 20,
+    printHoursPerUnit: 3,
+    salePricePerUnit: 30,
+    electricityCostPerHour: 0.1,
+    machineCostPerHour: 0.5,
+    postProcessingCostPerUnit: 2,
+  });
+
+  assert.equal(result.costeFilamento, 4);
+  assert.equal(result.costeElectricidad, 0.6);
+  assert.equal(result.costeMaquina, 3);
+  assert.equal(result.costePostprocesado, 4);
+  assert.equal(result.costeTotal, 11.6);
+  assert.equal(result.costeUnitario, 5.8);
+  assert.equal(result.beneficioUnitario, 24.2);
+  assert.equal(result.beneficioTotal, 48.4);
+  assert.equal(result.margenPorcentaje, 80.67);
+});
+
+test("evita division por cero si el PVP es 0 y avisa cuando usa costes horarios por defecto", () => {
+  const result = calculateProductionCost({
+    quantity: 1,
+    gramsPerUnit: 50,
+    materialPricePerKg: 18,
+    printHoursPerUnit: 2,
+    salePricePerUnit: 0,
+  });
+  const profitability = calculateProfitability({
+    quantity: 1,
+    salePricePerUnit: 0,
+    totalCost: result.costeTotal,
+  });
+
+  assert.equal(result.costeElectricidad, Number((2 * DEFAULT_ELECTRICITY_COST_PER_HOUR).toFixed(2)));
+  assert.equal(result.costeMaquina, Number((2 * DEFAULT_MACHINE_COST_PER_HOUR).toFixed(2)));
+  assert.equal(result.margenPorcentaje, 0);
+  assert.equal(profitability.margenPorcentaje, 0);
+  assert.ok(result.warnings.some((warning) => warning.includes("PVP del producto es 0")));
 });
 
 test("helpers CSV formatean importes, fechas y nombres de archivo de forma estable", () => {
@@ -807,11 +870,13 @@ test("crear fabricacion para stock la deja visible como para stock sin crear ped
   const manufacturing = (await row<{
     pedido_id: string | null;
     linea_pedido_id: string | null;
+    material_id: string | null;
     estado: string;
-  }>(`SELECT pedido_id, linea_pedido_id, estado FROM manufacturing_orders WHERE id = ?`, created.manufacturingId))!;
+  }>(`SELECT pedido_id, linea_pedido_id, material_id, estado FROM manufacturing_orders WHERE id = ?`, created.manufacturingId))!;
 
   assert.equal(manufacturing.pedido_id, null);
   assert.equal(manufacturing.linea_pedido_id, null);
+  assert.equal(manufacturing.material_id, materialId);
   assert.equal(manufacturing.estado, "PENDIENTE");
 
   const snapshot = await getAppSnapshot();
@@ -820,6 +885,9 @@ test("crear fabricacion para stock la deja visible como para stock sin crear ped
   assert.equal(visibleOrder!.origen_fabricacion, "PARA_STOCK");
   assert.equal(visibleOrder!.origen_fabricacion_label, "Para stock");
   assert.equal(visibleOrder!.pedido_codigo, null);
+  assert.equal(visibleOrder!.material_id, materialId);
+  assert.ok(visibleOrder!.coste_estimado_total > 0);
+  assert.ok(visibleOrder!.coste_estimado_unitario > 0);
 });
 
 test("completar fabricacion para stock aumenta stock, consume material y no duplica al repetir", async () => {
@@ -841,8 +909,8 @@ test("completar fabricacion para stock aumenta stock, consume material y no dupl
   const secondCompletion = await completeManufacturingWorkflow(created.manufacturingId);
 
   const afterMaterial = (await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId))!;
-  const afterInventory = (await row<{ cantidad_disponible: number }>(
-    `SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`,
+  const afterInventory = (await row<{ cantidad_disponible: number; coste_unitario: number }>(
+    `SELECT cantidad_disponible, coste_unitario FROM finished_product_inventory WHERE product_id = ?`,
     productId,
   ))!;
   const manufacturing = (await row<{ estado: string }>(`SELECT estado FROM manufacturing_orders WHERE id = ?`, created.manufacturingId))!;
@@ -866,12 +934,62 @@ test("completar fabricacion para stock aumenta stock, consume material y no dupl
   assert.equal(secondCompletion.action, "noop");
   assert.equal(manufacturing.estado, "COMPLETADA");
   assert.equal(afterInventory.cantidad_disponible, beforeInventory.cantidad_disponible + 2);
+  assert.ok(afterInventory.coste_unitario > 0);
   assert.equal(afterMaterial.stock_actual_g, beforeMaterial.stock_actual_g - 200);
   assert.equal(productEntries.total, 1);
   assert.equal(materialConsumptions.total, 1);
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM orders`))!.total, 0);
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices`))!.total, 0);
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM customers`))!.total, 1);
+});
+
+test("fabricacion para stock usa el material seleccionado y cambia el coste calculado", async () => {
+  const { productId, materialId } = await setupSingleProductFixture({ materialStock: 2000, grams: 100, hours: 2, electricity: 1, pvp: 20 });
+  await createMaterialRecord({
+    nombre: "PLA Premium",
+    marca: "Marca",
+    tipo: "PLA",
+    color: "Rojo",
+    precioKg: 40,
+    stockActualG: 2000,
+    stockMinimoG: 100,
+  });
+  const materials = await rows<{ id: string; codigo: string; precio_kg: number }>(`SELECT id, codigo, precio_kg FROM materials ORDER BY codigo ASC`);
+  const alternateMaterial = materials.find((material) => material.id !== materialId)!;
+
+  const baseOrder = await createStockManufacturingOrder({
+    productId,
+    quantity: 1,
+    materialId,
+  });
+  const alternateOrder = await createStockManufacturingOrder({
+    productId,
+    quantity: 2,
+    materialId: alternateMaterial.id,
+  });
+
+  const baseSnapshot = (await getAppSnapshot()).manufacturingOrders.find((item) => item.id === baseOrder.manufacturingId)!;
+  const alternateSnapshot = (await getAppSnapshot()).manufacturingOrders.find((item) => item.id === alternateOrder.manufacturingId)!;
+  const alternateRow = (await row<{ material_id: string | null }>(
+    `SELECT material_id FROM manufacturing_orders WHERE id = ?`,
+    alternateOrder.manufacturingId,
+  ))!;
+
+  assert.equal(alternateRow.material_id, alternateMaterial.id);
+  assert.equal(alternateSnapshot.material_id, alternateMaterial.id);
+  assert.equal(alternateSnapshot.material_codigo, alternateMaterial.codigo);
+  assert.ok(alternateSnapshot.coste_estimado_total > baseSnapshot.coste_estimado_total);
+
+  const beforeBaseStock = (await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId))!;
+  const beforeAlternateStock = (await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, alternateMaterial.id))!;
+
+  await completeManufacturingWorkflow(alternateOrder.manufacturingId);
+
+  const afterBaseStock = (await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId))!;
+  const afterAlternateStock = (await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, alternateMaterial.id))!;
+
+  assert.equal(afterBaseStock.stock_actual_g, beforeBaseStock.stock_actual_g);
+  assert.equal(afterAlternateStock.stock_actual_g, beforeAlternateStock.stock_actual_g - 200);
 });
 
 test("solo permite una orden activa por impresora y asigna impresora correcta", async () => {

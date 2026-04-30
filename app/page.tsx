@@ -24,6 +24,7 @@ import {
   MaterialsInlineTable,
   PrintersInlineTable,
   ProductsInlineTable,
+  StockManufacturingForm,
 } from "./components/editable-tables";
 import { SubmitButton } from "./components/form-ui";
 import { FilterSummary } from "./components/filter-summary";
@@ -2137,6 +2138,31 @@ export default async function Home({
           <Section active={section === "productos-terminados"} title="Productos terminados" subtitle="Inventario de salida">
             <div className="space-y-4">
               <CreatePanel title="Fabricar para stock" description="Accion principal para reponer inventario vendible sin crear pedidos ni facturas.">
+              <StockManufacturingForm
+                products={activeProducts.map((product) => ({
+                  id: product.id,
+                  codigo: product.codigo,
+                  nombre: product.nombre,
+                  gramos_estimados: product.gramos_estimados,
+                  tiempo_impresion_horas: product.tiempo_impresion_horas,
+                  coste_electricidad: product.coste_electricidad,
+                  coste_maquina: product.coste_maquina,
+                  coste_mano_obra: product.coste_mano_obra,
+                  coste_postprocesado: product.coste_postprocesado,
+                  pvp: product.pvp,
+                  material_id: product.material_id,
+                }))}
+                materials={activeMaterials.map((material) => ({
+                  id: material.id,
+                  codigo: material.codigo,
+                  nombre: material.nombre,
+                  color: material.color,
+                  precio_kg: material.precio_kg,
+                  stock_actual_g: material.stock_actual_g,
+                  activo: material.activo,
+                }))}
+              />
+              {false ? (
               <form
                 id="create-stock-manufacturing"
                 action={createStockManufacturingAction}
@@ -2175,6 +2201,7 @@ export default async function Home({
                 </div>
                 <SubmitButton pendingText="Creando fabricacion...">Fabricar para stock</SubmitButton>
               </form>
+              ) : null}
               <form
                 id="add-finished-stock"
                 action={restockFinishedProductAction}

@@ -4,6 +4,7 @@ import { Fragment, useState, type FormEvent } from "react";
 import {
   collectInvoicePaymentAction,
   completeManufacturingAction,
+  createStockManufacturingAction,
   deliverOrderAction,
   generateInvoiceAction,
   processOrderAction,
@@ -22,6 +23,7 @@ import {
   updatePrinterAction,
   updateProductAction,
 } from "@/app/actions";
+import { calculateProductionCost } from "@/lib/production-costs";
 import {
   deriveInvoiceStatus,
   getInvoiceStatusTone,
@@ -111,6 +113,16 @@ type ManufacturingOrder = {
   impresora_nombre: string | null;
   origen_fabricacion: string;
   origen_fabricacion_label: string;
+  material_id: string | null;
+  material_codigo: string | null;
+  material_nombre: string;
+  material_color: string | null;
+  coste_estimado_total: number;
+  coste_estimado_unitario: number;
+  gramos_estimados_totales: number;
+  beneficio_estimado_total: number;
+  margen_estimado_porcentaje: number;
+  coste_warnings: string[];
   estado_derivado: string;
   estado_badge_tone: StatusTone;
   tiene_incidencia_stock: boolean;
@@ -182,6 +194,8 @@ type MaterialOption = {
   codigo: string;
   nombre: string;
   color: string;
+  precio_kg?: number;
+  stock_actual_g?: number;
   activo: boolean;
 };
 
@@ -189,6 +203,14 @@ type ProductOption = {
   id: string;
   codigo: string;
   nombre: string;
+  gramos_estimados?: number;
+  tiempo_impresion_horas?: number;
+  coste_electricidad?: number;
+  coste_maquina?: number;
+  coste_mano_obra?: number;
+  coste_postprocesado?: number;
+  pvp?: number;
+  material_id?: string;
 };
 
 type CustomerOption = {
@@ -376,6 +398,180 @@ function InlineField({
       {hint ? <span className="table-inline-hint">{hint}</span> : null}
       {children}
     </label>
+  );
+}
+
+export function StockManufacturingForm({
+  products,
+  materials,
+}: {
+  products: ProductOption[];
+  materials: MaterialOption[];
+}) {
+  const [productId, setProductId] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [materialId, setMaterialId] = useState("");
+  const selectedProduct = products.find((product) => product.id === productId) ?? null;
+  const selectedMaterialId = materialId || selectedProduct?.material_id || "";
+  const selectedMaterial = materials.find((material) => material.id === selectedMaterialId) ?? null;
+  const parsedQuantity = Number(quantity);
+  const hasValidQuantity = Number.isFinite(parsedQuantity) && parsedQuantity > 0;
+  const estimate =
+    selectedProduct && selectedMaterial && hasValidQuantity
+      ? calculateProductionCost({
+          quantity: parsedQuantity,
+          gramsPerUnit: selectedProduct.gramos_estimados ?? 0,
+          materialPricePerKg: selectedMaterial.precio_kg ?? 0,
+          printHoursPerUnit: selectedProduct.tiempo_impresion_horas ?? 0,
+          salePricePerUnit: selectedProduct.pvp ?? 0,
+          electricityCostPerUnit: selectedProduct.coste_electricidad ?? 0,
+          machineCostPerUnit: selectedProduct.coste_maquina ?? 0,
+          laborCostPerUnit: selectedProduct.coste_mano_obra ?? 0,
+          postProcessingCostPerUnit: selectedProduct.coste_postprocesado ?? 0,
+        })
+      : null;
+  const helperMessage =
+    !selectedProduct
+      ? "Selecciona un producto para preparar el coste estimado."
+      : !hasValidQuantity
+        ? "Introduce una cantidad valida para estimar la fabricacion."
+        : !selectedMaterial
+          ? "Selecciona un material activo para calcular el coste real."
+          : null;
+
+  return (
+    <form
+      id="create-stock-manufacturing"
+      action={createStockManufacturingAction}
+      className="form-shell border-b border-black/8 p-6 space-y-5"
+    >
+      <div>
+        <h3 className="text-xl font-semibold">Fabricar para stock</h3>
+        <p className="mt-2 text-sm text-[color:var(--muted)]">
+          Crea una orden de fabricacion para aumentar stock de venta directa. El stock terminado solo se incrementa al completar la orden.
+        </p>
+      </div>
+      <InlineField label="Producto">
+        <select
+          name="productId"
+          className={tableInputClass}
+          value={productId}
+          onChange={(event) => setProductId(event.currentTarget.value)}
+        >
+          <option value="">Producto</option>
+          {products.map((product) => (
+            <option key={product.id} value={product.id}>
+              {product.codigo} · {product.nombre}
+            </option>
+          ))}
+        </select>
+      </InlineField>
+      <div className="form-grid-2">
+        <InlineField label="Cantidad a fabricar">
+          <input
+            name="cantidad"
+            type="number"
+            min="1"
+            placeholder="Cantidad"
+            className={tableInputClass}
+            value={quantity}
+            onChange={(event) => setQuantity(event.currentTarget.value)}
+          />
+        </InlineField>
+        <InlineField label="Material / filamento">
+          <select
+            name="materialId"
+            className={tableInputClass}
+            value={materialId}
+            onChange={(event) => setMaterialId(event.currentTarget.value)}
+          >
+            <option value="">Material principal del producto</option>
+            {materials.map((material) => (
+              <option key={material.id} value={material.id}>
+                {material.codigo} · {material.nombre} · {material.color}
+              </option>
+            ))}
+          </select>
+        </InlineField>
+      </div>
+
+      {helperMessage ? (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
+          {helperMessage}
+        </div>
+      ) : estimate ? (
+        <div className="space-y-3 rounded-[26px] border border-black/8 bg-[color:var(--surface-strong)] p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Coste estimado</p>
+              <h4 className="mt-2 text-base font-semibold text-slate-950">
+                {selectedProduct?.codigo} · {selectedMaterial?.codigo}
+              </h4>
+            </div>
+            <div className="text-right">
+              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Coste total</p>
+              <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(estimate.costeTotal)}</p>
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
+            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Gramos</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{estimate.gramsUsed} g</p>
+            </div>
+            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Filamento</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(estimate.costeFilamento)}</p>
+            </div>
+            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Electricidad</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(estimate.costeElectricidad)}</p>
+            </div>
+            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Maquina</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(estimate.costeMaquina)}</p>
+            </div>
+            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Postprocesado</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(estimate.costePostprocesado)}</p>
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Coste unitario</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(estimate.costeUnitario)}</p>
+            </div>
+            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">PVP</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(selectedProduct?.pvp ?? 0)}</p>
+            </div>
+            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Beneficio unitario</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(estimate.beneficioUnitario)}</p>
+            </div>
+            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Beneficio total</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(estimate.beneficioTotal)}</p>
+            </div>
+            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Margen estimado</p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">{estimate.margenPorcentaje.toFixed(2)}%</p>
+            </div>
+          </div>
+          {estimate.costeManoObra > 0 ? (
+            <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3 text-sm text-[color:var(--muted-strong)]">
+              Mano de obra incluida en el total: <span className="font-semibold text-slate-900">{formatCurrency(estimate.costeManoObra)}</span>
+            </div>
+          ) : null}
+          {estimate.warnings.length > 0 ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-800">
+              {estimate.warnings.join(" ")}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <SubmitButton pendingText="Creando fabricacion...">Fabricar para stock</SubmitButton>
+    </form>
   );
 }
 
@@ -2516,7 +2712,7 @@ export function ManufacturingInlineTable({
   return (
     <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Origen</th><th>Pedido</th><th>Producto</th><th>Estado</th><th>Impresora</th><th>Consumo</th></tr>
+        <tr><th>Acciones</th><th>ID</th><th>Origen</th><th>Pedido</th><th>Producto</th><th>Material</th><th>Estado</th><th>Impresora</th><th>Coste</th><th>Consumo</th></tr>
       </thead>
       <tbody>
         {manufacturingOrders.map((order) => {
@@ -2578,6 +2774,12 @@ export function ManufacturingInlineTable({
                 )}
               </td>
               <td>
+                <div>
+                  <div>{[order.material_codigo, order.material_nombre].filter(Boolean).join(" · ")}</div>
+                  <div className="text-xs text-[color:var(--muted)]">{order.material_color ?? "Sin color"}</div>
+                </div>
+              </td>
+              <td>
                 {editing ? (
                   <select form={formId} name="estado" defaultValue={order.estado} className={tableInputClass}>
                     <option value="PENDIENTE">pendiente</option>
@@ -2600,11 +2802,20 @@ export function ManufacturingInlineTable({
                 )}
               </td>
               <td>
+                <div>
+                  <div>{formatCurrency(order.coste_estimado_total)}</div>
+                  <div className="text-xs text-[color:var(--muted)]">{formatCurrency(order.coste_estimado_unitario)} / ud</div>
+                  {order.coste_warnings[0] ? (
+                    <div className="text-xs text-amber-700">{order.coste_warnings[0]}</div>
+                  ) : null}
+                </div>
+              </td>
+              <td>
                 {editing ? (
                   <input form={formId} name="tiempoRealHoras" type="number" min="0" step="0.1" defaultValue={order.tiempo_real_horas ?? ""} className={tableInputClass} />
                 ) : (
                   <div>
-                    <div>{order.gramos_consumidos ?? "-"} g</div>
+                    <div>{order.gramos_consumidos ?? order.gramos_estimados_totales} g</div>
                     <div className="text-xs text-[color:var(--muted)]">{order.tiempo_real_horas ?? "-"} h</div>
                   </div>
                 )}
