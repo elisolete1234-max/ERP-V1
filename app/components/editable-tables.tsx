@@ -93,8 +93,8 @@ type Product = {
 type ManufacturingOrder = {
   id: string;
   codigo: string;
-  pedido_id: string;
-  linea_pedido_id: string;
+  pedido_id: string | null;
+  linea_pedido_id: string | null;
   producto_id: string;
   cantidad: number;
   estado: string;
@@ -105,10 +105,12 @@ type ManufacturingOrder = {
   tiempo_real_horas: number | null;
   coste_impresora_total: number | null;
   incidencia: string | null;
-  pedido_codigo: string;
+  pedido_codigo: string | null;
   producto_nombre: string;
   impresora_codigo: string | null;
   impresora_nombre: string | null;
+  origen_fabricacion: string;
+  origen_fabricacion_label: string;
   estado_derivado: string;
   estado_badge_tone: StatusTone;
   tiene_incidencia_stock: boolean;
@@ -2514,7 +2516,7 @@ export function ManufacturingInlineTable({
   return (
     <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Pedido</th><th>Producto</th><th>Estado</th><th>Impresora</th><th>Consumo</th></tr>
+        <tr><th>Acciones</th><th>ID</th><th>Origen</th><th>Pedido</th><th>Producto</th><th>Estado</th><th>Impresora</th><th>Consumo</th></tr>
       </thead>
       <tbody>
         {manufacturingOrders.map((order) => {
@@ -2558,7 +2560,12 @@ export function ManufacturingInlineTable({
                 </div>
               </td>
               <td>{order.codigo}</td>
-              <td>{order.pedido_codigo}</td>
+              <td>
+                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.origen_fabricacion === "PARA_STOCK" ? "accent" : "info")}`}>
+                  {order.origen_fabricacion_label}
+                </span>
+              </td>
+              <td>{order.pedido_codigo ?? "-"}</td>
               <td>
                 {editing ? (
                   <div className="table-edit-stack table-cell-edit">

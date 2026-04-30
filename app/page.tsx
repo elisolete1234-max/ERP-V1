@@ -8,6 +8,7 @@ import {
   createOrderAction,
   createPrinterAction,
   createProductAction,
+  createStockManufacturingAction,
   deliverOrderAction,
   generateInvoiceAction,
   restockFinishedProductAction,
@@ -2135,7 +2136,45 @@ export default async function Home({
           </Section>
           <Section active={section === "productos-terminados"} title="Productos terminados" subtitle="Inventario de salida">
             <div className="space-y-4">
-              <CreatePanel title="Nuevo stock terminado" description="Abre este panel solo para registrar una entrada manual.">
+              <CreatePanel title="Fabricar para stock" description="Accion principal para reponer inventario vendible sin crear pedidos ni facturas.">
+              <form
+                id="create-stock-manufacturing"
+                action={createStockManufacturingAction}
+                className="form-shell border-b border-black/8 p-6 space-y-5"
+              >
+                <div>
+                  <h3 className="text-xl font-semibold">Fabricar para stock</h3>
+                  <p className="mt-2 text-sm text-[color:var(--muted)]">
+                    Crea una orden de fabricacion para aumentar stock de venta directa. El stock terminado solo se incrementa al completar la orden.
+                  </p>
+                </div>
+                <Field label="Producto">
+                  <select name="productId" className="input" defaultValue="">
+                  <option value="">Producto</option>
+                  {activeProducts.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.codigo} Â· {product.nombre}
+                    </option>
+                  ))}
+                  </select>
+                </Field>
+                <div className="form-grid-2">
+                  <Field label="Cantidad a fabricar">
+                    <input name="cantidad" type="number" min="1" placeholder="Cantidad" className="input" />
+                  </Field>
+                  <Field label="Material / filamento">
+                    <select name="materialId" className="input" defaultValue="">
+                    <option value="">Material principal del producto</option>
+                    {activeMaterials.map((material) => (
+                      <option key={material.id} value={material.id}>
+                        {material.codigo} Â· {material.nombre} Â· {material.color}
+                      </option>
+                    ))}
+                    </select>
+                  </Field>
+                </div>
+                <SubmitButton pendingText="Creando fabricacion...">Fabricar para stock</SubmitButton>
+              </form>
               <form
                 id="add-finished-stock"
                 action={restockFinishedProductAction}
@@ -2401,6 +2440,7 @@ export default async function Home({
                           <thead>
                             <tr>
                               <th>Orden</th>
+                              <th>Origen</th>
                               <th>Pedido</th>
                               <th>Producto</th>
                               <th>Estado</th>
@@ -2410,17 +2450,24 @@ export default async function Home({
                           <tbody>
                             {focusedPrinterManufacturing.length === 0 ? (
                               <tr>
-                                <td colSpan={5} className="text-sm text-[color:var(--muted)]">Sin fabricaciones relacionadas.</td>
+                                <td colSpan={6} className="text-sm text-[color:var(--muted)]">Sin fabricaciones relacionadas.</td>
                               </tr>
                             ) : (
                               focusedPrinterManufacturing.map((order) => (
                                 <tr key={order.id}>
                                   <td>{order.codigo}</td>
                                   <td>
+                                    <span className={`erp-badge ${badgeClass(order.origen_fabricacion === "PARA_STOCK" ? "accent" : "info")}`}>
+                                      {order.origen_fabricacion_label}
+                                    </span>
+                                  </td>
+                                  <td>{order.pedido_codigo ? (
                                     <Link href={`/?section=pedidos&pedidoId=${encodeURIComponent(order.pedido_codigo)}`} className="odoo-link">
                                       {order.pedido_codigo}
                                     </Link>
-                                  </td>
+                                  ) : (
+                                    <span className="text-sm text-[color:var(--muted)]">Sin pedido</span>
+                                  )}</td>
                                   <td>{order.producto_nombre}</td>
                                   <td>{MANUFACTURING_STATUS_LABELS[order.estado_derivado as keyof typeof MANUFACTURING_STATUS_LABELS]}</td>
                                   <td>{order.cantidad}</td>

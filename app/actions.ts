@@ -11,6 +11,7 @@ import {
   completeManufacturingWorkflow,
   createCustomerRecord,
   createMaterialRecord,
+  createStockManufacturingOrder,
   createOrderRecord,
   createInvoicePaymentRecord,
   createPrinterRecord,
@@ -407,6 +408,19 @@ export async function completeManufacturingAction(formData: FormData) {
     () => completeManufacturingWorkflow(asString(formData.get("fabricacionId"))),
     "Fabricación completada y stock descontado.",
     "/?section=fabricacion",
+  );
+}
+
+export async function createStockManufacturingAction(formData: FormData) {
+  await executeAndRefresh(
+    () =>
+      createStockManufacturingOrder({
+        productId: asString(formData.get("productId")),
+        quantity: asNumber(formData.get("cantidad")),
+        materialId: asString(formData.get("materialId")),
+      }),
+    "Fabricacion para stock creada.",
+    "/?section=productos-terminados",
   );
 }
 

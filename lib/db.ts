@@ -13,6 +13,7 @@ type GlobalDb = typeof globalThis & {
 
 type ColumnInfo = {
   name: string;
+  notnull?: number;
 };
 
 type DbExecutor = {
@@ -141,6 +142,57 @@ async function ensureColumn(table: string, column: string, definition: string) {
   }
 }
 
+async function rebuildManufacturingOrdersForStockSupport() {
+  const columns = await rows<ColumnInfo>(`PRAGMA table_info(manufacturing_orders)`);
+  const pedidoIdColumn = columns.find((column) => column.name === "pedido_id");
+  const lineaPedidoIdColumn = columns.find((column) => column.name === "linea_pedido_id");
+
+  if (!pedidoIdColumn || !lineaPedidoIdColumn) {
+    return;
+  }
+
+  if ((pedidoIdColumn.notnull ?? 0) === 0 && (lineaPedidoIdColumn.notnull ?? 0) === 0) {
+    return;
+  }
+
+  await exec(`
+    PRAGMA foreign_keys=off;
+    ALTER TABLE manufacturing_orders RENAME TO manufacturing_orders_legacy_stock;
+    CREATE TABLE manufacturing_orders (
+      id TEXT PRIMARY KEY,
+      codigo TEXT NOT NULL UNIQUE,
+      pedido_id TEXT,
+      linea_pedido_id TEXT,
+      producto_id TEXT NOT NULL,
+      impresora_id TEXT,
+      cantidad INTEGER NOT NULL,
+      estado TEXT NOT NULL,
+      tiempo_estimado_horas REAL,
+      fecha_inicio TEXT,
+      fecha_fin TEXT,
+      gramos_consumidos INTEGER,
+      tiempo_real_horas REAL,
+      coste_impresora_total REAL DEFAULT 0,
+      incidencia TEXT,
+      FOREIGN KEY(pedido_id) REFERENCES orders(id) ON DELETE RESTRICT,
+      FOREIGN KEY(linea_pedido_id) REFERENCES order_lines(id) ON DELETE CASCADE,
+      FOREIGN KEY(producto_id) REFERENCES products(id) ON DELETE RESTRICT
+    );
+    INSERT INTO manufacturing_orders (
+      id, codigo, pedido_id, linea_pedido_id, producto_id, impresora_id, cantidad, estado,
+      tiempo_estimado_horas, fecha_inicio, fecha_fin, gramos_consumidos, tiempo_real_horas,
+      coste_impresora_total, incidencia
+    )
+    SELECT
+      id, codigo, pedido_id, linea_pedido_id, producto_id, impresora_id, cantidad, estado,
+      tiempo_estimado_horas, fecha_inicio, fecha_fin, gramos_consumidos, tiempo_real_horas,
+      coste_impresora_total, incidencia
+    FROM manufacturing_orders_legacy_stock;
+    DROP TABLE manufacturing_orders_legacy_stock;
+    PRAGMA foreign_keys=on;
+  `);
+}
+
 async function backfillCodes(table: string, prefix: string, orderBy = "rowid ASC") {
   const pendingRows = await rows<{ id: string }>(
     `SELECT id FROM ${table} WHERE codigo IS NULL OR codigo = '' ORDER BY ${orderBy}`,
@@ -263,6 +315,7 @@ async function migrateDatabase() {
   await ensureColumn("manufacturing_orders", "impresora_id", "TEXT");
   await ensureColumn("manufacturing_orders", "coste_impresora_total", "REAL DEFAULT 0");
   await ensureColumn("manufacturing_orders", "tiempo_estimado_horas", "REAL");
+  await rebuildManufacturingOrdersForStockSupport();
   await ensureColumn("invoices", "total_pagado", "REAL DEFAULT 0");
   await ensureColumn("invoices", "importe_pendiente", "REAL DEFAULT 0");
   await ensureColumn("invoices", "descuento", "REAL DEFAULT 0");
@@ -381,8 +434,8 @@ async function createSchema() {
     CREATE TABLE IF NOT EXISTS manufacturing_orders (
       id TEXT PRIMARY KEY,
       codigo TEXT NOT NULL UNIQUE,
-      pedido_id TEXT NOT NULL,
-      linea_pedido_id TEXT NOT NULL,
+      pedido_id TEXT,
+      linea_pedido_id TEXT,
       producto_id TEXT NOT NULL,
       impresora_id TEXT,
       cantidad INTEGER NOT NULL,

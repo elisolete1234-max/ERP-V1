@@ -18,6 +18,7 @@ import {
   createInvoicePaymentRecord,
   createMaterialRecord,
   createOrderRecord,
+  createStockManufacturingOrder,
   createPrinterRecord,
   createProductRecord,
   deliverOrder,
@@ -788,6 +789,89 @@ test("permite crear registros base con los datos minimos necesarios", async () =
   assert.equal(printer.horas_uso_acumuladas, 0);
   assert.equal(printer.estado, "LIBRE");
   assert.ok(orderId.length > 0);
+});
+
+test("crear fabricacion para stock la deja visible como para stock sin crear pedido ni factura", async () => {
+  const { productId, materialId } = await setupSingleProductFixture({ materialStock: 1200 });
+
+  const created = await createStockManufacturingOrder({
+    productId,
+    quantity: 3,
+    materialId,
+  });
+
+  assert.equal(created.action, "created");
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM orders`))!.total, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices`))!.total, 0);
+
+  const manufacturing = (await row<{
+    pedido_id: string | null;
+    linea_pedido_id: string | null;
+    estado: string;
+  }>(`SELECT pedido_id, linea_pedido_id, estado FROM manufacturing_orders WHERE id = ?`, created.manufacturingId))!;
+
+  assert.equal(manufacturing.pedido_id, null);
+  assert.equal(manufacturing.linea_pedido_id, null);
+  assert.equal(manufacturing.estado, "PENDIENTE");
+
+  const snapshot = await getAppSnapshot();
+  const visibleOrder = snapshot.manufacturingOrders.find((item) => item.id === created.manufacturingId);
+  assert.ok(visibleOrder);
+  assert.equal(visibleOrder!.origen_fabricacion, "PARA_STOCK");
+  assert.equal(visibleOrder!.origen_fabricacion_label, "Para stock");
+  assert.equal(visibleOrder!.pedido_codigo, null);
+});
+
+test("completar fabricacion para stock aumenta stock, consume material y no duplica al repetir", async () => {
+  const { productId, materialId } = await setupSingleProductFixture({ materialStock: 1500, grams: 100, hours: 2, electricity: 1 });
+
+  const beforeMaterial = (await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId))!;
+  const beforeInventory = (await row<{ cantidad_disponible: number }>(
+    `SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`,
+    productId,
+  ))!;
+
+  const created = await createStockManufacturingOrder({
+    productId,
+    quantity: 2,
+    materialId,
+  });
+
+  const firstCompletion = await completeManufacturingWorkflow(created.manufacturingId);
+  const secondCompletion = await completeManufacturingWorkflow(created.manufacturingId);
+
+  const afterMaterial = (await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId))!;
+  const afterInventory = (await row<{ cantidad_disponible: number }>(
+    `SELECT cantidad_disponible FROM finished_product_inventory WHERE product_id = ?`,
+    productId,
+  ))!;
+  const manufacturing = (await row<{ estado: string }>(`SELECT estado FROM manufacturing_orders WHERE id = ?`, created.manufacturingId))!;
+  const productEntries = (await row<{ total: number }>(
+    `SELECT COUNT(*) AS total
+     FROM inventory_movements
+     WHERE inventario_tipo = 'PRODUCTO_TERMINADO'
+       AND referencia = ?
+       AND tipo = 'ENTRADA'`,
+    created.manufacturingCode,
+  ))!;
+  const materialConsumptions = (await row<{ total: number }>(
+    `SELECT COUNT(*) AS total
+     FROM stock_movements
+     WHERE referencia = ?
+       AND tipo = 'SALIDA'`,
+    created.manufacturingCode,
+  ))!;
+
+  assert.equal(firstCompletion.action, "completed");
+  assert.equal(secondCompletion.action, "noop");
+  assert.equal(manufacturing.estado, "COMPLETADA");
+  assert.equal(afterInventory.cantidad_disponible, beforeInventory.cantidad_disponible + 2);
+  assert.equal(afterMaterial.stock_actual_g, beforeMaterial.stock_actual_g - 200);
+  assert.equal(productEntries.total, 1);
+  assert.equal(materialConsumptions.total, 1);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM orders`))!.total, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices`))!.total, 0);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM customers`))!.total, 1);
 });
 
 test("solo permite una orden activa por impresora y asigna impresora correcta", async () => {

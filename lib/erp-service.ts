@@ -1220,8 +1220,8 @@ export async function getAppSnapshot() {
   const manufacturingOrdersBase = await rows<{
     id: string;
     codigo: string;
-    pedido_id: string;
-    linea_pedido_id: string;
+    pedido_id: string | null;
+    linea_pedido_id: string | null;
     producto_id: string;
     cantidad: number;
     estado: string;
@@ -1232,7 +1232,7 @@ export async function getAppSnapshot() {
     tiempo_real_horas: number | null;
     coste_impresora_total: number | null;
     incidencia: string | null;
-    pedido_codigo: string;
+    pedido_codigo: string | null;
     producto_nombre: string;
     impresora_codigo: string | null;
     impresora_nombre: string | null;
@@ -1244,7 +1244,7 @@ export async function getAppSnapshot() {
        pr.codigo AS impresora_codigo,
        pr.nombre AS impresora_nombre
      FROM manufacturing_orders mo
-     JOIN orders o ON o.id = mo.pedido_id
+     LEFT JOIN orders o ON o.id = mo.pedido_id
      JOIN products p ON p.id = mo.producto_id
      LEFT JOIN printers pr ON pr.id = mo.impresora_id`,
   );
@@ -1254,6 +1254,9 @@ export async function getAppSnapshot() {
 
     return {
       ...order,
+      pedido_codigo: order.pedido_codigo ?? null,
+      origen_fabricacion: order.pedido_id ? "BAJO_PEDIDO" : "PARA_STOCK",
+      origen_fabricacion_label: order.pedido_id ? "Bajo pedido" : "Para stock",
       estado_derivado: estadoDerivado,
       estado_badge_tone: getManufacturingStatusTone(estadoDerivado),
       tiene_incidencia_stock: tieneIncidenciaStock,
@@ -3130,10 +3133,124 @@ export async function updateOrderRecord(input: {
   });
 }
 
+export async function createStockManufacturingOrder(input: {
+  productId: string;
+  quantity: number;
+  materialId?: string;
+}) {
+  if (!input.productId) {
+    throw new Error("Debes seleccionar un producto para fabricar.");
+  }
+
+  const quantity = requirePositiveInteger(input.quantity, "La cantidad a fabricar debe ser mayor que cero.");
+  const product = await row<{
+    id: string;
+    codigo: string;
+    nombre: string;
+    tiempo_impresion_horas: number;
+    material_id: string;
+    material_codigo: string;
+    material_nombre: string;
+    material_color: string;
+    activo: number;
+    material_activo: number;
+  }>(
+    `SELECT
+       p.id,
+       p.codigo,
+       p.nombre,
+       p.tiempo_impresion_horas,
+       p.material_id,
+       p.activo,
+       m.codigo AS material_codigo,
+       m.nombre AS material_nombre,
+       m.color AS material_color,
+       m.activo AS material_activo
+     FROM products p
+     JOIN materials m ON m.id = p.material_id
+     WHERE p.id = ?`,
+    input.productId,
+  );
+
+  if (!product) {
+    throw new Error("El producto no existe.");
+  }
+  if (!parseBoolean(product.activo)) {
+    throw new Error("El producto esta archivado.");
+  }
+  if (!parseBoolean(product.material_activo)) {
+    throw new Error("El material principal del producto esta archivado.");
+  }
+  if (input.materialId?.trim() && input.materialId !== product.material_id) {
+    throw new Error("La fabricacion para stock solo puede usar el material principal configurado en el producto.");
+  }
+
+  await ensureFinishedInventoryRow(product.id);
+
+  const existingOrder = await row<{ id: string; codigo: string; estado: string }>(
+    `SELECT id, codigo, estado
+     FROM manufacturing_orders
+     WHERE pedido_id IS NULL
+       AND linea_pedido_id IS NULL
+       AND producto_id = ?
+       AND cantidad = ?
+       AND estado IN ('PENDIENTE', 'INICIADA', 'BLOQUEADA_POR_STOCK')
+     ORDER BY codigo DESC
+     LIMIT 1`,
+    product.id,
+    quantity,
+  );
+
+  if (existingOrder) {
+    return {
+      action: "noop" as const,
+      manufacturingId: existingOrder.id,
+      manufacturingCode: existingOrder.codigo,
+      manufacturingStatus: deriveManufacturingStatus(existingOrder.estado),
+      message: `La fabricacion ${existingOrder.codigo} para stock ya estaba abierta para ${product.nombre}.`,
+      tone: "success" as WorkflowTone,
+    };
+  }
+
+  const manufacturingId = randomUUID();
+  const manufacturingCode = await nextCode("manufacturing_orders", "OF-");
+  const estimatedHours = roundMoney(product.tiempo_impresion_horas * quantity);
+
+  await run(
+    `INSERT INTO manufacturing_orders
+      (id, codigo, pedido_id, linea_pedido_id, producto_id, cantidad, estado, tiempo_estimado_horas, fecha_inicio, fecha_fin, gramos_consumidos, tiempo_real_horas, coste_impresora_total, incidencia)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    manufacturingId,
+    manufacturingCode,
+    null,
+    null,
+    product.id,
+    quantity,
+    "PENDIENTE",
+    estimatedHours,
+    null,
+    null,
+    null,
+    null,
+    0,
+    null,
+  );
+
+  return {
+    action: "created" as const,
+    manufacturingId,
+    manufacturingCode,
+    manufacturingStatus: "PENDIENTE" as const,
+    materialLabel: `${product.material_codigo} ${product.material_nombre} ${product.material_color}`.trim(),
+    message: `Fabricacion ${manufacturingCode} creada para stock de ${product.nombre}.`,
+    tone: "success" as WorkflowTone,
+  };
+}
+
 export async function startManufacturingOrder(manufacturingOrderId: string) {
   const manufacturingOrder = await row<{
     id: string;
-    pedido_id: string;
+    pedido_id: string | null;
     codigo: string;
     estado: string;
     cantidad: number;
@@ -3180,12 +3297,14 @@ export async function startManufacturingOrder(manufacturingOrderId: string) {
         `No hay stock suficiente. Requiere ${gramsRequired} g y hay ${manufacturingOrder.stock_actual_g} g.`,
         manufacturingOrderId,
       );
-      await run(`UPDATE orders SET estado = ? WHERE id = ?`, "INCIDENCIA_STOCK", manufacturingOrder.pedido_id);
-      await registerOrderHistory(
-        manufacturingOrder.pedido_id,
-        "INCIDENCIA_STOCK",
-        "La fabricacion no pudo iniciarse por falta de material.",
-      );
+      if (manufacturingOrder.pedido_id) {
+        await run(`UPDATE orders SET estado = ? WHERE id = ?`, "INCIDENCIA_STOCK", manufacturingOrder.pedido_id);
+        await registerOrderHistory(
+          manufacturingOrder.pedido_id,
+          "INCIDENCIA_STOCK",
+          "La fabricacion no pudo iniciarse por falta de material.",
+        );
+      }
     });
     throw new Error("No se puede iniciar fabricacion sin stock suficiente.");
   }
@@ -3242,12 +3361,14 @@ export async function startManufacturingOrder(manufacturingOrderId: string) {
       nowIso(),
       printer.id,
     );
-    await run(`UPDATE orders SET estado = ? WHERE id = ?`, "EN_PRODUCCION", manufacturingOrder.pedido_id);
-    await registerOrderHistory(
-      manufacturingOrder.pedido_id,
-      "EN_PRODUCCION",
-      `Fabricacion iniciada para ${manufacturingOrder.producto_nombre} en ${printer.nombre}.`,
-    );
+    if (manufacturingOrder.pedido_id) {
+      await run(`UPDATE orders SET estado = ? WHERE id = ?`, "EN_PRODUCCION", manufacturingOrder.pedido_id);
+      await registerOrderHistory(
+        manufacturingOrder.pedido_id,
+        "EN_PRODUCCION",
+        `Fabricacion iniciada para ${manufacturingOrder.producto_nombre} en ${printer.nombre}.`,
+      );
+    }
   });
 }
 
@@ -3255,8 +3376,8 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
   const manufacturingOrder = await row<{
     id: string;
     codigo: string;
-    pedido_id: string;
-    linea_pedido_id: string;
+    pedido_id: string | null;
+    linea_pedido_id: string | null;
     producto_id: string;
     cantidad: number;
     estado: string;
@@ -3268,14 +3389,14 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
     material_id: string;
     precio_kg: number;
     stock_actual_g: number;
-    pedido_codigo: string;
+    pedido_codigo: string | null;
     impresora_id: string | null;
     impresora_nombre: string | null;
     coste_hora: number | null;
-    line_precio_unitario: number;
-    line_coste_material: number;
-    line_coste_electricidad_total: number;
-    line_cantidad_desde_stock: number;
+    line_precio_unitario: number | null;
+    line_coste_material: number | null;
+    line_coste_electricidad_total: number | null;
+    line_cantidad_desde_stock: number | null;
   }>(
     `SELECT
        mo.id,
@@ -3302,10 +3423,10 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
        l.coste_electricidad_total AS line_coste_electricidad_total,
        l.cantidad_desde_stock AS line_cantidad_desde_stock
      FROM manufacturing_orders mo
-     JOIN order_lines l ON l.id = mo.linea_pedido_id
+     LEFT JOIN order_lines l ON l.id = mo.linea_pedido_id
      JOIN products p ON p.id = mo.producto_id
      JOIN materials m ON m.id = p.material_id
-     JOIN orders o ON o.id = mo.pedido_id
+     LEFT JOIN orders o ON o.id = mo.pedido_id
      LEFT JOIN printers pr ON pr.id = mo.impresora_id
      WHERE mo.id = ?`,
     manufacturingOrderId,
@@ -3338,19 +3459,22 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
   );
   const printerCost = roundMoney((manufacturingOrder.coste_hora ?? 0) * totalHours);
   const unitCost = roundMoney((materialCost + electricityCost + printerCost) / manufacturingOrder.cantidad);
-  const updatedLineCosts = calculateLineCosts({
-    quantity: manufacturingOrder.line_cantidad_desde_stock + manufacturingOrder.cantidad,
-    unitPrice: manufacturingOrder.line_precio_unitario,
-    gramsPerUnit: manufacturingOrder.gramos_estimados,
-    materialPricePerKg: manufacturingOrder.precio_kg,
-    electricityCostPerUnit: manufacturingOrder.coste_electricidad,
-    fromStockUnits: manufacturingOrder.line_cantidad_desde_stock,
-    finishedUnitCost:
-      manufacturingOrder.line_cantidad_desde_stock > 0
-        ? manufacturingOrder.line_coste_material / manufacturingOrder.line_cantidad_desde_stock
-        : 0,
-    printerCostTotal: printerCost,
-  });
+  const isStockManufacturing = !manufacturingOrder.pedido_id || !manufacturingOrder.linea_pedido_id;
+  const updatedLineCosts = isStockManufacturing
+    ? null
+    : calculateLineCosts({
+        quantity: (manufacturingOrder.line_cantidad_desde_stock ?? 0) + manufacturingOrder.cantidad,
+        unitPrice: manufacturingOrder.line_precio_unitario ?? 0,
+        gramsPerUnit: manufacturingOrder.gramos_estimados,
+        materialPricePerKg: manufacturingOrder.precio_kg,
+        electricityCostPerUnit: manufacturingOrder.coste_electricidad,
+        fromStockUnits: manufacturingOrder.line_cantidad_desde_stock ?? 0,
+        finishedUnitCost:
+          (manufacturingOrder.line_cantidad_desde_stock ?? 0) > 0
+            ? (manufacturingOrder.line_coste_material ?? 0) / (manufacturingOrder.line_cantidad_desde_stock ?? 1)
+            : 0,
+        printerCostTotal: printerCost,
+      });
 
   await transaction(async () => {
     await run(
@@ -3364,25 +3488,27 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
       printerCost,
       manufacturingOrderId,
     );
-    await run(
-      `UPDATE order_lines
-       SET precio_total_linea = ?, coste_material = ?, coste_electricidad_total = ?, coste_impresora_total = ?, coste_total = ?, beneficio = ?
-       WHERE id = ?`,
-      roundMoney(manufacturingOrder.line_precio_unitario * (manufacturingOrder.line_cantidad_desde_stock + manufacturingOrder.cantidad)),
-      updatedLineCosts.costeMaterial,
-      updatedLineCosts.costeElectricidadTotal,
-      updatedLineCosts.costeImpresoraTotal,
-      updatedLineCosts.costeTotal,
-      updatedLineCosts.beneficio,
-      manufacturingOrder.linea_pedido_id,
-    );
+    if (!isStockManufacturing && updatedLineCosts) {
+      await run(
+        `UPDATE order_lines
+         SET precio_total_linea = ?, coste_material = ?, coste_electricidad_total = ?, coste_impresora_total = ?, coste_total = ?, beneficio = ?
+         WHERE id = ?`,
+        roundMoney((manufacturingOrder.line_precio_unitario ?? 0) * ((manufacturingOrder.line_cantidad_desde_stock ?? 0) + manufacturingOrder.cantidad)),
+        updatedLineCosts.costeMaterial,
+        updatedLineCosts.costeElectricidadTotal,
+        updatedLineCosts.costeImpresoraTotal,
+        updatedLineCosts.costeTotal,
+        updatedLineCosts.beneficio,
+        manufacturingOrder.linea_pedido_id,
+      );
+    }
 
     await applyMaterialInventoryMovement({
       materialId: manufacturingOrder.material_id,
       tipo: "SALIDA",
       cantidadG: gramsRequired,
       motivo: `Consumo en ${manufacturingOrder.codigo}`,
-      referencia: manufacturingOrder.pedido_codigo,
+      referencia: manufacturingOrder.pedido_codigo ?? manufacturingOrder.codigo,
     });
 
     await applyFinishedInventoryMovement({
@@ -3394,13 +3520,15 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
       costeUnitario: unitCost,
     });
 
-    await applyFinishedInventoryMovement({
-      productId: manufacturingOrder.producto_id,
-      tipo: "SALIDA",
-      cantidad: manufacturingOrder.cantidad,
-      motivo: `Producto fabricado asignado a ${manufacturingOrder.pedido_codigo}`,
-      referencia: manufacturingOrder.pedido_codigo,
-    });
+    if (!isStockManufacturing && manufacturingOrder.pedido_codigo) {
+      await applyFinishedInventoryMovement({
+        productId: manufacturingOrder.producto_id,
+        tipo: "SALIDA",
+        cantidad: manufacturingOrder.cantidad,
+        motivo: `Producto fabricado asignado a ${manufacturingOrder.pedido_codigo}`,
+        referencia: manufacturingOrder.pedido_codigo,
+      });
+    }
 
     await run(
       `UPDATE printers
@@ -3411,27 +3539,29 @@ export async function completeManufacturingOrder(manufacturingOrderId: string) {
       manufacturingOrder.impresora_id,
     );
 
-    const pendingStateRows = await rows<{ estado: string }>(
-      `SELECT estado FROM manufacturing_orders WHERE pedido_id = ?`,
-      manufacturingOrder.pedido_id,
-    );
-    const pendingStates = pendingStateRows.map((item) => item.estado);
+    if (manufacturingOrder.pedido_id) {
+      const pendingStateRows = await rows<{ estado: string }>(
+        `SELECT estado FROM manufacturing_orders WHERE pedido_id = ?`,
+        manufacturingOrder.pedido_id,
+      );
+      const pendingStates = pendingStateRows.map((item) => item.estado);
 
-    const nextStatus = pendingStates.some((item) => item === "BLOQUEADA_POR_STOCK")
-      ? "INCIDENCIA_STOCK"
-      : pendingStates.every((item) => item === "COMPLETADA")
-        ? "LISTO"
-        : "EN_PRODUCCION";
+      const nextStatus = pendingStates.some((item) => item === "BLOQUEADA_POR_STOCK")
+        ? "INCIDENCIA_STOCK"
+        : pendingStates.every((item) => item === "COMPLETADA")
+          ? "LISTO"
+          : "EN_PRODUCCION";
 
-    await run(`UPDATE orders SET estado = ? WHERE id = ?`, nextStatus, manufacturingOrder.pedido_id);
-    await registerOrderHistory(
-      manufacturingOrder.pedido_id,
-      nextStatus,
-      nextStatus === "LISTO"
-        ? "Todas las lineas fabricables estan completadas. Pedido listo."
-        : `Fabricacion completada para ${manufacturingOrder.producto_nombre}.`,
-    );
-    await recalculateOrderTotals(manufacturingOrder.pedido_id);
+      await run(`UPDATE orders SET estado = ? WHERE id = ?`, nextStatus, manufacturingOrder.pedido_id);
+      await registerOrderHistory(
+        manufacturingOrder.pedido_id,
+        nextStatus,
+        nextStatus === "LISTO"
+          ? "Todas las lineas fabricables estan completadas. Pedido listo."
+          : `Fabricacion completada para ${manufacturingOrder.producto_nombre}.`,
+      );
+      await recalculateOrderTotals(manufacturingOrder.pedido_id);
+    }
     await syncFinishedInventoryMetrics(manufacturingOrder.producto_id);
   });
 
@@ -3449,7 +3579,7 @@ export async function completeManufacturingWorkflow(manufacturingOrderId: string
     id: string;
     codigo: string;
     estado: string;
-    pedido_id: string;
+    pedido_id: string | null;
     incidencia: string | null;
   }>(
     `SELECT id, codigo, estado, pedido_id, incidencia
@@ -3463,14 +3593,18 @@ export async function completeManufacturingWorkflow(manufacturingOrderId: string
   }
 
   if (manufacturingOrder.estado === "COMPLETADA") {
-    const order = await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, manufacturingOrder.pedido_id);
+    const order = manufacturingOrder.pedido_id
+      ? await row<{ estado: string }>(`SELECT estado FROM orders WHERE id = ?`, manufacturingOrder.pedido_id)
+      : null;
     return {
       action: "noop" as const,
       manufacturingCode: manufacturingOrder.codigo,
       manufacturingStatus: deriveManufacturingStatus(manufacturingOrder.estado),
-      orderStatus: deriveOrderStatus({ estado: order?.estado ?? "LISTO" }),
+      orderStatus: manufacturingOrder.pedido_id ? deriveOrderStatus({ estado: order?.estado ?? "LISTO" }) : null,
       autoStarted: false,
-      message: `La fabricacion ${manufacturingOrder.codigo} ya estaba completada.`,
+      message: manufacturingOrder.pedido_id
+        ? `La fabricacion ${manufacturingOrder.codigo} ya estaba completada.`
+        : `La fabricacion ${manufacturingOrder.codigo} para stock ya estaba completada.`,
       tone: "success" as WorkflowTone,
     };
   }
@@ -3488,22 +3622,28 @@ export async function completeManufacturingWorkflow(manufacturingOrderId: string
   }
 
   const completion = await completeManufacturingOrder(manufacturingOrderId);
-  const refreshed = await row<{ estado: string }>(
-    `SELECT estado FROM orders WHERE id = ?`,
-    manufacturingOrder.pedido_id,
-  );
+  const refreshed = manufacturingOrder.pedido_id
+    ? await row<{ estado: string }>(
+        `SELECT estado FROM orders WHERE id = ?`,
+        manufacturingOrder.pedido_id,
+      )
+    : null;
 
   return {
     action: "completed" as const,
     manufacturingCode: manufacturingOrder.codigo,
     manufacturingStatus: "COMPLETADA" as const,
-    orderStatus: deriveOrderStatus({ estado: refreshed?.estado ?? "LISTO" }),
+    orderStatus: manufacturingOrder.pedido_id ? deriveOrderStatus({ estado: refreshed?.estado ?? "LISTO" }) : null,
     autoStarted,
     grams: completion.grams,
     totalHours: completion.totalHours,
-    message: autoStarted
-      ? `Fabricacion ${manufacturingOrder.codigo} completada en un paso. Se inicio y finalizo automaticamente.`
-      : `Fabricacion ${manufacturingOrder.codigo} completada y stock actualizado.`,
+    message: manufacturingOrder.pedido_id
+      ? autoStarted
+        ? `Fabricacion ${manufacturingOrder.codigo} completada en un paso. Se inicio y finalizo automaticamente.`
+        : `Fabricacion ${manufacturingOrder.codigo} completada y stock actualizado.`
+      : autoStarted
+        ? `Fabricacion ${manufacturingOrder.codigo} para stock completada en un paso. Se inicio y finalizo automaticamente.`
+        : `Fabricacion ${manufacturingOrder.codigo} para stock completada y stock actualizado.`,
     tone: "success" as WorkflowTone,
   };
 }
