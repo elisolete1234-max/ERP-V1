@@ -230,6 +230,11 @@ async function ensureIndexes() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_manufacturing_orders_codigo ON manufacturing_orders(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_movements_codigo ON stock_movements(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_codigo ON invoices(codigo);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(creado_en DESC);
   `);
 }
 
@@ -576,6 +581,39 @@ async function createSchema() {
       cantidad REAL NOT NULL,
       motivo TEXT NOT NULL,
       referencia TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      nombre TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL,
+      cliente_id TEXT,
+      activo INTEGER NOT NULL DEFAULT 1,
+      creado_en TEXT NOT NULL,
+      FOREIGN KEY(cliente_id) REFERENCES customers(id) ON DELETE RESTRICT
+    );
+
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      creado_en TEXT NOT NULL,
+      expira_en TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      user_email TEXT,
+      action TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT,
+      summary TEXT NOT NULL,
+      creado_en TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
     );
   `);
 

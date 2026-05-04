@@ -117,6 +117,7 @@ type ManufacturingOrder = {
   material_codigo: string | null;
   material_nombre: string;
   material_color: string | null;
+  coste_impresora_visual: number;
   coste_material: number;
   coste_electricidad: number;
   coste_maquina: number;
@@ -543,9 +544,11 @@ function InlineField({
 export function StockManufacturingForm({
   products,
   materials,
+  canViewCosts = true,
 }: {
   products: ProductOption[];
   materials: MaterialOption[];
+  canViewCosts?: boolean;
 }) {
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState("1");
@@ -638,7 +641,7 @@ export function StockManufacturingForm({
         <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
           {helperMessage}
         </div>
-      ) : estimate ? (
+      ) : estimate && canViewCosts ? (
         <div className="space-y-3 rounded-[26px] border border-black/8 bg-[color:var(--surface-strong)] p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -1967,7 +1970,15 @@ export function OrdersInlineBoard({
   );
 }
 
-export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
+export function MaterialsInlineTable({
+  materials,
+  canManage = true,
+  canViewCosts = true,
+}: {
+  materials: Material[];
+  canManage?: boolean;
+  canViewCosts?: boolean;
+}) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeProductTab, setActiveProductTab] = useState<"customers" | "orders" | "invoices" | "printers">("customers");
   const focusedProduct = {} as Product;
@@ -2171,7 +2182,7 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
       ) : null}
       <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Material</th><th>Precio/kg</th><th>Stock</th><th>Alerta</th></tr>
+        <tr><th>Acciones</th><th>ID</th><th>Material</th>{canViewCosts ? <th>Precio/kg</th> : null}<th>Stock</th><th>Alerta</th></tr>
       </thead>
       <tbody>
         {materials.map((material) => {
@@ -2197,13 +2208,15 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
                   <input type="hidden" name="id" value={material.id} />
                 </form>
                 <div className="table-action-group">
-                  <ActionButtons
-                    editing={editing}
-                    onEdit={() => setEditingId(material.id)}
-                    onCancel={() => setEditingId(null)}
-                    formId={formId}
-                  />
-                  {!editing ? (
+                  {canManage ? (
+                    <ActionButtons
+                      editing={editing}
+                      onEdit={() => setEditingId(material.id)}
+                      onCancel={() => setEditingId(null)}
+                      formId={formId}
+                    />
+                  ) : null}
+                  {!editing && canManage ? (
                     <form action={toggleMaterialActiveAction} onSubmit={confirmArchiveOnSubmit(material.activo)}>
                       <input type="hidden" name="id" value={material.id} />
                       <input type="hidden" name="active" value={material.activo ? "false" : "true"} />
@@ -2221,7 +2234,7 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
               </td>
               <td>{material.codigo}</td>
               <td>
-                {editing ? (
+                {editing && canManage ? (
                   <div className="table-edit-stack table-cell-edit--wide table-edit-card">
                     <div className="table-edit-grid-2">
                       <InlineField label="Material">
@@ -2309,15 +2322,17 @@ export function MaterialsInlineTable({ materials }: { materials: Material[] }) {
                   </div>
                 )}
               </td>
+              {canViewCosts ? (
               <td>
-                {editing ? (
+                {editing && canManage ? (
                   <input form={formId} name="precioKg" type="number" min="0" step="0.01" defaultValue={material.precio_kg} className={tableInputClass} />
                 ) : (
                   `${material.precio_kg.toFixed(2)} EUR`
                 )}
               </td>
+              ) : null}
               <td>
-                {editing ? (
+                {editing && canManage ? (
                   <div className="table-edit-stack table-cell-edit table-edit-card">
                     <input form={formId} name="stockActualG" type="hidden" value={material.stock_actual_g} />
                     <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-2 text-sm">
@@ -2850,21 +2865,26 @@ export function ProductsInlineTable({
 
 export function ManufacturingInlineTable({
   manufacturingOrders,
+  canViewCosts = true,
+  canManage = true,
 }: {
   manufacturingOrders: ManufacturingOrder[];
+  canViewCosts?: boolean;
+  canManage?: boolean;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   return (
     <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Origen</th><th>Pedido</th><th>Producto</th><th>Material</th><th>Estado</th><th>Impresora</th><th>Coste</th><th>Consumo</th></tr>
+        <tr><th>Acciones</th><th>ID</th><th>Origen</th><th>Pedido</th><th>Producto</th><th>Material</th><th>Estado</th><th>Impresora</th>{canViewCosts ? <th>Coste</th> : null}<th>Consumo</th></tr>
       </thead>
       <tbody>
         {manufacturingOrders.map((order) => {
           const editing = editingId === order.id;
           const formId = `manufacturing-form-${order.id}`;
           const stockAlert = getManufacturingStockAlert(order);
+          const printerUsageCost = Number((order.coste_electricidad + order.coste_maquina).toFixed(2));
           return (
             <tr
               key={order.id}
@@ -2881,7 +2901,7 @@ export function ManufacturingInlineTable({
                   <input type="hidden" name="id" value={order.id} />
                 </form>
                 <div className="table-action-group">
-                  {!editing && order.acciones_permitidas.includes("complete_manufacturing") ? (
+                  {!editing && canManage && order.acciones_permitidas.includes("complete_manufacturing") ? (
                     <form action={completeManufacturingAction}>
                       <input type="hidden" name="fabricacionId" value={order.id} />
                       <SubmitButton
@@ -2894,12 +2914,14 @@ export function ManufacturingInlineTable({
                       </SubmitButton>
                     </form>
                   ) : null}
-                  <ActionButtons
-                    editing={editing}
-                    onEdit={() => setEditingId(order.id)}
-                    onCancel={() => setEditingId(null)}
-                    formId={formId}
-                  />
+                  {canManage ? (
+                    <ActionButtons
+                      editing={editing}
+                      onEdit={() => setEditingId(order.id)}
+                      onCancel={() => setEditingId(null)}
+                      formId={formId}
+                    />
+                  ) : null}
                 </div>
               </td>
               <td>{order.codigo}</td>
@@ -2910,7 +2932,7 @@ export function ManufacturingInlineTable({
               </td>
               <td>{order.pedido_codigo ?? "-"}</td>
               <td>
-                {editing ? (
+                {editing && canManage ? (
                   <div className="table-edit-stack table-cell-edit">
                     <div className="text-sm font-medium">{order.producto_nombre}</div>
                     <input form={formId} name="cantidad" type="number" min="1" defaultValue={order.cantidad} className={tableInputClass} />
@@ -2927,7 +2949,7 @@ export function ManufacturingInlineTable({
                 </div>
               </td>
               <td>
-                {editing ? (
+                {editing && canManage ? (
                   <select form={formId} name="estado" defaultValue={order.estado} className={tableInputClass}>
                     <option value="PENDIENTE">pendiente</option>
                     <option value="BLOQUEADA_POR_STOCK">bloqueada_por_stock</option>
@@ -2949,10 +2971,10 @@ export function ManufacturingInlineTable({
                 )}
               </td>
               <td>
-                {order.impresora_nombre ? (
+                {canViewCosts && order.impresora_nombre ? (
                   <div className="space-y-1.5">
                     <div>{order.impresora_codigo} - {order.impresora_nombre}</div>
-                    <div className="text-xs text-[color:var(--muted)]">Coste: {formatCurrency(order.coste_impresora_total ?? 0)}</div>
+                    <div className="text-xs text-[color:var(--muted)]">Coste: {formatCurrency(printerUsageCost)}</div>
                     <ProductionCostBreakdown
                       total={order.coste_estimado_total}
                       unit={order.coste_estimado_unitario}
@@ -2970,7 +2992,7 @@ export function ManufacturingInlineTable({
                       showLabor={false}
                     />
                   </div>
-                ) : (
+                ) : canViewCosts ? (
                   <ProductionCostBreakdown
                     total={order.coste_estimado_total}
                     unit={order.coste_estimado_unitario}
@@ -2987,8 +3009,13 @@ export function ManufacturingInlineTable({
                     showPostProcessing={false}
                     showLabor={false}
                   />
+                ) : order.impresora_nombre ? (
+                  <div>{order.impresora_codigo} - {order.impresora_nombre}</div>
+                ) : (
+                  "-"
                 )}
               </td>
+              {canViewCosts ? (
               <td>
                 <ProductionCostBreakdown
                   total={order.coste_estimado_total}
@@ -3004,8 +3031,9 @@ export function ManufacturingInlineTable({
                   showMachine={false}
                 />
               </td>
+              ) : null}
               <td>
-                {editing ? (
+                {editing && canManage ? (
                   <input form={formId} name="tiempoRealHoras" type="number" min="0" step="0.1" defaultValue={order.tiempo_real_horas ?? ""} className={tableInputClass} />
                 ) : (
                   <div>
@@ -3025,9 +3053,17 @@ export function ManufacturingInlineTable({
 export function InvoicesInlineTable({
   invoices,
   focusedInvoiceCode,
+  canManagePayments = true,
+  canEditInvoices = true,
+  canDownloadPdf = true,
+  showPaymentHistory = true,
 }: {
   invoices: Invoice[];
   focusedInvoiceCode?: string | null;
+  canManagePayments?: boolean;
+  canEditInvoices?: boolean;
+  canDownloadPdf?: boolean;
+  showPaymentHistory?: boolean;
 }) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [paymentId, setPaymentId] = useState<string | null>(null);
@@ -3090,6 +3126,7 @@ export function InvoicesInlineTable({
                     >
                       <EyeIcon />
                     </button>
+                    {canManagePayments ? (
                     <form action={collectInvoicePaymentAction}>
                       <input type="hidden" name="facturaId" value={invoice.id} />
                       <input type="hidden" name="metodoPago" value="TRANSFERENCIA" />
@@ -3103,6 +3140,8 @@ export function InvoicesInlineTable({
                         <PaymentIcon />
                       </SubmitButton>
                     </form>
+                    ) : null}
+                    {canDownloadPdf ? (
                     <a
                       href={`/api/exports/invoices/${invoice.id}/pdf`}
                       title="Descargar PDF"
@@ -3111,6 +3150,7 @@ export function InvoicesInlineTable({
                     >
                       <DownloadIcon />
                     </a>
+                    ) : null}
                   </div>
                 </td>
                 <td>{invoice.codigo}</td>
@@ -3198,7 +3238,9 @@ export function InvoicesInlineTable({
                         </div>
                         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                           <p className="odoo-field-label">Pagos registrados</p>
-                          {invoice.pagos.length === 0 ? (
+                          {!showPaymentHistory ? (
+                            <p className="mt-2 text-sm text-[color:var(--muted)]">Historial de pagos no disponible para tu rol.</p>
+                          ) : invoice.pagos.length === 0 ? (
                             <p className="mt-2 text-sm text-[color:var(--muted)]">Esta factura aun no tiene pagos registrados.</p>
                           ) : (
                             <div className="table-wrap mt-3">
@@ -3250,12 +3292,14 @@ export function InvoicesInlineTable({
                             <h4 className="mt-2 text-base font-semibold text-slate-900">Factura {invoice.codigo}</h4>
                           </div>
                           <div className="flex flex-wrap items-center justify-end gap-2">
+                            {canDownloadPdf ? (
                             <a
                               href={`/api/exports/invoices/${invoice.id}/pdf`}
                               className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-900 transition hover:-translate-y-0.5 hover:bg-sky-100"
                             >
                               Descargar PDF
                             </a>
+                            ) : null}
                             <div className="text-right text-xs text-[color:var(--muted)]">
                               <div>Total: {formatCurrency(total)}</div>
                               <div>Cobrado: {formatCurrency(totalPaid)}</div>
@@ -3274,7 +3318,7 @@ export function InvoicesInlineTable({
                               {canEditDiscount ? "editable" : "bloqueada"}
                             </span>
                           </div>
-                          {canEditDiscount ? (
+                          {canEditDiscount && canEditInvoices ? (
                             <form action={updateInvoiceAction} className="mt-4 space-y-3">
                               <input type="hidden" name="id" value={invoice.id} />
                               <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
@@ -3318,7 +3362,7 @@ export function InvoicesInlineTable({
                           )}
                         </div>
 
-                        {registeringPayment && canRegisterPayment ? (
+                        {registeringPayment && canRegisterPayment && canManagePayments ? (
                           <form action={registerInvoicePaymentAction} className="mt-4 space-y-3">
                             <input type="hidden" name="facturaId" value={invoice.id} />
                             <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
@@ -3395,7 +3439,7 @@ export function InvoicesInlineTable({
                                 ? "Usa Cobrar factura para liquidar todo el pendiente al instante, o abre el detalle si necesitas un cobro parcial."
                                 : "La factura ya esta totalmente pagada."}
                             </div>
-                            {canRegisterPayment ? (
+                            {canRegisterPayment && canManagePayments ? (
                               <button
                                 type="button"
                                 onClick={() => setPaymentId(invoice.id)}
@@ -3421,15 +3465,19 @@ export function InvoicesInlineTable({
 
 export function FinishedInventoryInlineTable({
   finishedInventory,
+  canViewCosts = true,
+  canManage = true,
 }: {
   finishedInventory: FinishedInventory[];
+  canViewCosts?: boolean;
+  canManage?: boolean;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   return (
     <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Producto</th><th>Stock</th><th>Ubicacion</th><th>Coste/PVP</th></tr>
+        <tr><th>Acciones</th><th>ID</th><th>Producto</th><th>Stock</th><th>Ubicacion</th>{canViewCosts ? <th>Coste/PVP</th> : null}</tr>
       </thead>
       <tbody>
         {finishedInventory.map((item) => {
@@ -3446,12 +3494,14 @@ export function FinishedInventoryInlineTable({
                 <form id={formId} action={updateFinishedInventoryAction}>
                   <input type="hidden" name="id" value={item.id} />
                 </form>
-                <ActionButtons
-                  editing={editing}
-                  onEdit={() => setEditingId(item.id)}
-                  onCancel={() => setEditingId(null)}
-                  formId={formId}
-                />
+                {canManage ? (
+                  <ActionButtons
+                    editing={editing}
+                    onEdit={() => setEditingId(item.id)}
+                    onCancel={() => setEditingId(null)}
+                    formId={formId}
+                  />
+                ) : null}
               </td>
               <td>{item.codigo}</td>
               <td>
@@ -3459,7 +3509,7 @@ export function FinishedInventoryInlineTable({
                 <div className="text-xs text-[color:var(--muted)]">Actualizado: {item.fecha_actualizacion.slice(0, 10)}</div>
               </td>
               <td>
-                {editing ? (
+                {editing && canManage ? (
                   <div className="table-edit-card">
                     <InlineField label="Cantidad disponible">
                       <input form={formId} name="cantidadDisponible" type="number" min="0" defaultValue={item.cantidad_disponible} className={tableInputClass} />
@@ -3477,7 +3527,7 @@ export function FinishedInventoryInlineTable({
                 )}
               </td>
               <td>
-                {editing ? (
+                {editing && canManage ? (
                   <div className="table-edit-card">
                     <InlineField label="Ubicacion">
                       <input form={formId} name="ubicacion" defaultValue={item.ubicacion ?? ""} className={tableInputClass} />
@@ -3487,8 +3537,9 @@ export function FinishedInventoryInlineTable({
                   item.ubicacion || "-"
                 )}
               </td>
+              {canViewCosts ? (
               <td>
-                {editing ? (
+                {editing && canManage ? (
                   <div className="table-edit-stack table-cell-edit table-edit-card">
                     <InlineField label="Coste unitario">
                       <input form={formId} name="costeUnitario" type="number" min="0" step="0.01" defaultValue={item.coste_unitario} className={tableInputClass} />
@@ -3504,6 +3555,7 @@ export function FinishedInventoryInlineTable({
                   </div>
                 )}
               </td>
+              ) : null}
             </tr>
           );
         })}
@@ -3515,16 +3567,20 @@ export function FinishedInventoryInlineTable({
 export function PrintersInlineTable({
   printers,
   focusedPrinterCode,
+  canManage = true,
+  canViewCosts = true,
 }: {
   printers: Printer[];
   focusedPrinterCode?: string | null;
+  canManage?: boolean;
+  canViewCosts?: boolean;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   return (
     <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Impresora</th><th>Estado</th><th>Horas</th><th>Coste/h</th></tr>
+        <tr><th>Acciones</th><th>ID</th><th>Impresora</th><th>Estado</th><th>Horas</th>{canViewCosts ? <th>Coste/h</th> : null}</tr>
       </thead>
       <tbody>
         {printers.map((printer) => {
@@ -3553,13 +3609,15 @@ export function PrintersInlineTable({
                   <input type="hidden" name="id" value={printer.id} />
                 </form>
                 <div className="table-action-group">
-                  <ActionButtons
-                    editing={editing}
-                    onEdit={() => setEditingId(printer.id)}
-                    onCancel={() => setEditingId(null)}
-                    formId={formId}
-                  />
-                  {!editing ? (
+                  {canManage ? (
+                    <ActionButtons
+                      editing={editing}
+                      onEdit={() => setEditingId(printer.id)}
+                      onCancel={() => setEditingId(null)}
+                      formId={formId}
+                    />
+                  ) : null}
+                  {!editing && canManage ? (
                     <form action={togglePrinterActiveAction} onSubmit={confirmArchiveOnSubmit(printer.activo)}>
                       <input type="hidden" name="id" value={printer.id} />
                       <input type="hidden" name="active" value={printer.activo ? "false" : "true"} />
@@ -3577,7 +3635,7 @@ export function PrintersInlineTable({
               </td>
               <td>{printer.codigo}</td>
               <td>
-                {editing ? (
+                {editing && canManage ? (
                   <div className="table-edit-stack table-cell-edit table-edit-card">
                     <InlineField label="Nombre">
                       <input form={formId} name="nombre" defaultValue={printer.nombre} className={tableInputClass} />
@@ -3606,7 +3664,7 @@ export function PrintersInlineTable({
                 )}
               </td>
               <td>
-                {editing ? (
+                {editing && canManage ? (
                   <div className="table-edit-card">
                     <InlineField label="Estado">
                       <select form={formId} name="estado" defaultValue={printer.estado} className={tableInputClass}>
@@ -3623,7 +3681,7 @@ export function PrintersInlineTable({
                 )}
               </td>
               <td>
-                {editing ? (
+                {editing && canManage ? (
                   <div className="table-edit-card">
                     <InlineField label="Horas de uso">
                       <input form={formId} name="horasUsoAcumuladas" type="number" min="0" step="0.1" defaultValue={printer.horas_uso_acumuladas} className={tableInputClass} />
@@ -3633,17 +3691,19 @@ export function PrintersInlineTable({
                   `${printer.horas_uso_acumuladas} h`
                 )}
               </td>
-              <td>
-                {editing ? (
-                  <div className="table-edit-card">
-                    <InlineField label="Coste por hora">
-                      <input form={formId} name="costeHora" type="number" min="0" step="0.01" defaultValue={printer.coste_hora} className={tableInputClass} />
-                    </InlineField>
-                  </div>
-                ) : (
-                  `${printer.coste_hora.toFixed(2)} EUR`
-                )}
-              </td>
+              {canViewCosts ? (
+                <td>
+                  {editing && canManage ? (
+                    <div className="table-edit-card">
+                      <InlineField label="Coste por hora">
+                        <input form={formId} name="costeHora" type="number" min="0" step="0.01" defaultValue={printer.coste_hora} className={tableInputClass} />
+                      </InlineField>
+                    </div>
+                  ) : (
+                    `${printer.coste_hora.toFixed(2)} EUR`
+                  )}
+                </td>
+              ) : null}
             </tr>
           );
         })}

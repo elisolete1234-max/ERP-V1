@@ -3,6 +3,21 @@
 import { revalidatePath } from "next/cache";
 import { redirect, unstable_rethrow } from "next/navigation";
 import {
+  authenticateUser,
+  clearSessionCookie,
+  createInitialAdmin,
+  createUserRecord,
+  createUserSession,
+  getCurrentUser,
+  invalidateUserSession,
+  logAuditEvent,
+  readCurrentSessionToken,
+  requirePermission,
+  writeSessionCookie,
+  type AppPermission,
+  type AppRole,
+} from "@/lib/auth";
+import {
   archiveCustomer,
   archiveMaterial,
   archivePrinter,
@@ -67,6 +82,14 @@ function asOptionalNumber(value: FormDataEntryValue | null) {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function asRole(value: FormDataEntryValue | null) {
+  const role = asString(value).toUpperCase();
+  if (role === "ADMIN" || role === "OPERADOR" || role === "GESTOR_FINANCIERO" || role === "CLIENTE") {
+    return role as AppRole;
+  }
+  throw new Error("Rol de usuario no valido.");
+}
+
 function redirectWithMessage(
   message: string,
   tone: "success" | "warn" | "error" = "success",
@@ -82,12 +105,22 @@ async function executeAndRefresh(
   task: () => unknown | Promise<unknown>,
   successMessage: string,
   successPath = "/",
+  options?: {
+    permission?: AppPermission;
+    auditAction?: string;
+    auditEntityType?: string;
+    auditEntityId?: string | null;
+  },
 ) {
   let errorMessage: string | null = null;
   let resolvedMessage = successMessage;
   let resolvedTone: "success" | "warn" = "success";
+  let actor: Awaited<ReturnType<typeof getCurrentUser>> = null;
 
   try {
+    if (options?.permission) {
+      actor = await requirePermission(options.permission);
+    }
     const result = await task();
     if (result && typeof result === "object") {
       if ("message" in result && typeof result.message === "string" && result.message.trim()) {
@@ -96,6 +129,16 @@ async function executeAndRefresh(
       if ("tone" in result && (result.tone === "success" || result.tone === "warn")) {
         resolvedTone = result.tone;
       }
+    }
+    if (options?.auditAction && options.auditEntityType) {
+      await logAuditEvent({
+        userId: actor?.id ?? null,
+        userEmail: actor?.email ?? null,
+        action: options.auditAction,
+        entityType: options.auditEntityType,
+        entityId: options.auditEntityId ?? null,
+        summary: resolvedMessage,
+      });
     }
     revalidatePath("/");
   } catch (error) {
@@ -111,6 +154,87 @@ async function executeAndRefresh(
   redirectWithMessage(resolvedMessage, resolvedTone, successPath);
 }
 
+export async function bootstrapAdminAction(formData: FormData) {
+  try {
+    const created = await createInitialAdmin({
+      nombre: asString(formData.get("nombre")),
+      email: asString(formData.get("email")),
+      password: asString(formData.get("password")),
+    });
+    const token = await createUserSession(created.id);
+    await writeSessionCookie(token);
+    revalidatePath("/");
+    redirectWithMessage("Administrador inicial creado y sesion iniciada.", "success", "/");
+  } catch (error) {
+    unstable_rethrow(error);
+    redirectWithMessage(error instanceof Error ? error.message : "No se pudo crear el administrador inicial.", "error", "/");
+  }
+}
+
+export async function loginAction(formData: FormData) {
+  try {
+    const user = await authenticateUser({
+      email: asString(formData.get("email")),
+      password: asString(formData.get("password")),
+    });
+    const token = await createUserSession(user.id);
+    await writeSessionCookie(token);
+    await logAuditEvent({
+      userId: user.id,
+      userEmail: user.email,
+      action: "login",
+      entityType: "session",
+      entityId: user.id,
+      summary: `Inicio de sesion de ${user.email}`,
+    });
+    revalidatePath("/");
+    redirectWithMessage(`Sesion iniciada como ${user.nombre}.`, "success", "/");
+  } catch (error) {
+    unstable_rethrow(error);
+    redirectWithMessage(error instanceof Error ? error.message : "No se pudo iniciar sesion.", "error", "/");
+  }
+}
+
+export async function logoutAction() {
+  const currentUser = await getCurrentUser();
+  const currentToken = await readCurrentSessionToken();
+  await invalidateUserSession(currentToken);
+  await clearSessionCookie();
+  if (currentUser) {
+    await logAuditEvent({
+      userId: currentUser.id,
+      userEmail: currentUser.email,
+      action: "logout",
+      entityType: "session",
+      entityId: currentUser.id,
+      summary: `Cierre de sesion de ${currentUser.email}`,
+    });
+  }
+  revalidatePath("/");
+  redirectWithMessage("Sesion cerrada.", "success", "/");
+}
+
+export async function createUserAction(formData: FormData) {
+  await executeAndRefresh(
+    () =>
+      createUserRecord({
+        nombre: asString(formData.get("nombre")),
+        email: asString(formData.get("email")),
+        password: asString(formData.get("password")),
+        role: asRole(formData.get("role")),
+        clienteId: asString(formData.get("clienteId")) || null,
+        activo: formData.get("activo") === "on",
+      }),
+    "Usuario creado correctamente.",
+    "/?section=usuarios",
+    {
+      permission: "manage_users",
+      auditAction: "create_user",
+      auditEntityType: "user",
+    },
+  );
+}
+
 export async function createCustomerAction(formData: FormData) {
   await executeAndRefresh(
     () =>
@@ -122,6 +246,7 @@ export async function createCustomerAction(formData: FormData) {
       }),
     "Cliente creado correctamente.",
     "/?section=clientes",
+    { permission: "create_customer", auditAction: "create_customer", auditEntityType: "customer" },
   );
 }
 
@@ -137,6 +262,12 @@ export async function updateCustomerAction(formData: FormData) {
       }),
     "Cliente actualizado.",
     "/?section=clientes",
+    {
+      permission: "edit_customer",
+      auditAction: "edit_customer",
+      auditEntityType: "customer",
+      auditEntityId: asString(formData.get("id")),
+    },
   );
 }
 
@@ -148,17 +279,33 @@ export async function toggleCustomerActiveAction(formData: FormData) {
     () => setCustomerActiveState(customerId, active),
     active ? "Cliente desarchivado." : "Cliente archivado.",
     "/?section=clientes",
+    {
+      permission: "archive_customer",
+      auditAction: active ? "unarchive_customer" : "archive_customer",
+      auditEntityType: "customer",
+      auditEntityId: customerId,
+    },
   );
 }
 
 export async function archiveClienteAction(formData: FormData) {
   const customerId = asString(formData.get("id"));
-  await executeAndRefresh(() => archiveCustomer(customerId), "Cliente archivado.", "/?section=clientes");
+  await executeAndRefresh(() => archiveCustomer(customerId), "Cliente archivado.", "/?section=clientes", {
+    permission: "archive_customer",
+    auditAction: "archive_customer",
+    auditEntityType: "customer",
+    auditEntityId: customerId,
+  });
 }
 
 export async function unarchiveClienteAction(formData: FormData) {
   const customerId = asString(formData.get("id"));
-  await executeAndRefresh(() => unarchiveCustomer(customerId), "Cliente desarchivado.", "/?section=clientes");
+  await executeAndRefresh(() => unarchiveCustomer(customerId), "Cliente desarchivado.", "/?section=clientes", {
+    permission: "archive_customer",
+    auditAction: "unarchive_customer",
+    auditEntityType: "customer",
+    auditEntityId: customerId,
+  });
 }
 
 export async function createMaterialAction(formData: FormData) {
@@ -185,6 +332,7 @@ export async function createMaterialAction(formData: FormData) {
       }),
     "Material creado correctamente.",
     "/?section=materiales",
+    { permission: "create_material", auditAction: "create_material", auditEntityType: "material" },
   );
 }
 
@@ -213,6 +361,12 @@ export async function updateMaterialAction(formData: FormData) {
       }),
     "Material actualizado.",
     "/?section=materiales",
+    {
+      permission: "edit_material",
+      auditAction: "edit_material",
+      auditEntityType: "material",
+      auditEntityId: asString(formData.get("id")),
+    },
   );
 }
 
@@ -224,17 +378,33 @@ export async function toggleMaterialActiveAction(formData: FormData) {
     () => setMaterialActiveState(materialId, active),
     active ? "Material desarchivado." : "Material archivado.",
     "/?section=materiales",
+    {
+      permission: "archive_material",
+      auditAction: active ? "unarchive_material" : "archive_material",
+      auditEntityType: "material",
+      auditEntityId: materialId,
+    },
   );
 }
 
 export async function archiveMaterialAction(formData: FormData) {
   const materialId = asString(formData.get("id"));
-  await executeAndRefresh(() => archiveMaterial(materialId), "Material archivado.", "/?section=materiales");
+  await executeAndRefresh(() => archiveMaterial(materialId), "Material archivado.", "/?section=materiales", {
+    permission: "archive_material",
+    auditAction: "archive_material",
+    auditEntityType: "material",
+    auditEntityId: materialId,
+  });
 }
 
 export async function unarchiveMaterialAction(formData: FormData) {
   const materialId = asString(formData.get("id"));
-  await executeAndRefresh(() => unarchiveMaterial(materialId), "Material desarchivado.", "/?section=materiales");
+  await executeAndRefresh(() => unarchiveMaterial(materialId), "Material desarchivado.", "/?section=materiales", {
+    permission: "archive_material",
+    auditAction: "unarchive_material",
+    auditEntityType: "material",
+    auditEntityId: materialId,
+  });
 }
 
 export async function deleteMaterialAction() {
@@ -242,6 +412,7 @@ export async function deleteMaterialAction() {
     () => Promise.reject(new Error("El borrado fisico esta deshabilitado. Archiva el material para retirarlo del uso diario.")),
     "Accion no disponible.",
     "/?section=materiales&materialFilter=ALL",
+    { permission: "archive_material", auditAction: "delete_material_blocked", auditEntityType: "material" },
   );
 }
 
@@ -266,6 +437,7 @@ export async function createProductAction(formData: FormData) {
       }),
     "Producto creado correctamente.",
     "/?section=productos",
+    { permission: "create_product", auditAction: "create_product", auditEntityType: "product" },
   );
 }
 
@@ -291,6 +463,12 @@ export async function updateProductAction(formData: FormData) {
       }),
     "Producto actualizado.",
     "/?section=productos",
+    {
+      permission: "edit_product",
+      auditAction: "edit_product",
+      auditEntityType: "product",
+      auditEntityId: asString(formData.get("id")),
+    },
   );
 }
 
@@ -302,17 +480,33 @@ export async function toggleProductActiveAction(formData: FormData) {
     () => setProductActiveState(productId, active),
     active ? "Producto desarchivado." : "Producto archivado.",
     "/?section=productos",
+    {
+      permission: "archive_product",
+      auditAction: active ? "unarchive_product" : "archive_product",
+      auditEntityType: "product",
+      auditEntityId: productId,
+    },
   );
 }
 
 export async function archiveProductoAction(formData: FormData) {
   const productId = asString(formData.get("id"));
-  await executeAndRefresh(() => archiveProduct(productId), "Producto archivado.", "/?section=productos");
+  await executeAndRefresh(() => archiveProduct(productId), "Producto archivado.", "/?section=productos", {
+    permission: "archive_product",
+    auditAction: "archive_product",
+    auditEntityType: "product",
+    auditEntityId: productId,
+  });
 }
 
 export async function unarchiveProductoAction(formData: FormData) {
   const productId = asString(formData.get("id"));
-  await executeAndRefresh(() => unarchiveProduct(productId), "Producto desarchivado.", "/?section=productos");
+  await executeAndRefresh(() => unarchiveProduct(productId), "Producto desarchivado.", "/?section=productos", {
+    permission: "archive_product",
+    auditAction: "unarchive_product",
+    auditEntityType: "product",
+    auditEntityId: productId,
+  });
 }
 
 export async function createOrderAction(formData: FormData) {
@@ -334,6 +528,7 @@ export async function createOrderAction(formData: FormData) {
       }),
     "Pedido creado en borrador.",
     "/?section=pedidos",
+    { permission: "create_order", auditAction: "create_order", auditEntityType: "order" },
   );
 }
 
@@ -358,6 +553,12 @@ export async function updateOrderAction(formData: FormData) {
       }),
     "Pedido actualizado.",
     "/?section=pedidos",
+    {
+      permission: "edit_order",
+      auditAction: "edit_order",
+      auditEntityType: "order",
+      auditEntityId: asString(formData.get("id")),
+    },
   );
 }
 
@@ -366,6 +567,12 @@ export async function confirmOrderAction(formData: FormData) {
     () => confirmOrder(asString(formData.get("pedidoId"))),
     "Pedido confirmado o marcado con incidencia según stock.",
     "/?section=pedidos",
+    {
+      permission: "confirm_order",
+      auditAction: "confirm_order",
+      auditEntityType: "order",
+      auditEntityId: asString(formData.get("pedidoId")),
+    },
   );
 }
 
@@ -374,6 +581,12 @@ export async function processOrderAction(formData: FormData) {
     () => processOrder(asString(formData.get("pedidoId"))),
     "Pedido procesado.",
     "/?section=pedidos",
+    {
+      permission: "process_order",
+      auditAction: "process_order",
+      auditEntityType: "order",
+      auditEntityId: asString(formData.get("pedidoId")),
+    },
   );
 }
 
@@ -382,6 +595,12 @@ export async function retryOrderAction(formData: FormData) {
     () => retryOrderAfterRestock(asString(formData.get("pedidoId"))),
     "Pedido revalidado tras la reposición.",
     "/?section=pedidos",
+    {
+      permission: "retry_order",
+      auditAction: "retry_order",
+      auditEntityType: "order",
+      auditEntityId: asString(formData.get("pedidoId")),
+    },
   );
 }
 
@@ -390,6 +609,12 @@ export async function startManufacturingAction(formData: FormData) {
     () => confirmAndStart(formData),
     "Fabricación iniciada.",
     "/?section=fabricacion",
+    {
+      permission: "start_manufacturing",
+      auditAction: "start_manufacturing",
+      auditEntityType: "manufacturing",
+      auditEntityId: asString(formData.get("fabricacionId")),
+    },
   );
 }
 
@@ -408,6 +633,12 @@ export async function completeManufacturingAction(formData: FormData) {
     () => completeManufacturingWorkflow(asString(formData.get("fabricacionId"))),
     "Fabricación completada y stock descontado.",
     "/?section=fabricacion",
+    {
+      permission: "complete_manufacturing",
+      auditAction: "complete_manufacturing",
+      auditEntityType: "manufacturing",
+      auditEntityId: asString(formData.get("fabricacionId")),
+    },
   );
 }
 
@@ -421,6 +652,11 @@ export async function createStockManufacturingAction(formData: FormData) {
       }),
     "Fabricacion para stock creada.",
     "/?section=productos-terminados",
+    {
+      permission: "create_stock_manufacturing",
+      auditAction: "create_stock_manufacturing",
+      auditEntityType: "manufacturing",
+    },
   );
 }
 
@@ -436,6 +672,12 @@ export async function updateManufacturingAction(formData: FormData) {
       }),
     "Orden de fabricacion actualizada.",
     "/?section=fabricacion",
+    {
+      permission: "edit_manufacturing",
+      auditAction: "edit_manufacturing",
+      auditEntityType: "manufacturing",
+      auditEntityId: asString(formData.get("id")),
+    },
   );
 }
 
@@ -449,6 +691,12 @@ export async function restockMaterialAction(formData: FormData) {
       ),
     "Reposición registrada.",
     "/?section=stock",
+    {
+      permission: "restock_material",
+      auditAction: "restock_material",
+      auditEntityType: "material",
+      auditEntityId: asString(formData.get("materialId")),
+    },
   );
 }
 
@@ -464,6 +712,7 @@ export async function createPrinterAction(formData: FormData) {
       }),
     "Impresora creada correctamente.",
     "/?section=impresoras",
+    { permission: "create_printer", auditAction: "create_printer", auditEntityType: "printer" },
   );
 }
 
@@ -480,6 +729,12 @@ export async function updatePrinterAction(formData: FormData) {
       }),
     "Impresora actualizada.",
     "/?section=impresoras",
+    {
+      permission: "edit_printer",
+      auditAction: "edit_printer",
+      auditEntityType: "printer",
+      auditEntityId: asString(formData.get("id")),
+    },
   );
 }
 
@@ -491,17 +746,33 @@ export async function togglePrinterActiveAction(formData: FormData) {
     () => setPrinterActiveState(printerId, active),
     active ? "Impresora desarchivada." : "Impresora archivada.",
     "/?section=impresoras",
+    {
+      permission: "archive_printer",
+      auditAction: active ? "unarchive_printer" : "archive_printer",
+      auditEntityType: "printer",
+      auditEntityId: printerId,
+    },
   );
 }
 
 export async function archiveImpresoraAction(formData: FormData) {
   const printerId = asString(formData.get("id"));
-  await executeAndRefresh(() => archivePrinter(printerId), "Impresora archivada.", "/?section=impresoras");
+  await executeAndRefresh(() => archivePrinter(printerId), "Impresora archivada.", "/?section=impresoras", {
+    permission: "archive_printer",
+    auditAction: "archive_printer",
+    auditEntityType: "printer",
+    auditEntityId: printerId,
+  });
 }
 
 export async function unarchiveImpresoraAction(formData: FormData) {
   const printerId = asString(formData.get("id"));
-  await executeAndRefresh(() => unarchivePrinter(printerId), "Impresora desarchivada.", "/?section=impresoras");
+  await executeAndRefresh(() => unarchivePrinter(printerId), "Impresora desarchivada.", "/?section=impresoras", {
+    permission: "archive_printer",
+    auditAction: "unarchive_printer",
+    auditEntityType: "printer",
+    auditEntityId: printerId,
+  });
 }
 
 export async function restockFinishedProductAction(formData: FormData) {
@@ -516,6 +787,12 @@ export async function restockFinishedProductAction(formData: FormData) {
       ),
     "Entrada de producto terminado registrada.",
     "/?section=productos-terminados",
+    {
+      permission: "restock_finished_inventory",
+      auditAction: "restock_finished_inventory",
+      auditEntityType: "finished_inventory",
+      auditEntityId: asString(formData.get("productId")),
+    },
   );
 }
 
@@ -531,6 +808,12 @@ export async function updateFinishedInventoryAction(formData: FormData) {
       }),
     "Inventario de producto terminado actualizado.",
     "/?section=productos-terminados",
+    {
+      permission: "edit_finished_inventory",
+      auditAction: "edit_finished_inventory",
+      auditEntityType: "finished_inventory",
+      auditEntityId: asString(formData.get("id")),
+    },
   );
 }
 
@@ -539,6 +822,12 @@ export async function deliverOrderAction(formData: FormData) {
     () => deliverOrderWorkflow(asString(formData.get("pedidoId"))),
     "Pedido entregado.",
     "/?section=pedidos",
+    {
+      permission: "deliver_order",
+      auditAction: "deliver_order",
+      auditEntityType: "order",
+      auditEntityId: asString(formData.get("pedidoId")),
+    },
   );
 }
 
@@ -547,6 +836,12 @@ export async function generateInvoiceAction(formData: FormData) {
     () => invoiceOrderWorkflow(asString(formData.get("pedidoId"))),
     "Factura generada.",
     "/?section=facturas",
+    {
+      permission: "invoice_order",
+      auditAction: "invoice_order",
+      auditEntityType: "order",
+      auditEntityId: asString(formData.get("pedidoId")),
+    },
   );
 }
 
@@ -565,6 +860,12 @@ export async function collectInvoicePaymentAction(formData: FormData) {
       ),
     "Factura cobrada.",
     "/?section=facturas",
+    {
+      permission: "collect_payment",
+      auditAction: "collect_payment",
+      auditEntityType: "invoice",
+      auditEntityId: asString(formData.get("facturaId")),
+    },
   );
 }
 
@@ -579,6 +880,12 @@ export async function updateInvoiceAction(formData: FormData) {
       }),
     "Factura actualizada.",
     "/?section=facturas",
+    {
+      permission: "edit_invoice",
+      auditAction: "edit_invoice",
+      auditEntityType: "invoice",
+      auditEntityId: asString(formData.get("id")),
+    },
   );
 }
 
@@ -594,5 +901,11 @@ export async function registerInvoicePaymentAction(formData: FormData) {
       }),
     "Pago registrado correctamente.",
     "/?section=facturas",
+    {
+      permission: "register_payment",
+      auditAction: "register_payment",
+      auditEntityType: "invoice_payment",
+      auditEntityId: asString(formData.get("facturaId")),
+    },
   );
 }

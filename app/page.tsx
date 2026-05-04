@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import {
+  bootstrapAdminAction,
   confirmOrderAction,
   processOrderAction,
   createCustomerAction,
@@ -8,9 +9,12 @@ import {
   createOrderAction,
   createPrinterAction,
   createProductAction,
+  createUserAction,
   createStockManufacturingAction,
   deliverOrderAction,
   generateInvoiceAction,
+  loginAction,
+  logoutAction,
   restockFinishedProductAction,
   restockMaterialAction,
   retryOrderAction,
@@ -29,6 +33,17 @@ import {
 import { SubmitButton } from "./components/form-ui";
 import { FilterSummary } from "./components/filter-summary";
 import { getAppSnapshot, matchesOrderFocusCode, prioritizeOrdersByFocus } from "@/lib/erp-service";
+import {
+  canAccessModule,
+  canPerformAction,
+  filterSnapshotByRole,
+  getCurrentUser,
+  getRoleLabel,
+  getVisibleSections,
+  hasUsers,
+  listRoles,
+  listUsers,
+} from "@/lib/auth";
 import {
   INVOICE_STATUS_FILTERS,
   MANUFACTURING_STATUS_FILTERS,
@@ -49,6 +64,7 @@ const sectionKeys = [
   "materiales",
   "clientes",
   "movimientos",
+  "usuarios",
 ] as const;
 
 const sectionLabels: Record<(typeof sectionKeys)[number], string> = {
@@ -63,6 +79,7 @@ const sectionLabels: Record<(typeof sectionKeys)[number], string> = {
   materiales: "Materiales",
   clientes: "Clientes",
   movimientos: "Movimientos",
+  usuarios: "Usuarios",
 };
 
 const printerStatusLabels: Record<string, string> = {
@@ -122,6 +139,8 @@ function invoiceStatusFilterLabel(status: string) {
   if (status === "VENCIDA") return "vencidas";
   return "todas";
 }
+
+const clientVisibleRoleOptions = listRoles();
 
 function toPlainData<T>(value: T): T {
   try {
@@ -384,10 +403,64 @@ export default async function Home({
   }>;
 }) {
   const resolved = (await searchParams) ?? {};
-  const section = sectionKeys.includes(resolved.section as (typeof sectionKeys)[number])
+  const usersExist = await hasUsers();
+
+  if (!usersExist) {
+    return (
+      <main className="erp-shell">
+        <section className="mx-auto max-w-xl panel p-8">
+          <p className="eyebrow">Bootstrap seguro</p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">Crear administrador inicial</h1>
+          <p className="mt-3 text-sm text-[color:var(--muted)]">
+            La app todavia no tiene usuarios. Crea el primer administrador para activar el control de acceso.
+          </p>
+          <form action={bootstrapAdminAction} className="mt-6 space-y-4">
+            <Field label="Nombre">
+              <input name="nombre" className="input" placeholder="Administrador" required />
+            </Field>
+            <Field label="Email">
+              <input name="email" type="email" className="input" placeholder="admin@eli-print-3d.local" required />
+            </Field>
+            <Field label="Contrasena" hint="Minimo 8 caracteres">
+              <input name="password" type="password" className="input" required />
+            </Field>
+            <SubmitButton pendingText="Creando admin...">Crear admin inicial</SubmitButton>
+          </form>
+        </section>
+      </main>
+    );
+  }
+
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    return (
+      <main className="erp-shell">
+        <section className="mx-auto max-w-xl panel p-8">
+          <p className="eyebrow">Acceso</p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">Iniciar sesion</h1>
+          <p className="mt-3 text-sm text-[color:var(--muted)]">
+            Entra con tu usuario para ver solo los modulos y acciones permitidos para tu rol.
+          </p>
+          <form action={loginAction} className="mt-6 space-y-4">
+            <Field label="Email">
+              <input name="email" type="email" className="input" required />
+            </Field>
+            <Field label="Contrasena">
+              <input name="password" type="password" className="input" required />
+            </Field>
+            <SubmitButton pendingText="Entrando...">Entrar</SubmitButton>
+          </form>
+        </section>
+      </main>
+    );
+  }
+
+  const visibleSections = getVisibleSections(currentUser);
+  const requestedSection = sectionKeys.includes(resolved.section as (typeof sectionKeys)[number])
     ? (resolved.section as (typeof sectionKeys)[number])
     : "dashboard";
-  const snapshot: Snapshot = toPlainData(await getAppSnapshot());
+  const section = visibleSections.includes(requestedSection) ? requestedSection : visibleSections[0];
+  const snapshot: Snapshot = filterSnapshotByRole(toPlainData(await getAppSnapshot()), currentUser);
   const {
     customers,
     materials,
@@ -400,6 +473,19 @@ export default async function Home({
     inventoryMovements,
     invoices,
   } = snapshot;
+  const canViewCosts = canPerformAction(currentUser, "view_costs");
+  const canViewMargins = canPerformAction(currentUser, "view_margins");
+  const canManageUsers = canPerformAction(currentUser, "manage_users");
+  const canCreateMaterials = canPerformAction(currentUser, "create_material");
+  const canEditMaterials = canPerformAction(currentUser, "edit_material");
+  const canCreatePrinters = canPerformAction(currentUser, "create_printer");
+  const canEditPrinters = canPerformAction(currentUser, "edit_printer");
+  const canCreateOrders = canPerformAction(currentUser, "create_order");
+  const canEditInvoices = canPerformAction(currentUser, "edit_invoice");
+  const canManagePayments = canPerformAction(currentUser, "collect_payment") || canPerformAction(currentUser, "register_payment");
+  const canExportData = canPerformAction(currentUser, "export_data");
+  const canEditFinishedInventory = canPerformAction(currentUser, "edit_finished_inventory");
+  const users = canManageUsers ? await listUsers() : [];
 
   const orderFilter = resolved.orderStatus ?? "ALL";
   const manufacturingFilter = resolved.manufacturingStatus ?? "ALL";
@@ -881,6 +967,7 @@ export default async function Home({
     materiales: materials.length,
     clientes: customers.length,
     movimientos: inventoryMovements.length,
+    usuarios: users.length,
   };
 
   const shortcuts = [
@@ -941,7 +1028,7 @@ export default async function Home({
             </div>
           </div>
           <nav className="erp-sidebar-nav">
-            {sectionKeys.map((key) => (
+            {visibleSections.map((key) => (
               <Link
                 key={key}
                 href={`/?section=${key}`}
@@ -969,9 +1056,12 @@ export default async function Home({
             <div className="erp-header-brand">
               <span className="erp-header-name">Eli Print 3D</span>
               <span className="erp-header-divider">|</span>
-              <span className="erp-header-role">ERP operativo</span>
+              <span className="erp-header-role">{getRoleLabel(currentUser.role)}</span>
             </div>
             <div className="erp-toolbar">
+              <div className="rounded-full border border-black/8 bg-white/90 px-3 py-1 text-xs font-semibold text-slate-700">
+                {currentUser.nombre} · {currentUser.email}
+              </div>
               {headerActions.map((action) => (
                 <Link
                   key={`${action.href}-${action.label}`}
@@ -981,6 +1071,9 @@ export default async function Home({
                   {action.label}
                 </Link>
               ))}
+              <form action={logoutAction}>
+                <SubmitButton variant="secondary" pendingText="Saliendo...">Salir</SubmitButton>
+              </form>
             </div>
           </div>
 
@@ -1505,7 +1598,7 @@ export default async function Home({
 
           <Section active={section === "pedidos"} title="Pedidos" subtitle="Ventas y avance">
             <div className="space-y-4">
-              {!focusedOrderCode ? (
+              {!focusedOrderCode && canCreateOrders ? (
               <CreatePanel title="Nuevo pedido" description="Alta compacta. Abre solo cuando necesites crear un pedido.">
               <form id="create-order" action={createOrderAction} className="form-shell p-6 space-y-5">
                 <div>
@@ -1647,14 +1740,18 @@ export default async function Home({
                             <span className="odoo-field-label">Total</span>
                             <span className="odoo-field-value">{currency(focusedOrder.total)}</span>
                           </div>
-                          <div className="odoo-field">
-                            <span className="odoo-field-label">Coste</span>
-                            <span className="odoo-field-value">{currency(focusedOrder.coste_total_pedido)}</span>
-                          </div>
-                          <div className="odoo-field">
-                            <span className="odoo-field-label">Beneficio</span>
-                            <span className="odoo-field-value">{currency(focusedOrder.beneficio_total)}</span>
-                          </div>
+                          {canViewCosts ? (
+                            <div className="odoo-field">
+                              <span className="odoo-field-label">Coste</span>
+                              <span className="odoo-field-value">{currency(focusedOrder.coste_total_pedido)}</span>
+                            </div>
+                          ) : null}
+                          {canViewMargins ? (
+                            <div className="odoo-field">
+                              <span className="odoo-field-label">Beneficio</span>
+                              <span className="odoo-field-value">{currency(focusedOrder.beneficio_total)}</span>
+                            </div>
+                          ) : null}
                         </div>
                         <div className="odoo-record-body">
                           <div className="table-wrap">
@@ -2038,7 +2135,7 @@ export default async function Home({
                 </div>
               </div>
               <div className="table-wrap table-scroll mt-5">
-                <ManufacturingInlineTable manufacturingOrders={filteredManufacturing} />
+                <ManufacturingInlineTable manufacturingOrders={filteredManufacturing} canViewCosts={canViewCosts} canManage={canPerformAction(currentUser, "edit_manufacturing")} />
               </div>
             </div>
             </div>
@@ -2046,7 +2143,7 @@ export default async function Home({
 
           <Section active={section === "stock"} title="Stock de materiales" subtitle="Inventario de materiales">
             <div className="space-y-4">
-              <CreatePanel title="Nueva reposicion" description="Registra una entrada de material solo cuando la necesites.">
+              {canPerformAction(currentUser, "restock_material") ? <CreatePanel title="Nueva reposicion" description="Registra una entrada de material solo cuando la necesites.">
                 <form id="restock-material" action={restockMaterialAction} className="form-shell p-6 space-y-5">
                   <div>
                     <h3 className="text-xl font-semibold">Registrar reposicion</h3>
@@ -2074,7 +2171,7 @@ export default async function Home({
                   </div>
                   <SubmitButton pendingText="Registrando...">Registrar reposicion</SubmitButton>
                 </form>
-              </CreatePanel>
+              </CreatePanel> : null}
               <div className="panel p-6">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -2138,7 +2235,7 @@ export default async function Home({
           <Section active={section === "productos-terminados"} title="Productos terminados" subtitle="Inventario de salida">
             <div className="space-y-4">
               <CreatePanel title="Fabricar para stock" description="Accion principal para reponer inventario vendible sin crear pedidos ni facturas.">
-              <StockManufacturingForm
+              {canPerformAction(currentUser, "create_stock_manufacturing") ? <StockManufacturingForm
                 products={activeProducts.map((product) => ({
                   id: product.id,
                   codigo: product.codigo,
@@ -2161,7 +2258,8 @@ export default async function Home({
                   stock_actual_g: material.stock_actual_g,
                   activo: material.activo,
                 }))}
-              />
+                canViewCosts={canViewCosts}
+              /> : null}
               {false ? (
               <form
                 id="create-stock-manufacturing"
@@ -2202,7 +2300,7 @@ export default async function Home({
                 <SubmitButton pendingText="Creando fabricacion...">Fabricar para stock</SubmitButton>
               </form>
               ) : null}
-              <form
+              {canPerformAction(currentUser, "restock_finished_inventory") ? <form
                 id="add-finished-stock"
                 action={restockFinishedProductAction}
                 className="form-shell p-6 space-y-5"
@@ -2240,7 +2338,7 @@ export default async function Home({
                   </Field>
                 </div>
                 <SubmitButton pendingText="Añadiendo...">Añadir stock</SubmitButton>
-              </form>
+              </form> : null}
               </CreatePanel>
 
               <div className="panel p-6">
@@ -2256,7 +2354,7 @@ export default async function Home({
                   </div>
                 </div>
                 <div className="table-wrap table-scroll">
-                  <FinishedInventoryInlineTable finishedInventory={finishedInventory} />
+                  <FinishedInventoryInlineTable finishedInventory={finishedInventory} canViewCosts={canViewCosts} canManage={canEditFinishedInventory} />
                 </div>
               </div>
             </div>
@@ -2285,22 +2383,28 @@ export default async function Home({
                 <div>
                   <h3 className="text-xl font-semibold">Facturas emitidas</h3>
                   <p className="mt-1 text-sm text-[color:var(--muted)]">
-                    La accion principal cobra toda la factura pendiente al instante. El detalle queda disponible para cobros parciales o metodos distintos.
+                    {canManagePayments
+                      ? "La accion principal cobra toda la factura pendiente al instante. El detalle queda disponible para cobros parciales o metodos distintos."
+                      : "Consulta las facturas visibles y su estado de cobro segun tu rol."}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <a
-                    href={`/api/exports/invoices?invoiceStatus=${encodeURIComponent(invoiceFilter)}&fecha_inicio=${encodeURIComponent(invoiceDateStart)}&fecha_fin=${encodeURIComponent(invoiceDateEnd)}`}
-                    className="button-secondary"
-                  >
-                    Exportar facturas CSV
-                  </a>
-                  <a
-                    href={`/api/exports/payments?invoiceStatus=${encodeURIComponent(invoiceFilter)}&fecha_inicio=${encodeURIComponent(invoiceDateStart)}&fecha_fin=${encodeURIComponent(invoiceDateEnd)}`}
-                    className="button-secondary"
-                  >
-                    Exportar pagos CSV
-                  </a>
+                  {canExportData ? (
+                    <a
+                      href={`/api/exports/invoices?invoiceStatus=${encodeURIComponent(invoiceFilter)}&fecha_inicio=${encodeURIComponent(invoiceDateStart)}&fecha_fin=${encodeURIComponent(invoiceDateEnd)}`}
+                      className="button-secondary"
+                    >
+                      Exportar facturas CSV
+                    </a>
+                  ) : null}
+                  {canExportData ? (
+                    <a
+                      href={`/api/exports/payments?invoiceStatus=${encodeURIComponent(invoiceFilter)}&fecha_inicio=${encodeURIComponent(invoiceDateStart)}&fecha_fin=${encodeURIComponent(invoiceDateEnd)}`}
+                      className="button-secondary"
+                    >
+                      Exportar pagos CSV
+                    </a>
+                  ) : null}
                   {["ALL", ...INVOICE_STATUS_FILTERS].map((status) => (
                     <FilterLink
                       key={status}
@@ -2336,7 +2440,9 @@ export default async function Home({
                 </a>
               </form>
               <p className="mb-4 text-sm text-[color:var(--muted)]">
-                Las exportaciones descargan CSV compatibles con Excel y Sheets usando los filtros visibles: estado, fecha de factura y fecha de pago asociada.
+                {canExportData
+                  ? "Las exportaciones descargan CSV compatibles con Excel y Sheets usando los filtros visibles: estado, fecha de factura y fecha de pago asociada."
+                  : "Los filtros visibles mantienen la vista financiera alineada con tu rol y el rango de fechas activo."}
                 {invoiceDateStart || invoiceDateEnd
                   ? ` En el rango actual hay ${dateFilteredInvoices.length} facturas y ${filteredPaymentsCount} pagos.`
                   : ` Ahora mismo ves ${dateFilteredInvoices.length} facturas y ${filteredPaymentsCount} pagos.`}
@@ -2352,14 +2458,21 @@ export default async function Home({
                 </div>
               ) : null}
               <div className="table-wrap table-scroll">
-                <InvoicesInlineTable invoices={dateFilteredInvoices} focusedInvoiceCode={focusedInvoiceCode} />
+                <InvoicesInlineTable
+                  invoices={dateFilteredInvoices}
+                  focusedInvoiceCode={focusedInvoiceCode}
+                  canManagePayments={canManagePayments}
+                  canEditInvoices={canEditInvoices}
+                  canDownloadPdf={currentUser.role !== "OPERADOR"}
+                  showPaymentHistory={currentUser.role !== "CLIENTE"}
+                />
               </div>
             </div>
           </Section>
 
           <Section active={section === "impresoras"} title="Impresoras" subtitle="Capacidad de produccion">
             <div className="space-y-4">
-              {!focusedPrinterCode ? (
+              {!focusedPrinterCode && canCreatePrinters ? (
               <CreatePanel title="Nueva impresora" description="Alta compacta para registrar capacidad y coste solo cuando haga falta.">
               <form action={createPrinterAction} className="form-shell p-6 space-y-5">
                 <div>
@@ -2508,7 +2621,7 @@ export default async function Home({
                   </article>
                 ) : null}
                 <div className="table-wrap table-scroll">
-                  <PrintersInlineTable printers={prioritizedPrinters} focusedPrinterCode={focusedPrinterCode} />
+                  <PrintersInlineTable printers={prioritizedPrinters} focusedPrinterCode={focusedPrinterCode} canManage={canEditPrinters} canViewCosts={canViewCosts} />
                 </div>
               </div>
             </div>
@@ -2516,7 +2629,7 @@ export default async function Home({
 
           <Section active={section === "productos"} title="Productos" subtitle="Catalogo">
             <div className="space-y-4">
-              {!focusedProductCode ? (
+              {!focusedProductCode && canAccessModule(currentUser, "productos") ? (
               <CreatePanel title="Nuevo producto" description="Abre el alta solo cuando necesites crear una ficha nueva.">
               <form action={createProductAction} className="form-shell p-6 space-y-5">
                 <div>
@@ -2779,7 +2892,7 @@ export default async function Home({
 
           <Section active={section === "materiales"} title="Materiales" subtitle="Filamentos y resinas">
             <div className="space-y-4">
-              <CreatePanel title="Nuevo material" description="Formulario oculto por defecto para mantener la tabla principal despejada.">
+              {canCreateMaterials ? <CreatePanel title="Nuevo material" description="Formulario oculto por defecto para mantener la tabla principal despejada.">
               <form action={createMaterialAction} className="form-shell p-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-semibold">Nuevo material</h3>
@@ -2856,7 +2969,7 @@ export default async function Home({
                 </Field>
                 <SubmitButton pendingText="Creando...">Crear material</SubmitButton>
               </form>
-              </CreatePanel>
+              </CreatePanel> : null}
 
               <div className="panel p-6">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -2892,7 +3005,7 @@ export default async function Home({
                   allItemsText="Mostrando todos los materiales"
                 />
                 <div className="table-wrap table-scroll">
-                  <MaterialsInlineTable materials={filteredMaterials} />
+                  <MaterialsInlineTable materials={filteredMaterials} canManage={canEditMaterials} canViewCosts={canViewCosts} />
                 </div>
               </div>
             </div>
@@ -2900,7 +3013,7 @@ export default async function Home({
 
           <Section active={section === "clientes"} title="Clientes" subtitle="Gestion">
             <div className="space-y-4">
-              {!focusedCustomerCode ? (
+              {!focusedCustomerCode && canPerformAction(currentUser, "create_customer") ? (
               <CreatePanel title="Nuevo cliente" description="Alta plegable para que la base de clientes ocupe casi todo el ancho.">
               <form action={createCustomerAction} className="form-shell p-6 space-y-5">
                 <div>
@@ -3221,6 +3334,114 @@ export default async function Home({
                   ))}
                 </tbody>
                 </table>
+              </div>
+            </div>
+          </Section>
+
+          <Section active={section === "usuarios"} title="Usuarios" subtitle="Acceso y seguridad">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+              <CreatePanel title="Alta de usuario" description="Configura acceso interno por rol sin tocar los flujos actuales del ERP.">
+                <form action={createUserAction} className="form-shell space-y-5 p-6">
+                  <div>
+                    <h3 className="text-xl font-semibold">Nuevo usuario</h3>
+                    <p className="mt-2 text-sm text-[color:var(--muted)]">
+                      Los roles internos ya aplican permisos tanto en interfaz como en server actions. El rol cliente queda preparado para la siguiente fase.
+                    </p>
+                  </div>
+                  <div className="form-grid-2">
+                    <Field label="Nombre">
+                      <input name="nombre" placeholder="Nombre" className="input" />
+                    </Field>
+                    <Field label="Email">
+                      <input name="email" type="email" placeholder="Email" className="input" />
+                    </Field>
+                  </div>
+                  <div className="form-grid-2">
+                    <Field label="Contrasena">
+                      <input name="password" type="password" placeholder="Minimo 8 caracteres" className="input" />
+                    </Field>
+                    <Field label="Rol">
+                      <select name="role" className="input" defaultValue="OPERADOR">
+                        {clientVisibleRoleOptions.map((role) => (
+                          <option key={role} value={role}>
+                            {getRoleLabel(role)}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                  <Field label="Cliente vinculado" hint="Solo es obligatorio para el rol cliente.">
+                    <select name="clienteId" className="input" defaultValue="">
+                      <option value="">Sin vincular</option>
+                      {customers.map((customer) => (
+                        <option key={customer.id} value={customer.id}>
+                          {customer.codigo} · {customer.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <label className="inline-flex items-center gap-3 text-sm text-[color:var(--muted-strong)]">
+                    <input type="checkbox" name="activo" defaultChecked className="h-4 w-4 rounded border-black/20" />
+                    Usuario activo desde el alta
+                  </label>
+                  <SubmitButton pendingText="Creando usuario...">Crear usuario</SubmitButton>
+                </form>
+              </CreatePanel>
+
+              <div className="panel p-6">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xl font-semibold">Usuarios registrados</h3>
+                    <p className="mt-1 text-sm text-[color:var(--muted)]">
+                      Vista rapida de roles, vinculo con cliente y estado. La auditoria de acciones criticas queda registrada en servidor.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusPill label={`${users.length} usuarios`} tone="info" />
+                    <StatusPill label={`${users.filter((user) => user.activo === 1).length} activos`} tone="success" />
+                  </div>
+                </div>
+                <div className="table-wrap table-scroll">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Nombre</th>
+                        <th>Email</th>
+                        <th>Rol</th>
+                        <th>Cliente</th>
+                        <th>Estado</th>
+                        <th>Alta</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="text-sm text-[color:var(--muted)]">
+                            Todavia no hay usuarios registrados.
+                          </td>
+                        </tr>
+                      ) : (
+                        users.map((user) => (
+                          <tr key={user.id}>
+                            <td>{user.nombre}</td>
+                            <td>{user.email}</td>
+                            <td>
+                              <StatusPill
+                                label={getRoleLabel(user.role)}
+                                tone={user.role === "ADMIN" ? "strong" : user.role === "OPERADOR" ? "warn" : user.role === "GESTOR_FINANCIERO" ? "info" : "accent"}
+                              />
+                            </td>
+                            <td>{user.cliente_nombre ?? "—"}</td>
+                            <td>
+                              <StatusPill label={user.activo === 1 ? "Activo" : "Inactivo"} tone={user.activo === 1 ? "success" : "danger"} />
+                            </td>
+                            <td>{dateLabel(user.creado_en)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </Section>

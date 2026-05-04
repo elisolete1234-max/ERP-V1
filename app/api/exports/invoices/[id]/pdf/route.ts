@@ -1,5 +1,6 @@
 import path from "node:path";
 import PDFDocument from "pdfkit";
+import { assertInvoiceAccess } from "../../../../../../lib/auth";
 import { getInvoicePdfData } from "../../../../../../lib/erp-service";
 
 export const runtime = "nodejs";
@@ -51,6 +52,7 @@ export async function GET(
 ): Promise<Response> {
   try {
     const params = await context.params;
+    await assertInvoiceAccess(params.id);
     const invoice = await getInvoicePdfData(params.id);
     const fontPath = path.join(process.cwd(), "public", "fonts", "Geist-Regular.ttf");
 

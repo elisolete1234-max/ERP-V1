@@ -10,6 +10,18 @@ import {
   normalizeOrderStatus,
 } from "../lib/erp-status";
 import {
+  canPerformAction,
+  createInitialAdmin,
+  createUserRecord,
+  filterSnapshotByRole,
+  getVisibleSections,
+  hasUsers,
+  requirePermission,
+  withMockUser,
+  type CurrentUser,
+  type AppRole,
+} from "../lib/auth";
+import {
   collectInvoicePayment,
   completeManufacturingOrder,
   completeManufacturingWorkflow,
@@ -105,6 +117,76 @@ async function setupSingleProductFixture(input?: {
   return ids();
 }
 
+function buildUser(role: AppRole, overrides?: Partial<CurrentUser>): CurrentUser {
+  return {
+    id: `${role.toLowerCase()}-1`,
+    nombre: role,
+    email: `${role.toLowerCase()}@eli-print.test`,
+    role,
+    clienteId: null,
+    activo: true,
+    ...overrides,
+  };
+}
+
+async function setupPermissionsFixture() {
+  await createCustomerRecord({ nombre: "Cliente Uno" });
+  await createCustomerRecord({ nombre: "Cliente Dos" });
+  const customerRows = await rows<{ id: string; codigo: string }>(`SELECT id, codigo FROM customers ORDER BY codigo ASC`);
+
+  await createMaterialRecord({
+    nombre: "PLA Roles",
+    marca: "Marca",
+    tipo: "PLA",
+    color: "Azul",
+    precioKg: 22,
+    stockActualG: 2000,
+    stockMinimoG: 100,
+  });
+  const materialId = (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))!.id;
+
+  await createProductRecord({
+    nombre: "Producto Roles",
+    gramosEstimados: 100,
+    tiempoImpresionHoras: 2,
+    costeElectricidad: 1,
+    costeMaquina: 0.5,
+    costeManoObra: 0.4,
+    costePostprocesado: 0.8,
+    margen: 12,
+    pvp: 35,
+    materialId,
+  });
+  await createPrinterRecord({ nombre: "Impresora Roles", costeHora: 1.8, estado: "LIBRE" });
+  const productId = (await row<{ id: string }>(`SELECT id FROM products LIMIT 1`))!.id;
+
+  await createOrderRecord({
+    clienteId: customerRows[0].id,
+    observaciones: "Pedido cliente uno",
+    lines: [{ productId, quantity: 1 }],
+  });
+  await createOrderRecord({
+    clienteId: customerRows[1].id,
+    observaciones: "Pedido cliente dos",
+    lines: [{ productId, quantity: 2 }],
+  });
+
+  const orderRows = await rows<{ id: string; codigo: string }>(`SELECT id, codigo FROM orders ORDER BY codigo ASC`);
+  await processOrder(orderRows[0].id);
+  await completeManufacturingWorkflow((await row<{ id: string }>(`SELECT id FROM manufacturing_orders WHERE pedido_id = ?`, orderRows[0].id))!.id);
+  await deliverOrderWorkflow(orderRows[0].id);
+  await invoiceOrderWorkflow(orderRows[0].id);
+
+  const firstInvoice = (await row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, orderRows[0].id))!;
+
+  const operator = buildUser("OPERADOR");
+  const financial = buildUser("GESTOR_FINANCIERO");
+  const admin = buildUser("ADMIN");
+  const client = buildUser("CLIENTE", { clienteId: customerRows[0].id });
+
+  return { operator, financial, admin, client, firstInvoiceId: firstInvoice.id, customerRows };
+}
+
 beforeEach(async () => {
   await resetDatabase();
 });
@@ -120,6 +202,102 @@ test("la base reseteada arranca sin datos de negocio", async () => {
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM finished_product_inventory`))!.total, 0);
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM inventory_movements`))!.total, 0);
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoices`))!.total, 0);
+});
+
+test("bootstrap del primer admin solo se permite una vez", async () => {
+  assert.equal(await hasUsers(), false);
+
+  const created = await createInitialAdmin({
+    nombre: "Admin Inicial",
+    email: "admin@eli-print.test",
+    password: "supersegura123",
+  });
+
+  assert.equal(created.role, "ADMIN");
+  assert.equal(await hasUsers(), true);
+  await assert.rejects(
+    () =>
+      createInitialAdmin({
+        nombre: "Segundo admin",
+        email: "otro@eli-print.test",
+        password: "supersegura123",
+      }),
+    /bootstrap inicial/i,
+  );
+});
+
+test("operador no puede cobrar factura y no ve margenes ni pagos", async () => {
+  const { operator, firstInvoiceId } = await setupPermissionsFixture();
+  const snapshot = filterSnapshotByRole(await getAppSnapshot(), operator);
+
+  assert.equal(canPerformAction(operator, "collect_payment"), false);
+  await assert.rejects(
+    () => withMockUser(operator, () => requirePermission("collect_payment")),
+    /No tienes permisos/i,
+  );
+  assert.equal(snapshot.invoices.length, 0);
+  assert.equal(snapshot.orders.length, 0);
+  assert.equal(snapshot.manufacturingOrders[0]?.coste_estimado_total ?? 0, 0);
+  assert.equal(snapshot.manufacturingOrders[0]?.margen_estimado_porcentaje ?? 0, 0);
+  assert.equal(firstInvoiceId.length > 0, true);
+});
+
+test("gestor financiero no puede completar fabricacion", async () => {
+  const { financial } = await setupPermissionsFixture();
+  const snapshot = filterSnapshotByRole(await getAppSnapshot(), financial);
+
+  assert.equal(canPerformAction(financial, "complete_manufacturing"), false);
+  await assert.rejects(
+    () => withMockUser(financial, () => requirePermission("complete_manufacturing")),
+    /No tienes permisos/i,
+  );
+  assert.equal(getVisibleSections(financial).includes("fabricacion"), false);
+  assert.equal(snapshot.manufacturingOrders.length, 0);
+});
+
+test("cliente solo ve sus pedidos", async () => {
+  const { client, customerRows } = await setupPermissionsFixture();
+  const snapshot = filterSnapshotByRole(await getAppSnapshot(), client);
+
+  assert.deepEqual(getVisibleSections(client), ["pedidos"]);
+  assert.equal(snapshot.orders.length, 1);
+  assert.equal(snapshot.orders[0]?.cliente_id, customerRows[0].id);
+  assert.equal(snapshot.customers.length, 1);
+  assert.equal(snapshot.customers[0]?.id, customerRows[0].id);
+  assert.equal(snapshot.invoices.length, 0);
+  assert.equal(snapshot.materials.length, 0);
+  assert.equal(snapshot.inventoryMovements.length, 0);
+});
+
+test("admin puede todo y puede crear usuarios internos y cliente", async () => {
+  const { admin, customerRows } = await setupPermissionsFixture();
+  const snapshot = filterSnapshotByRole(await getAppSnapshot(), admin);
+
+  assert.equal(canPerformAction(admin, "manage_users"), true);
+  assert.equal(canPerformAction(admin, "complete_manufacturing"), true);
+  assert.equal(canPerformAction(admin, "collect_payment"), true);
+  assert.equal(getVisibleSections(admin).includes("usuarios"), true);
+  assert.equal(snapshot.invoices.length > 0, true);
+  assert.equal(snapshot.orders.length, 2);
+
+  const internalUser = await createUserRecord({
+    nombre: "Operario Uno",
+    email: "operario@eli-print.test",
+    password: "supersegura123",
+    role: "OPERADOR",
+    activo: true,
+  });
+  const customerUser = await createUserRecord({
+    nombre: "Cliente Uno",
+    email: "cliente@eli-print.test",
+    password: "supersegura123",
+    role: "CLIENTE",
+    clienteId: customerRows[0].id,
+    activo: true,
+  });
+
+  assert.equal(internalUser.role, "OPERADOR");
+  assert.equal(customerUser.role, "CLIENTE");
 });
 
 test("serializeCsv escapa comillas, delimitadores y preserva encabezados", () => {
@@ -928,6 +1106,10 @@ test("crear fabricacion para stock la deja visible como para stock sin crear ped
   assert.equal(visibleOrder!.material_id, materialId);
   assert.equal(visibleOrder!.coste_material, 6);
   assert.equal(visibleOrder!.coste_electricidad, 4.5);
+  assert.equal(
+    visibleOrder!.coste_impresora_visual,
+    Number((visibleOrder!.coste_electricidad + visibleOrder!.coste_maquina).toFixed(2)),
+  );
   assert.equal(visibleOrder!.coste_postprocesado, 0);
   assert.equal(visibleOrder!.coste_mano_obra, 0);
   assert.equal(
@@ -935,8 +1117,7 @@ test("crear fabricacion para stock la deja visible como para stock sin crear ped
     Number(
       (
         visibleOrder!.coste_material +
-        visibleOrder!.coste_electricidad +
-        visibleOrder!.coste_maquina +
+        visibleOrder!.coste_impresora_visual +
         visibleOrder!.coste_postprocesado +
         visibleOrder!.coste_mano_obra
       ).toFixed(2),
@@ -1979,9 +2160,11 @@ test("el PDF de factura usa los importes reales y se descarga como adjunto", asy
   assert.equal(pdfData.lineas.length, 1);
   assert.equal(pdfData.lineas[0]?.iva_porcentaje, 10);
 
-  const response = await getInvoicePdfRoute(new Request(`http://localhost/api/exports/invoices/${invoice.id}/pdf`), {
-    params: Promise.resolve({ id: invoice.id }),
-  });
+  const response = await withMockUser(buildUser("ADMIN"), () =>
+    getInvoicePdfRoute(new Request(`http://localhost/api/exports/invoices/${invoice.id}/pdf`), {
+      params: Promise.resolve({ id: invoice.id }),
+    }),
+  );
   const pdfText = Buffer.from(await response.arrayBuffer()).toString("latin1");
 
   assert.equal(response.headers.get("content-type"), "application/pdf");

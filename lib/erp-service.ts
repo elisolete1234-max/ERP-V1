@@ -1350,6 +1350,7 @@ export async function getAppSnapshot() {
       material_codigo: order.material_codigo ?? null,
       material_nombre: order.material_nombre ?? "Material no disponible",
       material_color: order.material_color ?? null,
+      coste_impresora_visual: Number((costEstimate.costeElectricidad + costEstimate.costeMaquina).toFixed(2)),
       coste_material: costEstimate.costeFilamento,
       coste_electricidad: costEstimate.costeElectricidad,
       coste_maquina: costEstimate.costeMaquina,
@@ -1791,6 +1792,9 @@ export async function getInvoicePaymentsExportRows(status?: string, fromDate?: s
 
 export async function resetDatabase() {
   await transaction(async () => {
+    await run("DELETE FROM audit_logs");
+    await run("DELETE FROM user_sessions");
+    await run("DELETE FROM users");
     await run("DELETE FROM demo_scenario_results");
     await run("DELETE FROM demo_runs");
     await run("DELETE FROM inventory_movements");

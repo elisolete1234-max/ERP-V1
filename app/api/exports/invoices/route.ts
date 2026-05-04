@@ -1,7 +1,9 @@
 import { buildCsvFilename, buildCsvResponse, formatCsvDateTime, formatCsvMoney, serializeCsv } from "@/lib/csv";
+import { requirePermission } from "@/lib/auth";
 import { getInvoicesExportRows } from "@/lib/erp-service";
 
 export async function GET(request: Request) {
+  await requirePermission("export_data");
   const { searchParams } = new URL(request.url);
   const invoiceStatus = searchParams.get("invoiceStatus") ?? undefined;
   const fromDate = searchParams.get("fecha_inicio") ?? undefined;
