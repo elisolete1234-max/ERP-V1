@@ -505,6 +505,59 @@ function deriveInvoicePaymentView(invoice: Pick<Invoice, "total" | "total_pagado
   };
 }
 
+function deriveInvoicePresentation(input: {
+  paymentStatus: string;
+  total: number;
+  totalPaid: number;
+  pendingAmount: number;
+}) {
+  const status = input.paymentStatus;
+  const label =
+    INVOICE_STATUS_LABELS[status as keyof typeof INVOICE_STATUS_LABELS] ??
+    status.toLowerCase().replaceAll("_", " ");
+
+  if (status === "PAGADA") {
+    return {
+      badgeTone: paymentTone(status),
+      badgeLabel: label,
+      summaryTone: "success" as const,
+      summaryLabel: "Pagada",
+      detailLines: [`Cobrado: ${formatCurrency(input.totalPaid)}`],
+    };
+  }
+
+  if (status === "PARCIAL") {
+    return {
+      badgeTone: paymentTone(status),
+      badgeLabel: label,
+      summaryTone: "info" as const,
+      summaryLabel: "Parcial",
+      detailLines: [
+        `Cobrado: ${formatCurrency(input.totalPaid)}`,
+        `Pendiente: ${formatCurrency(input.pendingAmount)}`,
+      ],
+    };
+  }
+
+  if (status === "VENCIDA") {
+    return {
+      badgeTone: paymentTone(status),
+      badgeLabel: label,
+      summaryTone: "danger" as const,
+      summaryLabel: "Vencida",
+      detailLines: [`Pendiente: ${formatCurrency(input.pendingAmount)}`],
+    };
+  }
+
+  return {
+    badgeTone: paymentTone(status),
+    badgeLabel: label,
+    summaryTone: "warn" as const,
+    summaryLabel: "Pendiente",
+    detailLines: [`Pendiente: ${formatCurrency(input.pendingAmount)}`],
+  };
+}
+
 function deriveTaxableBase(total: number, iva: number) {
   return Number(Math.max(total - iva, 0).toFixed(2));
 }
@@ -781,15 +834,6 @@ function EyeIcon() {
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
       <path d="M2.8 10s2.6-4.2 7.2-4.2 7.2 4.2 7.2 4.2-2.6 4.2-7.2 4.2S2.8 10 2.8 10Z" stroke="currentColor" strokeWidth="1.5" />
       <circle cx="10" cy="10" r="2.2" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function PaymentIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path d="M4 5.5h12v9H4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-      <path d="M4 8.2h12M10 10v3.2M8.5 11.4h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }
@@ -1973,11 +2017,11 @@ export function OrdersInlineBoard({
 export function MaterialsInlineTable({
   materials,
   canManage = true,
-  canViewCosts = true,
+  canViewEconomicDetails = true,
 }: {
   materials: Material[];
   canManage?: boolean;
-  canViewCosts?: boolean;
+  canViewEconomicDetails?: boolean;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeProductTab, setActiveProductTab] = useState<"customers" | "orders" | "invoices" | "printers">("customers");
@@ -2182,7 +2226,7 @@ export function MaterialsInlineTable({
       ) : null}
       <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Material</th>{canViewCosts ? <th>Precio/kg</th> : null}<th>Stock</th><th>Alerta</th></tr>
+        <tr><th>Acciones</th><th>ID</th><th>Material</th>{canViewEconomicDetails ? <th>Economico</th> : null}<th>Stock</th><th>Alerta</th></tr>
       </thead>
       <tbody>
         {materials.map((material) => {
@@ -2284,9 +2328,11 @@ export function MaterialsInlineTable({
                         <input form={formId} name="tempCama" type="number" min="0" defaultValue={material.temp_cama ?? ""} className={tableInputClass} placeholder="Temp cama" />
                       </InlineField>
                     </div>
-                    <InlineField label="Proveedor">
-                      <input form={formId} name="proveedor" defaultValue={material.proveedor ?? ""} className={tableInputClass} placeholder="Proveedor" />
-                    </InlineField>
+                    {canViewEconomicDetails ? (
+                      <InlineField label="Proveedor">
+                        <input form={formId} name="proveedor" defaultValue={material.proveedor ?? ""} className={tableInputClass} placeholder="Proveedor" />
+                      </InlineField>
+                    ) : <input form={formId} name="proveedor" type="hidden" value={material.proveedor ?? ""} />}
                     <InlineField label="Notas">
                       <textarea form={formId} name="notas" defaultValue={material.notas ?? ""} rows={2} className={tableTextareaClass} placeholder="Notas" />
                     </InlineField>
@@ -2322,12 +2368,22 @@ export function MaterialsInlineTable({
                   </div>
                 )}
               </td>
-              {canViewCosts ? (
+              {canViewEconomicDetails ? (
               <td>
                 {editing && canManage ? (
-                  <input form={formId} name="precioKg" type="number" min="0" step="0.01" defaultValue={material.precio_kg} className={tableInputClass} />
+                  <div className="table-edit-stack table-cell-edit table-edit-card">
+                    <InlineField label="Precio EUR/kg">
+                      <input form={formId} name="precioKg" type="number" min="0" step="0.01" defaultValue={material.precio_kg} className={tableInputClass} />
+                    </InlineField>
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-2 text-xs text-[color:var(--muted)]">
+                      {material.proveedor ? `Proveedor: ${material.proveedor}` : "Proveedor no definido"}
+                    </div>
+                  </div>
                 ) : (
-                  `${material.precio_kg.toFixed(2)} EUR`
+                  <div>
+                    <div>{material.precio_kg.toFixed(2)} EUR/kg</div>
+                    <div className="text-xs text-[color:var(--muted)]">{material.proveedor || "Sin proveedor"}</div>
+                  </div>
                 )}
               </td>
               ) : null}
@@ -3088,21 +3144,33 @@ export function InvoicesInlineTable({
           <th>Pago</th>
         </tr>
       </thead>
-      <tbody>
+        <tbody>
           {visibleInvoices.map((invoice) => {
             const focused = focusedInvoiceCode === invoice.codigo;
             const expanded = detailId === invoice.id || focused;
-          const registeringPayment = paymentId === invoice.id;
-          const { total, totalPaid, pendingAmount, paymentStatus, canRegisterPayment } =
-            deriveInvoicePaymentView(invoice);
-          const taxableBase = deriveTaxableBase(total, invoice.iva);
-          const canEditDiscount = paymentStatus !== "PAGADA";
-          const highlight =
-            paymentStatus === "PENDIENTE"
-              ? "warn"
-              : paymentStatus === "PARCIAL"
-                ? "attention"
-                : null;
+            const registeringPayment = paymentId === invoice.id;
+            const { total, totalPaid, pendingAmount, paymentStatus, canRegisterPayment } =
+              deriveInvoicePaymentView(invoice);
+            const paymentPresentation = deriveInvoicePresentation({
+              paymentStatus,
+              total,
+              totalPaid,
+              pendingAmount,
+            });
+            const taxableBase = deriveTaxableBase(total, invoice.iva);
+            const canEditDiscount = paymentStatus !== "PAGADA";
+            const canQuickCollect =
+              canManagePayments && invoice.acciones_permitidas.includes("collect_invoice_payment") && canRegisterPayment;
+            const canOpenPaymentDetail =
+              canManagePayments && invoice.acciones_permitidas.includes("open_payment_detail") && canRegisterPayment;
+            const highlight =
+              paymentStatus === "VENCIDA"
+                ? "danger"
+                : paymentStatus === "PENDIENTE"
+                  ? "warn"
+                  : paymentStatus === "PARCIAL"
+                    ? "attention"
+                    : null;
 
           return [
               <tr
@@ -3126,20 +3194,18 @@ export function InvoicesInlineTable({
                     >
                       <EyeIcon />
                     </button>
-                    {canManagePayments ? (
-                    <form action={collectInvoicePaymentAction}>
-                      <input type="hidden" name="facturaId" value={invoice.id} />
-                      <input type="hidden" name="metodoPago" value="TRANSFERENCIA" />
-                      <SubmitButton
-                        variant={canRegisterPayment ? "icon-dark" : "icon-soft"}
-                        pendingText={<SpinnerIcon />}
-                        title={canRegisterPayment ? "Cobrar factura" : "Factura totalmente pagada"}
-                        aria-label={canRegisterPayment ? "Cobrar factura" : "Factura totalmente pagada"}
-                        disabled={!canRegisterPayment}
-                      >
-                        <PaymentIcon />
-                      </SubmitButton>
-                    </form>
+                    {canQuickCollect ? (
+                      <form action={collectInvoicePaymentAction}>
+                        <input type="hidden" name="facturaId" value={invoice.id} />
+                        <input type="hidden" name="metodoPago" value="TRANSFERENCIA" />
+                        <SubmitButton variant="secondary" pendingText="Cobrando...">
+                          Cobrar factura
+                        </SubmitButton>
+                      </form>
+                    ) : canManagePayments ? (
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("success")}`}>
+                        Cerrada
+                      </span>
                     ) : null}
                     {canDownloadPdf ? (
                     <a
@@ -3181,9 +3247,19 @@ export function InvoicesInlineTable({
                 <td>{formatCurrency(totalPaid)}</td>
                 <td>{formatCurrency(pendingAmount)}</td>
                 <td>
-                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(paymentStatus))}`}>
-                    {paymentStatus.toLowerCase()}
-                  </span>
+                  <div className="flex flex-col gap-2">
+                    <span className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentPresentation.badgeTone)}`}>
+                      {paymentPresentation.badgeLabel}
+                    </span>
+                    <div className={`rounded-2xl border px-3 py-2 text-xs font-medium ${badgeClasses(paymentPresentation.summaryTone)}`}>
+                      <div>{paymentPresentation.summaryLabel}</div>
+                      {paymentPresentation.detailLines.map((line) => (
+                        <div key={`${invoice.id}-${line}`} className="mt-1">
+                          {line}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </td>
               </tr>,
               expanded ? (
@@ -3209,8 +3285,8 @@ export function InvoicesInlineTable({
                               </a>
                             </p>
                           </div>
-                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentTone(paymentStatus))}`}>
-                            {paymentStatus.toLowerCase()}
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentPresentation.badgeTone)}`}>
+                            {paymentPresentation.badgeLabel}
                           </span>
                         </div>
                         <div className="odoo-record-body">
@@ -3300,10 +3376,14 @@ export function InvoicesInlineTable({
                               Descargar PDF
                             </a>
                             ) : null}
-                            <div className="text-right text-xs text-[color:var(--muted)]">
-                              <div>Total: {formatCurrency(total)}</div>
-                              <div>Cobrado: {formatCurrency(totalPaid)}</div>
-                              <div>Pendiente: {formatCurrency(pendingAmount)}</div>
+                            <div className={`rounded-2xl border px-3 py-2 text-right text-xs font-medium ${badgeClasses(paymentPresentation.summaryTone)}`}>
+                              <div>{paymentPresentation.summaryLabel}</div>
+                              <div className="mt-1">Total: {formatCurrency(total)}</div>
+                              {paymentPresentation.detailLines.map((line) => (
+                                <div key={`${invoice.id}-summary-${line}`} className="mt-1">
+                                  {line}
+                                </div>
+                              ))}
                             </div>
                           </div>
                         </div>
@@ -3437,9 +3517,9 @@ export function InvoicesInlineTable({
                             <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3 text-sm text-[color:var(--muted)]">
                               {canRegisterPayment
                                 ? "Usa Cobrar factura para liquidar todo el pendiente al instante, o abre el detalle si necesitas un cobro parcial."
-                                : "La factura ya esta totalmente pagada."}
+                                : "La factura ya esta cerrada y no admite mas cobros."}
                             </div>
-                            {canRegisterPayment && canManagePayments ? (
+                            {canOpenPaymentDetail ? (
                               <button
                                 type="button"
                                 onClick={() => setPaymentId(invoice.id)}

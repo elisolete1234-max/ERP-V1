@@ -479,6 +479,7 @@ export default async function Home({
   const canManageUsers = canPerformAction(currentUser, "manage_users");
   const canCreateMaterials = canPerformAction(currentUser, "create_material");
   const canEditMaterials = canPerformAction(currentUser, "edit_material");
+  const canRestockMaterials = canPerformAction(currentUser, "restock_material");
   const canCreatePrinters = canPerformAction(currentUser, "create_printer");
   const canEditPrinters = canPerformAction(currentUser, "edit_printer");
   const canCreateOrders = canPerformAction(currentUser, "create_order");
@@ -709,7 +710,7 @@ export default async function Home({
   );
   const openOrders = orders.filter((order) => order.estado_derivado !== "FACTURADO").length;
   const pendingManufacturing = manufacturingOrders.filter((order) => order.estado_derivado !== "COMPLETADA").length;
-  const pendingInvoices = invoices.filter((invoice) => invoice.estado_pago_derivado !== "PAGADA").length;
+  const pendingInvoices = invoices.filter((invoice) => invoice.importe_pendiente > 0).length;
   const filteredPaymentsCount = dateFilteredInvoices.reduce((sum, invoice) => {
     return (
       sum +
@@ -735,6 +736,8 @@ export default async function Home({
   const rangedPendingInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago_derivado === "PENDIENTE").length;
   const rangedPartialInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago_derivado === "PARCIAL").length;
   const rangedPaidInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago_derivado === "PAGADA").length;
+  const rangedOverdueInvoices = dateFilteredInvoices.filter((invoice) => invoice.estado_pago_derivado === "VENCIDA").length;
+  const rangedOpenInvoices = dateFilteredInvoices.filter((invoice) => invoice.importe_pendiente > 0).length;
   const hasActiveOrderFilters = orderFilter !== "ALL";
   const activeOrderFilterSegments: string[] = [
     hasActiveOrderFilters ? `estado: ${ORDER_STATUS_LABELS[orderFilter as keyof typeof ORDER_STATUS_LABELS]}` : null,
@@ -773,7 +776,8 @@ export default async function Home({
   const blockedManufacturing = manufacturingOrders.filter((order) => order.tiene_incidencia_stock);
   const pendingManufacturingOrders = manufacturingOrders.filter((order) => order.estado_derivado !== "COMPLETADA");
   const partialInvoices = invoices.filter((invoice) => invoice.estado_pago_derivado === "PARCIAL");
-  const pendingPaymentInvoices = invoices.filter((invoice) => invoice.estado_pago_derivado === "PENDIENTE" || invoice.estado_pago_derivado === "VENCIDA");
+  const overdueInvoices = invoices.filter((invoice) => invoice.estado_pago_derivado === "VENCIDA");
+  const pendingPaymentInvoices = invoices.filter((invoice) => invoice.importe_pendiente > 0);
   const lowStockPreview = lowStockMaterials
     .slice(0, 3)
     .map((material) => `${material.codigo} ${material.nombre} (${material.stock_actual_g}/${material.stock_minimo_g} g)`)
@@ -793,8 +797,11 @@ export default async function Home({
     .filter((segment): segment is string => Boolean(segment))
     .join(" y ");
   const paymentPreview = [
-    pendingPaymentInvoices.length > 0 ? `${pendingPaymentInvoices.length} pendientes` : null,
+    pendingPaymentInvoices.filter((invoice) => invoice.estado_pago_derivado === "PENDIENTE").length > 0
+      ? `${pendingPaymentInvoices.filter((invoice) => invoice.estado_pago_derivado === "PENDIENTE").length} pendientes`
+      : null,
     partialInvoices.length > 0 ? `${partialInvoices.length} parciales` : null,
+    overdueInvoices.length > 0 ? `${overdueInvoices.length} vencidas` : null,
   ]
     .filter((segment): segment is string => Boolean(segment))
     .join(" y ");
@@ -920,7 +927,7 @@ export default async function Home({
           {
             tone: "warning" as const,
             title: "Facturas pendientes de cobro",
-            description: `Hay ${pendingInvoices} facturas no liquidadas. ${paymentPreview}`,
+            description: `Hay ${pendingInvoices} facturas con importe pendiente. ${paymentPreview || "Revisa los cobros abiertos."}`,
             href: "/?section=facturas&invoiceStatus=ALL",
             actionLabel: "Ver facturas",
           },
@@ -2145,12 +2152,12 @@ export default async function Home({
 
           <Section active={section === "stock"} title="Stock de materiales" subtitle="Inventario de materiales">
             <div className="space-y-4">
-              {canPerformAction(currentUser, "restock_material") ? <CreatePanel title="Nueva reposicion" description="Registra una entrada de material solo cuando la necesites.">
+              {canRestockMaterials ? <CreatePanel title="Nueva reposicion" description="Registra una entrada de material con movimiento justificado y trazabilidad completa.">
                 <form id="restock-material" action={restockMaterialAction} className="form-shell p-6 space-y-5">
                   <div>
                     <h3 className="text-xl font-semibold">Registrar reposicion</h3>
                     <p className="mt-2 text-sm text-[color:var(--muted)]">
-                      Toda entrada de material queda registrada con movimiento de inventario.
+                      Toda entrada de material queda registrada con movimiento de inventario. Este flujo cubre compras y reposiciones justificadas.
                     </p>
                   </div>
                   <Field label="Material">
@@ -2367,9 +2374,9 @@ export default async function Home({
               {[
                 { label: "Facturado en rango", value: currency(rangedTotalInvoiced), detail: `${rangedInvoiceCount} facturas visibles` },
                 { label: "Cobrado en rango", value: currency(rangedTotalCollected), detail: `${rangedPaidInvoices} pagadas visibles` },
-                { label: "Pendiente en rango", value: currency(rangedTotalOutstanding), detail: `${rangedInvoiceCount} facturas filtradas` },
+                { label: "Pendiente en rango", value: currency(rangedTotalOutstanding), detail: `${rangedOpenInvoices} facturas con saldo abierto` },
                 { label: "Facturas en rango", value: rangedInvoiceCount, detail: "segun filtros activos" },
-                { label: "Pendientes", value: rangedPendingInvoices, detail: "sin cobros en vista" },
+                { label: "Abiertas", value: rangedOpenInvoices, detail: `${rangedPendingInvoices} pendientes · ${rangedPartialInvoices} parciales · ${rangedOverdueInvoices} vencidas` },
                 { label: "Parciales / pagadas", value: `${rangedPartialInvoices}/${rangedPaidInvoices}`, detail: "visibles ahora" },
               ].map((metric) => (
                 <article key={String(metric.label)} className="metric-card p-5">
@@ -3007,7 +3014,11 @@ export default async function Home({
                   allItemsText="Mostrando todos los materiales"
                 />
                 <div className="table-wrap table-scroll">
-                  <MaterialsInlineTable materials={filteredMaterials} canManage={canEditMaterials} canViewCosts={canViewCosts} />
+                  <MaterialsInlineTable
+                    materials={filteredMaterials}
+                    canManage={canEditMaterials}
+                    canViewEconomicDetails={canViewCosts}
+                  />
                 </div>
               </div>
             </div>

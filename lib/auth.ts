@@ -104,6 +104,8 @@ const roleModules: Record<AppRole, AppModule[]> = {
   GESTOR_FINANCIERO: [
     "pedidos",
     "facturas",
+    "stock",
+    "materiales",
     "clientes",
   ],
   CLIENTE: [
@@ -153,11 +155,11 @@ const rolePermissions: Record<AppRole, AppPermission[]> = {
     "complete_manufacturing",
     "create_stock_manufacturing",
     "edit_manufacturing",
-    "restock_material",
     "restock_finished_inventory",
     "edit_finished_inventory",
   ],
   GESTOR_FINANCIERO: [
+    "view_costs",
     "create_customer",
     "edit_customer",
     "archive_customer",
@@ -171,6 +173,7 @@ const rolePermissions: Record<AppRole, AppPermission[]> = {
     "collect_payment",
     "edit_invoice",
     "register_payment",
+    "restock_material",
     "export_data",
   ],
   CLIENTE: [],
@@ -744,8 +747,12 @@ function redactInvoice(invoice: Record<string, unknown>, user: Pick<CurrentUser,
       user.role === "ADMIN"
         ? rawInvoice.acciones_permitidas ?? []
         : (rawInvoice.acciones_permitidas ?? []).filter((action) => {
-            if (action === "collect_payment") return canPerformAction(user, "collect_payment");
-            if (action === "register_payment") return canPerformAction(user, "register_payment");
+            if (action === "collect_payment" || action === "collect_invoice_payment") {
+              return canPerformAction(user, "collect_payment");
+            }
+            if (action === "register_payment" || action === "open_payment_detail") {
+              return canPerformAction(user, "register_payment") || canPerformAction(user, "collect_payment");
+            }
             if (action === "edit_invoice") return canPerformAction(user, "edit_invoice");
             return false;
           }),
@@ -792,6 +799,7 @@ export function filterSnapshotByRole<T extends {
       ? snapshot.materials.map((material) => ({
           ...material,
           precio_kg: canViewCosts(user) ? material.precio_kg : 0,
+          proveedor: canViewCosts(user) ? material.proveedor : null,
         }))
       : [],
     products: canAccessModule(user, "productos")

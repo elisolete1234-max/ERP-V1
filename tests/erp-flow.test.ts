@@ -233,12 +233,21 @@ test("operador no puede cobrar factura y no ve margenes ni pagos", async () => {
   const snapshot = filterSnapshotByRole(await getAppSnapshot(), operator);
 
   assert.equal(canPerformAction(operator, "collect_payment"), false);
+  assert.equal(canPerformAction(operator, "restock_material"), false);
+  assert.equal(getVisibleSections(operator).includes("materiales"), true);
   await assert.rejects(
     () => withMockUser(operator, () => requirePermission("collect_payment")),
     /No tienes permisos/i,
   );
+  await assert.rejects(
+    () => withMockUser(operator, () => requirePermission("restock_material")),
+    /No tienes permisos/i,
+  );
   assert.equal(snapshot.invoices.length, 0);
   assert.equal(snapshot.orders.length, 0);
+  assert.equal(snapshot.materials.length > 0, true);
+  assert.equal(snapshot.materials[0]?.precio_kg ?? 0, 0);
+  assert.equal(snapshot.materials[0]?.proveedor ?? null, null);
   assert.equal(snapshot.manufacturingOrders[0]?.coste_estimado_total ?? 0, 0);
   assert.equal(snapshot.manufacturingOrders[0]?.margen_estimado_porcentaje ?? 0, 0);
   assert.equal(firstInvoiceId.length > 0, true);
@@ -249,12 +258,20 @@ test("gestor financiero no puede completar fabricacion", async () => {
   const snapshot = filterSnapshotByRole(await getAppSnapshot(), financial);
 
   assert.equal(canPerformAction(financial, "complete_manufacturing"), false);
+  assert.equal(canPerformAction(financial, "restock_material"), true);
   await assert.rejects(
     () => withMockUser(financial, () => requirePermission("complete_manufacturing")),
     /No tienes permisos/i,
   );
+  await assert.doesNotReject(
+    () => withMockUser(financial, () => requirePermission("restock_material")),
+  );
+  assert.equal(getVisibleSections(financial).includes("materiales"), true);
+  assert.equal(getVisibleSections(financial).includes("stock"), true);
   assert.equal(getVisibleSections(financial).includes("fabricacion"), false);
   assert.equal(snapshot.manufacturingOrders.length, 0);
+  assert.equal(snapshot.materials.length > 0, true);
+  assert.equal((snapshot.materials[0]?.precio_kg ?? 0) > 0, true);
 });
 
 test("cliente solo ve sus pedidos", async () => {
@@ -278,9 +295,12 @@ test("admin puede todo y puede crear usuarios internos y cliente", async () => {
   assert.equal(canPerformAction(admin, "manage_users"), true);
   assert.equal(canPerformAction(admin, "complete_manufacturing"), true);
   assert.equal(canPerformAction(admin, "collect_payment"), true);
+  assert.equal(canPerformAction(admin, "edit_material"), true);
+  assert.equal(canPerformAction(admin, "restock_material"), true);
   assert.equal(getVisibleSections(admin).includes("usuarios"), true);
   assert.equal(snapshot.invoices.length > 0, true);
   assert.equal(snapshot.orders.length, 2);
+  assert.equal(snapshot.materials.length > 0, true);
 
   const internalUser = await createUserRecord({
     nombre: "Operario Uno",
@@ -1720,6 +1740,61 @@ test("cobrar factura rapido liquida todo el pendiente y es idempotente al repeti
   assert.equal(refreshedInvoice.estado_pago, "PAGADA");
   assert.equal(refreshedInvoice.total_pagado, invoice.total);
   assert.equal(refreshedInvoice.importe_pendiente, 0);
+});
+
+test("el snapshot distingue facturas pagadas y abiertas para acciones de cobro segun rol", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+
+  const paidOrderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await processOrder(paidOrderId);
+  const paidManufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    paidOrderId,
+  ))!.id;
+  await completeManufacturingWorkflow(paidManufacturingId);
+  await deliverOrderWorkflow(paidOrderId);
+  await invoiceOrderWorkflow(paidOrderId);
+  const paidInvoiceId = (await row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, paidOrderId))!.id;
+  await collectInvoicePayment(paidInvoiceId);
+
+  const partialOrderId = await createOrderRecord({ clienteId: customerId, lines: [{ productId, quantity: 1 }] });
+  await processOrder(partialOrderId);
+  const partialManufacturingId = (await row<{ id: string }>(
+    `SELECT id FROM manufacturing_orders WHERE pedido_id = ?`,
+    partialOrderId,
+  ))!.id;
+  await completeManufacturingWorkflow(partialManufacturingId);
+  await deliverOrderWorkflow(partialOrderId);
+  await invoiceOrderWorkflow(partialOrderId);
+  const partialInvoice = (await row<{ id: string; total: number }>(
+    `SELECT id, total FROM invoices WHERE pedido_id = ?`,
+    partialOrderId,
+  ))!;
+  await createInvoicePaymentRecord({
+    facturaId: partialInvoice.id,
+    metodoPago: "TRANSFERENCIA",
+    importe: Number((partialInvoice.total / 2).toFixed(2)),
+  });
+
+  const snapshot = await getAppSnapshot();
+  const paidVisible = snapshot.invoices.find((invoice) => invoice.id === paidInvoiceId)!;
+  const partialVisible = snapshot.invoices.find((invoice) => invoice.id === partialInvoice.id)!;
+
+  assert.equal(paidVisible.estado_pago_derivado, "PAGADA");
+  assert.deepEqual(paidVisible.acciones_permitidas, []);
+  assert.equal(partialVisible.estado_pago_derivado, "PARCIAL");
+  assert.deepEqual(partialVisible.acciones_permitidas, ["collect_invoice_payment", "open_payment_detail"]);
+
+  const operatorView = filterSnapshotByRole(snapshot, buildUser("OPERADOR"));
+  const financialView = filterSnapshotByRole(snapshot, buildUser("GESTOR_FINANCIERO"));
+
+  assert.equal(operatorView.invoices.length, 0);
+  assert.equal(
+    financialView.invoices.some(
+      (invoice) => invoice.id === partialInvoice.id && invoice.acciones_permitidas.includes("collect_invoice_payment"),
+    ),
+    true,
+  );
 });
 
 test("muestra codigos visibles de pago numerados por pedido", async () => {
