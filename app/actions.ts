@@ -13,6 +13,7 @@ import {
   logAuditEvent,
   readCurrentSessionToken,
   requirePermission,
+  updateUserRecord,
   writeSessionCookie,
   type AppPermission,
   type AppRole,
@@ -231,6 +232,29 @@ export async function createUserAction(formData: FormData) {
       permission: "manage_users",
       auditAction: "create_user",
       auditEntityType: "user",
+    },
+  );
+}
+
+export async function updateUserAction(formData: FormData) {
+  await executeAndRefresh(
+    () =>
+      updateUserRecord({
+        id: asString(formData.get("id")),
+        nombre: asString(formData.get("nombre")),
+        email: asString(formData.get("email")),
+        role: asRole(formData.get("role")),
+        clienteId: asString(formData.get("clienteId")) || null,
+        activo: formData.get("activo") === "on",
+        password: asString(formData.get("password")) || undefined,
+      }),
+    "Usuario actualizado correctamente.",
+    "/?section=usuarios",
+    {
+      permission: "manage_users",
+      auditAction: "update_user",
+      auditEntityType: "user",
+      auditEntityId: asString(formData.get("id")),
     },
   );
 }

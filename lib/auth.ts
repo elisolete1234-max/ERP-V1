@@ -221,6 +221,34 @@ function requireActiveCustomerForClient(role: AppRole, clienteId?: string | null
   }
 }
 
+async function ensureCustomerLinkIsValid(clienteId: string | null) {
+  if (!clienteId) {
+    return;
+  }
+
+  const customer = await row<{ id: string; activo: number }>(
+    `SELECT id, activo FROM customers WHERE id = ?`,
+    clienteId,
+  );
+  if (!customer) {
+    throw new Error("El cliente asociado no existe.");
+  }
+  if (customer.activo !== 1) {
+    throw new Error("No se puede vincular un usuario a un cliente archivado.");
+  }
+}
+
+async function countActiveAdmins() {
+  const result = await row<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM users WHERE role = 'ADMIN' AND activo = 1`,
+  );
+  return result?.total ?? 0;
+}
+
+async function invalidateSessionsForUser(userId: string) {
+  await run(`DELETE FROM user_sessions WHERE user_id = ?`, userId);
+}
+
 export function getRoleLabel(role: AppRole) {
   return roleLabels[role];
 }
@@ -327,18 +355,7 @@ export async function createUserRecord(input: {
     throw new Error("Ya existe un usuario con ese email.");
   }
 
-  if (clienteId) {
-    const customer = await row<{ id: string; activo: number }>(
-      `SELECT id, activo FROM customers WHERE id = ?`,
-      clienteId,
-    );
-    if (!customer) {
-      throw new Error("El cliente asociado no existe.");
-    }
-    if (customer.activo !== 1) {
-      throw new Error("No se puede vincular un usuario a un cliente archivado.");
-    }
-  }
+  await ensureCustomerLinkIsValid(clienteId);
 
   const userId = randomUUID();
   await run(
@@ -362,6 +379,135 @@ export async function createUserRecord(input: {
   });
 
   return { id: userId, email, role };
+}
+
+export async function updateUserRecord(input: {
+  id: string;
+  nombre: string;
+  email: string;
+  role: AppRole;
+  activo: boolean;
+  clienteId?: string | null;
+  password?: string;
+}) {
+  const userId = input.id.trim();
+  const nombre = input.nombre.trim();
+  const email = sanitizeEmail(input.email);
+  const role = input.role;
+  const clienteId = role === "CLIENTE" ? input.clienteId?.trim() || null : null;
+  const password = input.password?.trim() || "";
+
+  if (!userId || !nombre || !email) {
+    throw new Error("El usuario necesita nombre y email.");
+  }
+
+  requireActiveCustomerForClient(role, clienteId);
+  await ensureCustomerLinkIsValid(clienteId);
+
+  const existingUser = await row<{
+    id: string;
+    nombre: string;
+    email: string;
+    role: AppRole;
+    cliente_id: string | null;
+    activo: number;
+    password_hash: string;
+  }>(
+    `SELECT id, nombre, email, role, cliente_id, activo, password_hash
+     FROM users
+     WHERE id = ?`,
+    userId,
+  );
+
+  if (!existingUser) {
+    throw new Error("El usuario no existe.");
+  }
+
+  const duplicate = await row<{ id: string }>(
+    `SELECT id FROM users WHERE email = ? AND id != ?`,
+    email,
+    userId,
+  );
+  if (duplicate) {
+    throw new Error("Ya existe un usuario con ese email.");
+  }
+
+  const targetActivo = input.activo ? 1 : 0;
+  const adminWouldStopBeingActive =
+    existingUser.role === "ADMIN" &&
+    existingUser.activo === 1 &&
+    (role !== "ADMIN" || targetActivo !== 1);
+
+  if (adminWouldStopBeingActive && (await countActiveAdmins()) <= 1) {
+    throw new Error("No puedes dejar la app sin ningun ADMIN activo.");
+  }
+
+  const nextPasswordHash = password ? buildPasswordHash(password) : existingUser.password_hash;
+  if (password) {
+    validatePassword(password);
+  }
+
+  await run(
+    `UPDATE users
+     SET nombre = ?, email = ?, role = ?, cliente_id = ?, activo = ?, password_hash = ?
+     WHERE id = ?`,
+    nombre,
+    email,
+    role,
+    clienteId,
+    targetActivo,
+    nextPasswordHash,
+    userId,
+  );
+
+  if (targetActivo !== 1) {
+    await invalidateSessionsForUser(userId);
+  }
+
+  const summaryParts = ["Usuario actualizado"];
+  if (existingUser.role !== role) {
+    summaryParts.push(`rol ${existingUser.role} -> ${role}`);
+    await logAuditEvent({
+      action: "change_user_role",
+      entityType: "user",
+      entityId: userId,
+      summary: `Rol cambiado de ${existingUser.role} a ${role} para ${email}`,
+    });
+  }
+  if (existingUser.activo !== targetActivo) {
+    const stateLabel = targetActivo === 1 ? "activado" : "desactivado";
+    summaryParts.push(stateLabel);
+    await logAuditEvent({
+      action: targetActivo === 1 ? "activate_user" : "deactivate_user",
+      entityType: "user",
+      entityId: userId,
+      summary: `Usuario ${email} ${stateLabel}`,
+    });
+  }
+  if (existingUser.email !== email || existingUser.nombre !== nombre || existingUser.cliente_id !== clienteId) {
+    await logAuditEvent({
+      action: "edit_user",
+      entityType: "user",
+      entityId: userId,
+      summary: `Ficha actualizada para ${email}`,
+    });
+  }
+  if (password) {
+    summaryParts.push("contrasena reseteada");
+    await logAuditEvent({
+      action: "reset_user_password",
+      entityType: "user",
+      entityId: userId,
+      summary: `Contrasena reseteada para ${email}`,
+    });
+  }
+
+  return {
+    id: userId,
+    email,
+    role,
+    message: `${summaryParts.join(", ")}.`,
+  };
 }
 
 export async function authenticateUser(input: { email: string; password: string }) {

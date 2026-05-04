@@ -10,6 +10,7 @@ import {
   normalizeOrderStatus,
 } from "../lib/erp-status";
 import {
+  authenticateUser,
   canPerformAction,
   createInitialAdmin,
   createUserRecord,
@@ -17,6 +18,7 @@ import {
   getVisibleSections,
   hasUsers,
   requirePermission,
+  updateUserRecord,
   withMockUser,
   type CurrentUser,
   type AppRole,
@@ -298,6 +300,197 @@ test("admin puede todo y puede crear usuarios internos y cliente", async () => {
 
   assert.equal(internalUser.role, "OPERADOR");
   assert.equal(customerUser.role, "CLIENTE");
+});
+
+test("ADMIN puede editar nombre, email y rol de un usuario", async () => {
+  await createInitialAdmin({
+    nombre: "Admin",
+    email: "admin@eli-print.test",
+    password: "supersegura123",
+  });
+  const created = await createUserRecord({
+    nombre: "Usuario Base",
+    email: "usuario@eli-print.test",
+    password: "supersegura123",
+    role: "OPERADOR",
+    activo: true,
+  });
+
+  const updated = await updateUserRecord({
+    id: created.id,
+    nombre: "Usuario Editado",
+    email: "editado@eli-print.test",
+    role: "GESTOR_FINANCIERO",
+    activo: true,
+  });
+  const stored = await row<{ nombre: string; email: string; role: AppRole }>(
+    `SELECT nombre, email, role FROM users WHERE id = ?`,
+    created.id,
+  );
+
+  assert.equal(updated.role, "GESTOR_FINANCIERO");
+  assert.equal(stored?.nombre, "Usuario Editado");
+  assert.equal(stored?.email, "editado@eli-print.test");
+  assert.equal(stored?.role, "GESTOR_FINANCIERO");
+});
+
+test("no ADMIN no puede editar usuarios", async () => {
+  const operator = buildUser("OPERADOR");
+
+  await assert.rejects(
+    () => withMockUser(operator, () => requirePermission("manage_users")),
+    /No tienes permisos/i,
+  );
+});
+
+test("no permite email duplicado al editar usuario", async () => {
+  await createInitialAdmin({
+    nombre: "Admin",
+    email: "admin@eli-print.test",
+    password: "supersegura123",
+  });
+  const first = await createUserRecord({
+    nombre: "Uno",
+    email: "uno@eli-print.test",
+    password: "supersegura123",
+    role: "OPERADOR",
+    activo: true,
+  });
+  await createUserRecord({
+    nombre: "Dos",
+    email: "dos@eli-print.test",
+    password: "supersegura123",
+    role: "OPERADOR",
+    activo: true,
+  });
+
+  await assert.rejects(
+    () =>
+      updateUserRecord({
+        id: first.id,
+        nombre: "Uno",
+        email: "dos@eli-print.test",
+        role: "OPERADOR",
+        activo: true,
+      }),
+    /Ya existe un usuario con ese email/i,
+  );
+});
+
+test("no permite desactivar ni degradar el ultimo ADMIN activo", async () => {
+  const admin = await createInitialAdmin({
+    nombre: "Admin",
+    email: "admin@eli-print.test",
+    password: "supersegura123",
+  });
+
+  await assert.rejects(
+    () =>
+      updateUserRecord({
+        id: admin.id,
+        nombre: "Admin",
+        email: "admin@eli-print.test",
+        role: "ADMIN",
+        activo: false,
+      }),
+    /sin ningun ADMIN activo/i,
+  );
+
+  await assert.rejects(
+    () =>
+      updateUserRecord({
+        id: admin.id,
+        nombre: "Admin",
+        email: "admin@eli-print.test",
+        role: "OPERADOR",
+        activo: true,
+      }),
+    /sin ningun ADMIN activo/i,
+  );
+});
+
+test("cambiar contrasena actualiza el hash y contrasena vacia lo conserva", async () => {
+  await createInitialAdmin({
+    nombre: "Admin",
+    email: "admin@eli-print.test",
+    password: "supersegura123",
+  });
+  const created = await createUserRecord({
+    nombre: "Clave",
+    email: "clave@eli-print.test",
+    password: "supersegura123",
+    role: "OPERADOR",
+    activo: true,
+  });
+
+  const originalHash = (await row<{ password_hash: string }>(
+    `SELECT password_hash FROM users WHERE id = ?`,
+    created.id,
+  ))!.password_hash;
+
+  await updateUserRecord({
+    id: created.id,
+    nombre: "Clave",
+    email: "clave@eli-print.test",
+    role: "OPERADOR",
+    activo: true,
+    password: "",
+  });
+
+  const preservedHash = (await row<{ password_hash: string }>(
+    `SELECT password_hash FROM users WHERE id = ?`,
+    created.id,
+  ))!.password_hash;
+  assert.equal(preservedHash, originalHash);
+
+  await updateUserRecord({
+    id: created.id,
+    nombre: "Clave",
+    email: "clave@eli-print.test",
+    role: "OPERADOR",
+    activo: true,
+    password: "nuevaClave123",
+  });
+
+  const changedHash = (await row<{ password_hash: string }>(
+    `SELECT password_hash FROM users WHERE id = ?`,
+    created.id,
+  ))!.password_hash;
+  assert.notEqual(changedHash, originalHash);
+  await assert.rejects(
+    () => authenticateUser({ email: "clave@eli-print.test", password: "supersegura123" }),
+    /Credenciales invalidas/i,
+  );
+  const authenticated = await authenticateUser({ email: "clave@eli-print.test", password: "nuevaClave123" });
+  assert.equal(authenticated.email, "clave@eli-print.test");
+});
+
+test("usuario inactivo no puede iniciar sesion", async () => {
+  await createInitialAdmin({
+    nombre: "Admin",
+    email: "admin@eli-print.test",
+    password: "supersegura123",
+  });
+  const created = await createUserRecord({
+    nombre: "Dormido",
+    email: "dormido@eli-print.test",
+    password: "supersegura123",
+    role: "OPERADOR",
+    activo: true,
+  });
+
+  await updateUserRecord({
+    id: created.id,
+    nombre: "Dormido",
+    email: "dormido@eli-print.test",
+    role: "OPERADOR",
+    activo: false,
+  });
+
+  await assert.rejects(
+    () => authenticateUser({ email: "dormido@eli-print.test", password: "supersegura123" }),
+    /inactivo/i,
+  );
 });
 
 test("serializeCsv escapa comillas, delimitadores y preserva encabezados", () => {

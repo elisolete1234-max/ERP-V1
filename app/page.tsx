@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import Link from "next/link";
 import {
   bootstrapAdminAction,
@@ -18,6 +18,7 @@ import {
   restockFinishedProductAction,
   restockMaterialAction,
   retryOrderAction,
+  updateUserAction,
   updateOrderAction,
 } from "./actions";
 import {
@@ -486,6 +487,7 @@ export default async function Home({
   const canExportData = canPerformAction(currentUser, "export_data");
   const canEditFinishedInventory = canPerformAction(currentUser, "edit_finished_inventory");
   const users = canManageUsers ? await listUsers() : [];
+  const activeAdminUsersCount = users.filter((user) => user.role === "ADMIN" && user.activo === 1).length;
 
   const orderFilter = resolved.orderStatus ?? "ALL";
   const manufacturingFilter = resolved.manufacturingStatus ?? "ALL";
@@ -3405,6 +3407,7 @@ export default async function Home({
                   <table className="table">
                     <thead>
                       <tr>
+                        <th>Acciones</th>
                         <th>Nombre</th>
                         <th>Email</th>
                         <th>Rol</th>
@@ -3416,27 +3419,79 @@ export default async function Home({
                     <tbody>
                       {users.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="text-sm text-[color:var(--muted)]">
+                          <td colSpan={7} className="text-sm text-[color:var(--muted)]">
                             Todavia no hay usuarios registrados.
                           </td>
                         </tr>
                       ) : (
                         users.map((user) => (
-                          <tr key={user.id}>
-                            <td>{user.nombre}</td>
-                            <td>{user.email}</td>
-                            <td>
-                              <StatusPill
-                                label={getRoleLabel(user.role)}
-                                tone={user.role === "ADMIN" ? "strong" : user.role === "OPERADOR" ? "warn" : user.role === "GESTOR_FINANCIERO" ? "info" : "accent"}
-                              />
-                            </td>
-                            <td>{user.cliente_nombre ?? "—"}</td>
-                            <td>
-                              <StatusPill label={user.activo === 1 ? "Activo" : "Inactivo"} tone={user.activo === 1 ? "success" : "danger"} />
-                            </td>
-                            <td>{dateLabel(user.creado_en)}</td>
-                          </tr>
+                          <Fragment key={user.id}>
+                            <tr>
+                              <td className="align-top">
+                                <details className="min-w-[19rem] rounded-2xl border border-black/8 bg-white/80 p-3">
+                                  <summary className="cursor-pointer text-sm font-semibold text-slate-800">
+                                    Editar
+                                  </summary>
+                                  <form action={updateUserAction} className="mt-3 space-y-3">
+                                    <input type="hidden" name="id" value={user.id} />
+                                    <Field label="Nombre">
+                                      <input name="nombre" defaultValue={user.nombre} className="input" />
+                                    </Field>
+                                    <Field label="Email">
+                                      <input name="email" type="email" defaultValue={user.email} className="input" />
+                                    </Field>
+                                    <Field label="Rol">
+                                      <select name="role" className="input" defaultValue={user.role}>
+                                        {clientVisibleRoleOptions.map((role) => (
+                                          <option key={role} value={role}>
+                                            {getRoleLabel(role)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </Field>
+                                    <Field label="Cliente vinculado" hint="Usalo solo si el rol es Cliente.">
+                                      <select name="clienteId" className="input" defaultValue={user.cliente_id ?? ""}>
+                                        <option value="">Sin vincular</option>
+                                        {customers.map((customer) => (
+                                          <option key={customer.id} value={customer.id}>
+                                            {customer.codigo} · {customer.nombre}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </Field>
+                                    <Field label="Nueva contrasena" hint="Si lo dejas vacio, se conserva la actual.">
+                                      <input name="password" type="password" placeholder="Nueva contrasena opcional" className="input" />
+                                    </Field>
+                                    <label className="inline-flex items-center gap-3 text-sm text-[color:var(--muted-strong)]">
+                                      <input type="checkbox" name="activo" defaultChecked={user.activo === 1} className="h-4 w-4 rounded border-black/20" />
+                                      Usuario activo
+                                    </label>
+                                    {user.id === currentUser.id && user.role === "ADMIN" && activeAdminUsersCount <= 1 ? (
+                                      <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                                        Este es el ultimo ADMIN activo. No podras quitarle ese acceso ni desactivarlo.
+                                      </p>
+                                    ) : null}
+                                    <SubmitButton variant="secondary" pendingText="Guardando...">
+                                      Guardar cambios
+                                    </SubmitButton>
+                                  </form>
+                                </details>
+                              </td>
+                              <td>{user.nombre}</td>
+                              <td>{user.email}</td>
+                              <td>
+                                <StatusPill
+                                  label={getRoleLabel(user.role)}
+                                  tone={user.role === "ADMIN" ? "strong" : user.role === "OPERADOR" ? "warn" : user.role === "GESTOR_FINANCIERO" ? "info" : "accent"}
+                                />
+                              </td>
+                              <td>{user.cliente_nombre ?? "—"}</td>
+                              <td>
+                                <StatusPill label={user.activo === 1 ? "Activo" : "Inactivo"} tone={user.activo === 1 ? "success" : "danger"} />
+                              </td>
+                              <td>{dateLabel(user.creado_en)}</td>
+                            </tr>
+                          </Fragment>
                         ))
                       )}
                     </tbody>
