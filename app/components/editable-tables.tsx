@@ -117,6 +117,11 @@ type ManufacturingOrder = {
   material_codigo: string | null;
   material_nombre: string;
   material_color: string | null;
+  coste_material: number;
+  coste_electricidad: number;
+  coste_maquina: number;
+  coste_postprocesado: number;
+  coste_mano_obra: number;
   coste_estimado_total: number;
   coste_estimado_unitario: number;
   gramos_estimados_totales: number;
@@ -300,6 +305,140 @@ function formatDate(value: string) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function getManufacturingStockAlert(order: Pick<ManufacturingOrder, "estado" | "estado_derivado" | "incidencia" | "tiene_incidencia_stock">) {
+  if (order.estado === "COMPLETADA" || order.estado_derivado === "COMPLETADA") {
+    return null;
+  }
+
+  if (!order.tiene_incidencia_stock && order.estado !== "BLOQUEADA_POR_STOCK") {
+    return null;
+  }
+
+  const rawIncidence = order.incidencia?.trim() ?? "";
+  const parsedShortage = rawIncidence.match(/Requiere\s+(\d+)\s*g\s+y\s+hay\s+(\d+)\s*g/i);
+  if (parsedShortage) {
+    const required = Number(parsedShortage[1]);
+    const available = Number(parsedShortage[2]);
+    const missing = Math.max(required - available, 0);
+
+    return {
+      title: "Stock insuficiente",
+      detail: missing > 0 ? `Faltan ${missing} g` : "Material insuficiente",
+    };
+  }
+
+  return {
+    title: "Falta material",
+    detail: rawIncidence || "Material insuficiente",
+  };
+}
+
+function getCompactCostWarnings(warnings: string[]) {
+  const compact = new Set<string>();
+
+  for (const warning of warnings) {
+    if (warning.includes("electricidad usando valor por defecto")) {
+      compact.add("Electricidad con valor por defecto");
+    }
+    if (warning.includes("maquina usando valor por defecto")) {
+      compact.add("Maquina con valor por defecto");
+    }
+  }
+
+  return Array.from(compact);
+}
+
+function shouldShowCostDetail(value: number, options?: { always?: boolean; showWhenFallback?: boolean }) {
+  if (options?.always) {
+    return true;
+  }
+  if (value > 0) {
+    return true;
+  }
+  return Boolean(options?.showWhenFallback);
+}
+
+function ProductionCostBreakdown({
+  total,
+  unit,
+  material,
+  electricity,
+  machine,
+  postProcessing,
+  labor,
+  warnings,
+  compact = false,
+  showTotal = true,
+  showUnit = true,
+  showMaterial = true,
+  showElectricity = true,
+  showMachine = true,
+  showPostProcessing = true,
+  showLabor = true,
+}: {
+  total: number;
+  unit: number;
+  material: number;
+  electricity: number;
+  machine: number;
+  postProcessing: number;
+  labor: number;
+  warnings: string[];
+  compact?: boolean;
+  showTotal?: boolean;
+  showUnit?: boolean;
+  showMaterial?: boolean;
+  showElectricity?: boolean;
+  showMachine?: boolean;
+  showPostProcessing?: boolean;
+  showLabor?: boolean;
+}) {
+  const compactWarnings = getCompactCostWarnings(warnings);
+  const rows = [
+    showTotal ? { label: "Total", value: total, always: true } : null,
+    showUnit ? { label: "Ud", value: unit, always: true, suffix: "/ud" } : null,
+    showMaterial ? { label: "Material", value: material } : null,
+    showElectricity ? { label: "Electricidad", value: electricity, showWhenFallback: compactWarnings.includes("Electricidad con valor por defecto") } : null,
+    showMachine ? { label: "Maquina", value: machine, showWhenFallback: compactWarnings.includes("Maquina con valor por defecto") } : null,
+    showPostProcessing ? { label: "Postprocesado", value: postProcessing } : null,
+    showLabor ? { label: "Mano de obra", value: labor } : null,
+  ]
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .filter((item) => shouldShowCostDetail(item.value, { always: item.always, showWhenFallback: item.showWhenFallback }));
+
+  const visibleWarnings = compactWarnings.filter((warning) => {
+    if (warning === "Electricidad con valor por defecto") return showElectricity;
+    if (warning === "Maquina con valor por defecto") return showMachine;
+    return true;
+  });
+
+  return (
+    <div className={compact ? "space-y-1.5" : "space-y-2"}>
+      {rows.map((item) => (
+        <div key={item.label} className={compact ? "flex items-start justify-between gap-3 text-xs" : "flex items-start justify-between gap-3 text-sm"}>
+          <span className={item.always ? "font-semibold text-slate-900" : "text-[color:var(--muted-strong)]"}>{item.label}:</span>
+          <span className={item.always ? "font-semibold text-slate-900 text-right" : "text-right text-slate-900"}>
+            {formatCurrency(item.value)}
+            {item.suffix ?? ""}
+          </span>
+        </div>
+      ))}
+      {visibleWarnings.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {visibleWarnings.map((warning) => (
+            <span
+              key={warning}
+              className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("warn")}`}
+            >
+              {warning}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function badgeClasses(tone: "neutral" | "success" | "warn" | "danger" | "info" | "accent" | "strong") {
@@ -519,7 +658,7 @@ export function StockManufacturingForm({
               <p className="mt-2 text-sm font-semibold text-slate-900">{estimate.gramsUsed} g</p>
             </div>
             <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Filamento</p>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Material</p>
               <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(estimate.costeFilamento)}</p>
             </div>
             <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3">
@@ -562,11 +701,18 @@ export function StockManufacturingForm({
               Mano de obra incluida en el total: <span className="font-semibold text-slate-900">{formatCurrency(estimate.costeManoObra)}</span>
             </div>
           ) : null}
-          {estimate.warnings.length > 0 ? (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-800">
-              {estimate.warnings.join(" ")}
-            </div>
-          ) : null}
+          <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-4">
+            <ProductionCostBreakdown
+              total={estimate.costeTotal}
+              unit={estimate.costeUnitario}
+              material={estimate.costeFilamento}
+              electricity={estimate.costeElectricidad}
+              machine={estimate.costeMaquina}
+              postProcessing={estimate.costePostprocesado}
+              labor={estimate.costeManoObra}
+              warnings={estimate.warnings}
+            />
+          </div>
         </div>
       ) : null}
 
@@ -2718,6 +2864,7 @@ export function ManufacturingInlineTable({
         {manufacturingOrders.map((order) => {
           const editing = editingId === order.id;
           const formId = `manufacturing-form-${order.id}`;
+          const stockAlert = getManufacturingStockAlert(order);
           return (
             <tr
               key={order.id}
@@ -2786,29 +2933,76 @@ export function ManufacturingInlineTable({
                     <option value="BLOQUEADA_POR_STOCK">bloqueada_por_stock</option>
                   </select>
                 ) : (
-                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_badge_tone)}`}>
-                    {MANUFACTURING_STATUS_LABELS[order.estado_derivado as keyof typeof MANUFACTURING_STATUS_LABELS] ?? order.estado_derivado.toLowerCase()}
-                  </span>
+                  <div className="space-y-2">
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_badge_tone)}`}>
+                      {MANUFACTURING_STATUS_LABELS[order.estado_derivado as keyof typeof MANUFACTURING_STATUS_LABELS] ?? order.estado_derivado.toLowerCase()}
+                    </span>
+                    {stockAlert ? (
+                      <div className="space-y-1">
+                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("danger")}`}>
+                          {stockAlert.title}
+                        </span>
+                        <div className="text-xs font-medium text-rose-700">{stockAlert.detail}</div>
+                      </div>
+                    ) : null}
+                  </div>
                 )}
               </td>
               <td>
                 {order.impresora_nombre ? (
-                  <div>
+                  <div className="space-y-1.5">
                     <div>{order.impresora_codigo} - {order.impresora_nombre}</div>
                     <div className="text-xs text-[color:var(--muted)]">Coste: {formatCurrency(order.coste_impresora_total ?? 0)}</div>
+                    <ProductionCostBreakdown
+                      total={order.coste_estimado_total}
+                      unit={order.coste_estimado_unitario}
+                      material={order.coste_material}
+                      electricity={order.coste_electricidad}
+                      machine={order.coste_maquina}
+                      postProcessing={order.coste_postprocesado}
+                      labor={order.coste_mano_obra}
+                      warnings={order.coste_warnings}
+                      compact
+                      showTotal={false}
+                      showUnit={false}
+                      showMaterial={false}
+                      showPostProcessing={false}
+                      showLabor={false}
+                    />
                   </div>
                 ) : (
-                  "-"
+                  <ProductionCostBreakdown
+                    total={order.coste_estimado_total}
+                    unit={order.coste_estimado_unitario}
+                    material={order.coste_material}
+                    electricity={order.coste_electricidad}
+                    machine={order.coste_maquina}
+                    postProcessing={order.coste_postprocesado}
+                    labor={order.coste_mano_obra}
+                    warnings={order.coste_warnings}
+                    compact
+                    showTotal={false}
+                    showUnit={false}
+                    showMaterial={false}
+                    showPostProcessing={false}
+                    showLabor={false}
+                  />
                 )}
               </td>
               <td>
-                <div>
-                  <div>{formatCurrency(order.coste_estimado_total)}</div>
-                  <div className="text-xs text-[color:var(--muted)]">{formatCurrency(order.coste_estimado_unitario)} / ud</div>
-                  {order.coste_warnings[0] ? (
-                    <div className="text-xs text-amber-700">{order.coste_warnings[0]}</div>
-                  ) : null}
-                </div>
+                <ProductionCostBreakdown
+                  total={order.coste_estimado_total}
+                  unit={order.coste_estimado_unitario}
+                  material={order.coste_material}
+                  electricity={order.coste_electricidad}
+                  machine={order.coste_maquina}
+                  postProcessing={order.coste_postprocesado}
+                  labor={order.coste_mano_obra}
+                  warnings={order.coste_warnings}
+                  compact
+                  showElectricity={false}
+                  showMachine={false}
+                />
               </td>
               <td>
                 {editing ? (

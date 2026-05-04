@@ -926,6 +926,22 @@ test("crear fabricacion para stock la deja visible como para stock sin crear ped
   assert.equal(visibleOrder!.origen_fabricacion_label, "Para stock");
   assert.equal(visibleOrder!.pedido_codigo, null);
   assert.equal(visibleOrder!.material_id, materialId);
+  assert.equal(visibleOrder!.coste_material, 6);
+  assert.equal(visibleOrder!.coste_electricidad, 4.5);
+  assert.equal(visibleOrder!.coste_postprocesado, 0);
+  assert.equal(visibleOrder!.coste_mano_obra, 0);
+  assert.equal(
+    visibleOrder!.coste_estimado_total,
+    Number(
+      (
+        visibleOrder!.coste_material +
+        visibleOrder!.coste_electricidad +
+        visibleOrder!.coste_maquina +
+        visibleOrder!.coste_postprocesado +
+        visibleOrder!.coste_mano_obra
+      ).toFixed(2),
+    ),
+  );
   assert.ok(visibleOrder!.coste_estimado_total > 0);
   assert.ok(visibleOrder!.coste_estimado_unitario > 0);
 });
