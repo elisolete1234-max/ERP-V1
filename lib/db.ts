@@ -27,7 +27,8 @@ const transactionStorage = new AsyncLocalStorage<DbExecutor>();
 function getProjectDatabaseFile() {
   const dataDir = path.join(process.cwd(), "data");
   mkdirSync(dataDir, { recursive: true });
-  return path.join(dataDir, "fabriq-erp.db");
+  const isNodeTestRunner = process.argv.some((arg) => arg === "--test" || arg.startsWith("--test-"));
+  return path.join(dataDir, isNodeTestRunner ? "fabriq-erp.test.db" : "fabriq-erp.db");
 }
 
 function isRemoteDatabaseConfigured() {
@@ -225,6 +226,7 @@ async function ensureIndexes() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_codigo ON customers(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_materials_codigo ON materials(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_products_codigo ON products(codigo);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_purchase_requests_codigo ON purchase_requests(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_codigo ON orders(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_order_lines_codigo ON order_lines(codigo);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_manufacturing_orders_codigo ON manufacturing_orders(codigo);
@@ -235,6 +237,8 @@ async function ensureIndexes() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
     CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(creado_en DESC);
+    CREATE INDEX IF NOT EXISTS idx_purchase_requests_estado ON purchase_requests(estado);
+    CREATE INDEX IF NOT EXISTS idx_purchase_requests_solicitante ON purchase_requests(solicitante_user_id);
   `);
 }
 
@@ -334,6 +338,7 @@ async function migrateDatabase() {
   await backfillCodes("customers", "CLI-", "fecha_creacion ASC");
   await backfillCodes("materials", "MAT-", "fecha_actualizacion ASC");
   await backfillCodes("products", "PRO-", "nombre ASC");
+  await backfillCodes("purchase_requests", "SOL-", "fecha_solicitud ASC");
   await backfillCodes("orders", "PED-", "fecha_pedido ASC");
   await backfillCodes("order_lines", "LIN-", "rowid ASC");
   await backfillCodes("manufacturing_orders", "OF-", "rowid ASC");
@@ -397,6 +402,29 @@ async function createSchema() {
       material_id TEXT NOT NULL,
       activo INTEGER NOT NULL DEFAULT 1,
       FOREIGN KEY(material_id) REFERENCES materials(id) ON DELETE RESTRICT
+    );
+
+    CREATE TABLE IF NOT EXISTS purchase_requests (
+      id TEXT PRIMARY KEY,
+      codigo TEXT UNIQUE,
+      fecha_solicitud TEXT NOT NULL,
+      solicitante_user_id TEXT NOT NULL,
+      material_id TEXT NOT NULL,
+      cantidad_solicitada REAL NOT NULL,
+      unidad TEXT NOT NULL DEFAULT 'g',
+      motivo TEXT,
+      prioridad TEXT NOT NULL DEFAULT 'NORMAL',
+      estado TEXT NOT NULL DEFAULT 'PENDIENTE',
+      revisado_por_user_id TEXT,
+      fecha_revision TEXT,
+      observaciones_revision TEXT,
+      compra_id TEXT,
+      registrado_por_user_id TEXT,
+      fecha_registro_stock TEXT,
+      FOREIGN KEY(solicitante_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+      FOREIGN KEY(material_id) REFERENCES materials(id) ON DELETE RESTRICT,
+      FOREIGN KEY(revisado_por_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY(registrado_por_user_id) REFERENCES users(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS orders (

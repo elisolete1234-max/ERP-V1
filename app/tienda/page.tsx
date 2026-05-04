@@ -1,31 +1,47 @@
+import Image from "next/image";
+
 const mockProducts = [
   {
-    name: "Maceta Geométrica Barcelona",
-    category: "Decoración",
-    description: "Maceta impresa en 3D con acabado mate y drenaje integrado.",
-    price: "24,90 EUR",
-    leadTime: "2-3 días",
+    name: "Soporte Ergonomico para Movil",
+    category: "Accesorios utiles",
+    description: "Soporte estable para escritorio o mesita con angulo comodo para videollamadas.",
+    price: "16,90 EUR",
+    leadTime: "24-48h",
   },
   {
-    name: "Soporte Vertical para Móvil",
-    category: "Accesorios",
-    description: "Base estable para escritorio, compatible con carga por cable.",
-    price: "14,50 EUR",
-    leadTime: "48h",
+    name: "Organizador Modular de Escritorio",
+    category: "Organizacion",
+    description: "Sistema de modulos para boligrafos, cables y accesorios de trabajo.",
+    price: "22,50 EUR",
+    leadTime: "2-3 dias",
   },
   {
-    name: "Lámpara Modular Hex",
-    category: "Iluminación",
-    description: "Sistema modular personalizable para ambientes modernos.",
-    price: "39,00 EUR",
-    leadTime: "4-5 días",
+    name: "Maceta Decorativa Geometrica",
+    category: "Figuras y decoracion",
+    description: "Maceta ligera con diseno contemporaneo para salon, estudio o terraza.",
+    price: "19,90 EUR",
+    leadTime: "2-4 dias",
   },
   {
-    name: "Pack Miniaturas Personalizadas",
+    name: "Figura Personalizada por Encargo",
     category: "Personalizado",
-    description: "Miniaturas a medida para eventos, gaming o coleccionismo.",
-    price: "Desde 18,00 EUR",
-    leadTime: "5-7 días",
+    description: "Creamos figuras unicas para regalo, eventos o coleccion.",
+    price: "Desde 25,00 EUR",
+    leadTime: "4-7 dias",
+  },
+  {
+    name: "Repuesto Tecnico a Medida",
+    category: "Piezas tecnicas",
+    description: "Fabricacion de pequenas piezas funcionales para reparaciones o mejoras.",
+    price: "Desde 12,00 EUR",
+    leadTime: "48-72h",
+  },
+  {
+    name: "Llavero Personalizado",
+    category: "Regalo",
+    description: "Llavero con nombre, logo o forma personalizada en varios colores.",
+    price: "8,90 EUR",
+    leadTime: "24h",
   },
 ];
 
@@ -70,15 +86,24 @@ const paymentMethods = [
   "Pago en mano al recoger",
 ];
 
+const trustItems = [
+  "Presupuesto personalizado",
+  "Materiales seleccionados",
+  "Produccion local",
+  "Atencion cercana",
+];
+
 export default function TiendaPage() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-100 text-slate-900">
       <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/90 backdrop-blur">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
           <div className="w-40 sm:w-52 lg:w-64">
-            <img
+            <Image
               src="/logo.png"
               alt="Eli 3D Print"
+              width={512}
+              height={192}
               className="h-auto w-full scale-125 object-contain"
             />
           </div>
@@ -102,11 +127,11 @@ export default function TiendaPage() {
             Tienda Publica
           </span>
           <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl lg:text-5xl">
-            Diseños 3D listos para ti, hechos en Barcelona
+            Impresion 3D profesional en Barcelona para ideas reales
           </h1>
           <p className="max-w-2xl text-base leading-relaxed text-slate-600 sm:text-lg">
-            Maqueta visual de la futura tienda online de Eli 3D Print Barcelona. Explora productos,
-            materiales y un flujo de pedido orientado a cliente final.
+            Convierte tu idea en una pieza util, decorativa o tecnica con acabados cuidados y atencion
+            personalizada. Descubre una experiencia de compra clara, visual y pensada para clientes.
           </p>
           <div className="flex flex-wrap gap-3">
             <a
@@ -136,12 +161,53 @@ export default function TiendaPage() {
         </aside>
       </section>
 
+      <section className="mx-auto w-full max-w-7xl px-4 pb-10 sm:px-6 lg:px-8">
+        <div className="mb-5">
+          <h2 className="text-2xl font-bold tracking-tight">Que hacemos</h2>
+          <p className="mt-1 text-sm text-slate-600">Servicios pensados para particulares, negocios y creadores.</p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            "Piezas personalizadas",
+            "Figuras y decoracion",
+            "Accesorios utiles",
+            "Prototipos y piezas tecnicas",
+          ].map((item) => (
+            <article key={item} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="text-base font-semibold text-slate-900">{item}</h3>
+              <p className="mt-2 text-sm text-slate-600">
+                Soluciones impresas en 3D con enfoque en funcionalidad, estilo y durabilidad.
+              </p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="mx-auto w-full max-w-7xl px-4 pb-10 sm:px-6 lg:px-8">
+        <div className="mb-5">
+          <h2 className="text-2xl font-bold tracking-tight">Como funciona</h2>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            "Elige producto o envia idea",
+            "Seleccionamos material y color",
+            "Imprimimos la pieza",
+            "Recogida en Barcelona o envio",
+          ].map((step, index) => (
+            <article key={step} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Paso {index + 1}</p>
+              <h3 className="mt-2 text-base font-semibold text-slate-900">{step}</h3>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <section id="catalogo-productos" className="mx-auto w-full max-w-7xl px-4 pb-10 sm:px-6 lg:px-8">
         <div className="mb-5">
           <h2 className="text-2xl font-bold tracking-tight">Catalogo de productos</h2>
-          <p className="mt-1 text-sm text-slate-600">Selecciones destacadas para clientes particulares y negocio.</p>
+          <p className="mt-1 text-sm text-slate-600">Selecciones realistas para hogar, trabajo y proyectos personalizados.</p>
         </div>
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
           {mockProducts.map((product) => (
             <article
               key={product.name}
@@ -156,6 +222,19 @@ export default function TiendaPage() {
               </div>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="mx-auto w-full max-w-7xl px-4 pb-10 sm:px-6 lg:px-8">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-2xl font-bold tracking-tight">Por que confiar en Eli 3D Print</h2>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {trustItems.map((item) => (
+              <div key={item} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
+                {item}
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

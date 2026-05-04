@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { row, rows, run, transaction } from "./db";
+import { canPerformAction, getCurrentUser, type AppPermission, type CurrentUser } from "./auth";
 import {
   calculateProductionCost,
   calculateProfitability,
@@ -26,8 +27,23 @@ type PaymentMethod = "EFECTIVO" | "TRANSFERENCIA" | "TARJETA" | "BIZUM" | "PAYPA
 const PAYMENT_METHODS: PaymentMethod[] = ["EFECTIVO", "TRANSFERENCIA", "TARJETA", "BIZUM", "PAYPAL", "OTRO"];
 type InvoicePaymentStatus = "PENDIENTE" | "PARCIAL" | "PAGADA";
 type WorkflowTone = "success" | "warn";
+type PurchaseRequestStatus =
+  | "PENDIENTE"
+  | "APROBADA"
+  | "RECHAZADA"
+  | "COMPRADA"
+  | "RECIBIDA"
+  | "CANCELADA";
+type PurchaseRequestPriority = "BAJA" | "NORMAL" | "ALTA" | "URGENTE";
 
 export const DEFAULT_VAT_RATE = 21;
+
+const PURCHASE_REQUEST_PRIORITIES: PurchaseRequestPriority[] = [
+  "BAJA",
+  "NORMAL",
+  "ALTA",
+  "URGENTE",
+];
 
 type OrderFocusCandidate = {
   id: string;
@@ -61,6 +77,38 @@ function roundMoney(value: number) {
   return Number(value.toFixed(2));
 }
 
+async function getActorOrNull() {
+  try {
+    return await getCurrentUser();
+  } catch {
+    return null;
+  }
+}
+
+function ensureActorPermission(actor: CurrentUser | null, permission: AppPermission, message?: string) {
+  if (actor && !canPerformAction(actor, permission)) {
+    throw new Error(message ?? "No tienes permisos para realizar esta accion.");
+  }
+}
+
+function ensureActorOwnsPurchaseRequest(actor: CurrentUser | null, ownerId: string) {
+  if (!actor) {
+    return;
+  }
+
+  if (actor.role === "ADMIN") {
+    return;
+  }
+
+  if (actor.id !== ownerId) {
+    throw new Error("No tienes permisos para gestionar esta solicitud.");
+  }
+}
+
+function hasDefinedValue<T>(value: T | undefined): value is T {
+  return value !== undefined;
+}
+
 function normalizeVatRate(input: number | undefined) {
   if (input == null || !Number.isFinite(input)) {
     return DEFAULT_VAT_RATE;
@@ -75,6 +123,22 @@ function normalizeVatRate(input: number | undefined) {
   }
 
   return vatRate;
+}
+
+function normalizePurchaseRequestPriority(input?: string | null) {
+  const normalized = input?.trim().toUpperCase() || "NORMAL";
+  if (!PURCHASE_REQUEST_PRIORITIES.includes(normalized as PurchaseRequestPriority)) {
+    throw new Error("La prioridad de la solicitud no es valida.");
+  }
+  return normalized as PurchaseRequestPriority;
+}
+
+function normalizePurchaseRequestUnit(input?: string | null) {
+  const normalized = input?.trim().toLowerCase() || "g";
+  if (normalized !== "g") {
+    throw new Error("La unidad de la solicitud debe ser g.");
+  }
+  return normalized;
 }
 
 function normalizeDiscount(input: number | undefined, subtotal: number) {
@@ -1124,6 +1188,49 @@ export async function getAppSnapshot() {
     };
   }), { codeKeys: ["codigo"] });
 
+  const purchaseRequestsBase = await rows<{
+    id: string;
+    codigo: string;
+    fecha_solicitud: string;
+    solicitante_user_id: string;
+    material_id: string;
+    cantidad_solicitada: number;
+    unidad: string;
+    motivo: string | null;
+    prioridad: string;
+    estado: PurchaseRequestStatus;
+    revisado_por_user_id: string | null;
+    fecha_revision: string | null;
+    observaciones_revision: string | null;
+    compra_id: string | null;
+    registrado_por_user_id: string | null;
+    fecha_registro_stock: string | null;
+    material_codigo: string;
+    material_nombre: string;
+    material_color: string;
+    solicitante_nombre: string | null;
+    revisado_por_nombre: string | null;
+    registrado_por_nombre: string | null;
+  }>(
+    `SELECT
+       pr.*,
+       m.codigo AS material_codigo,
+       m.nombre AS material_nombre,
+       m.color AS material_color,
+       su.nombre AS solicitante_nombre,
+       ru.nombre AS revisado_por_nombre,
+       rgu.nombre AS registrado_por_nombre
+     FROM purchase_requests pr
+     JOIN materials m ON m.id = pr.material_id
+     LEFT JOIN users su ON su.id = pr.solicitante_user_id
+     LEFT JOIN users ru ON ru.id = pr.revisado_por_user_id
+     LEFT JOIN users rgu ON rgu.id = pr.registrado_por_user_id`,
+  );
+  const purchaseRequests = sortByNewest(purchaseRequestsBase, {
+    dateKeys: ["fecha_solicitud", "fecha_revision", "fecha_registro_stock"],
+    codeKeys: ["codigo"],
+  });
+
   const ordersBase = await rows<{
     id: string;
     codigo: string;
@@ -1530,6 +1637,7 @@ export async function getAppSnapshot() {
     customers: normalizedCustomers,
     materials,
     products,
+    purchaseRequests,
     orders,
     manufacturingOrders,
     stockMovements,
@@ -1794,13 +1902,13 @@ export async function resetDatabase() {
   await transaction(async () => {
     await run("DELETE FROM audit_logs");
     await run("DELETE FROM user_sessions");
-    await run("DELETE FROM users");
     await run("DELETE FROM demo_scenario_results");
     await run("DELETE FROM demo_runs");
     await run("DELETE FROM inventory_movements");
     await run("DELETE FROM invoice_payments");
     await run("DELETE FROM order_status_history");
     await run("DELETE FROM invoices");
+    await run("DELETE FROM purchase_requests");
     await run("DELETE FROM stock_movements");
     await run("DELETE FROM manufacturing_orders");
     await run("DELETE FROM order_lines");
@@ -1809,6 +1917,7 @@ export async function resetDatabase() {
     await run("DELETE FROM printers");
     await run("DELETE FROM products");
     await run("DELETE FROM materials");
+    await run("DELETE FROM users");
     await run("DELETE FROM customers");
   });
 }
@@ -2083,8 +2192,9 @@ export async function deleteMaterialRecord(materialId: string) {
   throw new Error("El borrado fisico esta deshabilitado. Archiva el material para retirarlo del uso diario.");
 }
 
-export async function createProductRecord(input: {
-  nombre: string;
+type ProductMutationInput = {
+  id?: string;
+  nombre?: string;
   descripcion?: string;
   enlaceModelo?: string;
   gramosEstimados?: number;
@@ -2096,30 +2206,59 @@ export async function createProductRecord(input: {
   margen?: number;
   pvp?: number;
   ivaPorcentaje?: number;
-  materialId: string;
+  materialId?: string;
   activo?: boolean;
-}) {
-  const nombre = input.nombre.trim();
-  const gramosEstimados = Math.max(1, Math.round(input.gramosEstimados ?? 1));
-  const tiempoImpresionHoras = roundMoney(input.tiempoImpresionHoras ?? 0.1);
-  const costeElectricidad = roundMoney(input.costeElectricidad ?? 0);
-  const margen = roundMoney(input.margen ?? 0);
-  const pvp = roundMoney(input.pvp ?? 0);
-  const ivaPorcentaje = normalizeVatRate(input.ivaPorcentaje);
+};
 
+function normalizeOptionalText(value?: string) {
+  return value?.trim() || null;
+}
+
+export async function createProductRecord(input: ProductMutationInput) {
+  const actor = await getActorOrNull();
+  ensureActorPermission(actor, "product:create");
+
+  const nombre = input.nombre?.trim() || "";
   if (!nombre) {
     throw new Error("El producto necesita al menos un nombre.");
   }
   if (!input.materialId) {
     throw new Error("No se puede crear un producto sin material principal.");
   }
+
+  const actorCanEditFinancial = !actor || canPerformAction(actor, "product:editFinancial");
+  if (
+    !actorCanEditFinancial &&
+    [
+      input.costeElectricidad,
+      input.costeMaquina,
+      input.costeManoObra,
+      input.costePostprocesado,
+      input.margen,
+      input.pvp,
+      input.ivaPorcentaje,
+    ].some(hasDefinedValue)
+  ) {
+    throw new Error("No tienes permisos para definir campos economicos del producto.");
+  }
+
+  const gramosEstimados = Math.max(1, Math.round(input.gramosEstimados ?? 1));
+  const tiempoImpresionHoras = roundMoney(input.tiempoImpresionHoras ?? 0.1);
+  const costeElectricidad = roundMoney(input.costeElectricidad ?? 0);
+  const costeMaquina = roundMoney(input.costeMaquina ?? 0);
+  const costeManoObra = roundMoney(input.costeManoObra ?? 0);
+  const costePostprocesado = roundMoney(input.costePostprocesado ?? 0);
+  const margen = roundMoney(input.margen ?? 0);
+  const pvp = roundMoney(input.pvp ?? 0);
+  const ivaPorcentaje = normalizeVatRate(input.ivaPorcentaje);
+
   if (
     tiempoImpresionHoras < 0 ||
-    pvp < 0 ||
     costeElectricidad < 0 ||
-    (input.costeMaquina ?? 0) < 0 ||
-    (input.costeManoObra ?? 0) < 0 ||
-    (input.costePostprocesado ?? 0) < 0
+    costeMaquina < 0 ||
+    costeManoObra < 0 ||
+    costePostprocesado < 0 ||
+    pvp < 0
   ) {
     throw new Error("Revisa el producto: tiempo, PVP y costes deben ser validos.");
   }
@@ -2144,14 +2283,14 @@ export async function createProductRecord(input: {
       productId,
       await nextCode("products", "PRO-"),
       nombre,
-      input.descripcion?.trim() || null,
-      input.enlaceModelo?.trim() || null,
+      normalizeOptionalText(input.descripcion),
+      normalizeOptionalText(input.enlaceModelo),
       gramosEstimados,
       tiempoImpresionHoras,
       costeElectricidad,
-      roundMoney(input.costeMaquina ?? 0),
-      roundMoney(input.costeManoObra ?? 0),
-      roundMoney(input.costePostprocesado ?? 0),
+      costeMaquina,
+      costeManoObra,
+      costePostprocesado,
       margen,
       pvp,
       ivaPorcentaje,
@@ -2170,65 +2309,117 @@ export async function createProductRecord(input: {
   });
 }
 
-export async function updateProductRecord(input: {
-  id: string;
-  nombre: string;
-  descripcion?: string;
-  enlaceModelo?: string;
-  gramosEstimados?: number;
-  tiempoImpresionHoras?: number;
-  costeElectricidad?: number;
-  costeMaquina?: number;
-  costeManoObra?: number;
-  costePostprocesado?: number;
-  margen?: number;
-  pvp?: number;
-  ivaPorcentaje?: number;
-  materialId: string;
-  activo?: boolean;
-}) {
-  const nombre = input.nombre.trim();
-  const gramosEstimados = Math.max(1, Math.round(input.gramosEstimados ?? 1));
-  const tiempoImpresionHoras = roundMoney(input.tiempoImpresionHoras ?? 0.1);
-  const costeElectricidad = roundMoney(input.costeElectricidad ?? 0);
-  const margen = roundMoney(input.margen ?? 0);
-  const pvp = roundMoney(input.pvp ?? 0);
-  const ivaPorcentaje = normalizeVatRate(input.ivaPorcentaje);
-
-  if (!input.id || !input.materialId || !nombre) {
+export async function updateProductRecord(input: ProductMutationInput & { id: string }) {
+  if (!input.id?.trim()) {
     throw new Error("Producto incompleto.");
   }
-  if (
-    tiempoImpresionHoras < 0 ||
-    pvp < 0 ||
-    costeElectricidad < 0 ||
-    (input.costeMaquina ?? 0) < 0 ||
-    (input.costeManoObra ?? 0) < 0 ||
-    (input.costePostprocesado ?? 0) < 0
-  ) {
-    throw new Error("Revisa el producto: tiempo, PVP y costes deben ser validos.");
-  }
 
-  const currentProduct = await row<{ material_id: string; activo: number }>(
-    `SELECT material_id, activo FROM products WHERE id = ?`,
+  const actor = await getActorOrNull();
+  const currentProduct = await row<{
+    id: string;
+    nombre: string;
+    descripcion: string | null;
+    enlace_modelo: string | null;
+    gramos_estimados: number;
+    tiempo_impresion_horas: number;
+    coste_electricidad: number;
+    coste_maquina: number;
+    coste_mano_obra: number;
+    coste_postprocesado: number;
+    margen: number;
+    pvp: number;
+    iva_porcentaje: number;
+    material_id: string;
+    activo: number;
+  }>(
+    `SELECT *
+     FROM products
+     WHERE id = ?`,
     input.id,
   );
   if (!currentProduct) {
     throw new Error("El producto no existe.");
   }
 
+  const currentActivo = parseBoolean(currentProduct.activo);
+  const nextNombre = input.nombre !== undefined ? input.nombre.trim() : currentProduct.nombre;
+  const nextDescripcion = input.descripcion !== undefined ? normalizeOptionalText(input.descripcion) : currentProduct.descripcion;
+  const nextEnlaceModelo =
+    input.enlaceModelo !== undefined ? normalizeOptionalText(input.enlaceModelo) : currentProduct.enlace_modelo;
+  const nextGramosEstimados =
+    input.gramosEstimados !== undefined ? Math.max(1, Math.round(input.gramosEstimados)) : currentProduct.gramos_estimados;
+  const nextTiempoImpresionHoras =
+    input.tiempoImpresionHoras !== undefined
+      ? roundMoney(input.tiempoImpresionHoras)
+      : currentProduct.tiempo_impresion_horas;
+  const nextCosteElectricidad =
+    input.costeElectricidad !== undefined ? roundMoney(input.costeElectricidad) : currentProduct.coste_electricidad;
+  const nextCosteMaquina =
+    input.costeMaquina !== undefined ? roundMoney(input.costeMaquina) : currentProduct.coste_maquina;
+  const nextCosteManoObra =
+    input.costeManoObra !== undefined ? roundMoney(input.costeManoObra) : currentProduct.coste_mano_obra;
+  const nextCostePostprocesado =
+    input.costePostprocesado !== undefined ? roundMoney(input.costePostprocesado) : currentProduct.coste_postprocesado;
+  const nextMargen = input.margen !== undefined ? roundMoney(input.margen) : currentProduct.margen;
+  const nextPvp = input.pvp !== undefined ? roundMoney(input.pvp) : currentProduct.pvp;
+  const nextIvaPorcentaje =
+    input.ivaPorcentaje !== undefined ? normalizeVatRate(input.ivaPorcentaje) : currentProduct.iva_porcentaje;
+  const nextMaterialId = input.materialId ?? currentProduct.material_id;
+  const nextActivo = input.activo ?? currentActivo;
+
+  if (!nextNombre || !nextMaterialId) {
+    throw new Error("Producto incompleto.");
+  }
+  if (
+    nextTiempoImpresionHoras < 0 ||
+    nextCosteElectricidad < 0 ||
+    nextCosteMaquina < 0 ||
+    nextCosteManoObra < 0 ||
+    nextCostePostprocesado < 0 ||
+    nextPvp < 0
+  ) {
+    throw new Error("Revisa el producto: tiempo, PVP y costes deben ser validos.");
+  }
+
+  const technicalChanged =
+    (input.nombre !== undefined && nextNombre !== currentProduct.nombre) ||
+    (input.descripcion !== undefined && nextDescripcion !== currentProduct.descripcion) ||
+    (input.enlaceModelo !== undefined && nextEnlaceModelo !== currentProduct.enlace_modelo) ||
+    (input.gramosEstimados !== undefined && nextGramosEstimados !== currentProduct.gramos_estimados) ||
+    (input.tiempoImpresionHoras !== undefined && nextTiempoImpresionHoras !== currentProduct.tiempo_impresion_horas) ||
+    (input.materialId !== undefined && nextMaterialId !== currentProduct.material_id);
+  const financialChanged =
+    (input.costeElectricidad !== undefined && nextCosteElectricidad !== currentProduct.coste_electricidad) ||
+    (input.costeMaquina !== undefined && nextCosteMaquina !== currentProduct.coste_maquina) ||
+    (input.costeManoObra !== undefined && nextCosteManoObra !== currentProduct.coste_mano_obra) ||
+    (input.costePostprocesado !== undefined && nextCostePostprocesado !== currentProduct.coste_postprocesado) ||
+    (input.margen !== undefined && nextMargen !== currentProduct.margen) ||
+    (input.pvp !== undefined && nextPvp !== currentProduct.pvp) ||
+    (input.ivaPorcentaje !== undefined && nextIvaPorcentaje !== currentProduct.iva_porcentaje);
+  const archiveChanged = input.activo !== undefined && nextActivo !== currentActivo;
+
+  if (technicalChanged) {
+    ensureActorPermission(actor, "product:editTechnical");
+  }
+  if (financialChanged) {
+    ensureActorPermission(actor, "product:editFinancial");
+  }
+  if (archiveChanged) {
+    ensureActorPermission(actor, "product:archive");
+  }
+
   const material = await row<{ id: string; activo: number }>(
     `SELECT id, activo FROM materials WHERE id = ?`,
-    input.materialId,
+    nextMaterialId,
   );
   if (!material) {
     throw new Error("El material principal no existe.");
   }
-  if (!material.activo && currentProduct.material_id !== input.materialId) {
+  if (!material.activo && currentProduct.material_id !== nextMaterialId) {
     throw new Error("No se puede asignar un material archivado a nuevos usos.");
   }
 
-  if (parseBoolean(currentProduct.activo) && input.activo === false) {
+  if (currentActivo && !nextActivo) {
     const openOrderLines = (await row<{ total: number }>(
       `SELECT COUNT(*) AS total
        FROM order_lines l
@@ -2255,20 +2446,20 @@ export async function updateProductRecord(input: {
       `UPDATE products
        SET nombre = ?, descripcion = ?, enlace_modelo = ?, gramos_estimados = ?, tiempo_impresion_horas = ?, coste_electricidad = ?, coste_maquina = ?, coste_mano_obra = ?, coste_postprocesado = ?, margen = ?, pvp = ?, iva_porcentaje = ?, material_id = ?, activo = ?
        WHERE id = ?`,
-      nombre,
-      input.descripcion?.trim() || null,
-      input.enlaceModelo?.trim() || null,
-      gramosEstimados,
-      tiempoImpresionHoras,
-      costeElectricidad,
-      roundMoney(input.costeMaquina ?? 0),
-      roundMoney(input.costeManoObra ?? 0),
-      roundMoney(input.costePostprocesado ?? 0),
-      margen,
-      pvp,
-      ivaPorcentaje,
-      input.materialId,
-      input.activo === false ? 0 : 1,
+      nextNombre,
+      nextDescripcion,
+      nextEnlaceModelo,
+      nextGramosEstimados,
+      nextTiempoImpresionHoras,
+      nextCosteElectricidad,
+      nextCosteMaquina,
+      nextCosteManoObra,
+      nextCostePostprocesado,
+      nextMargen,
+      nextPvp,
+      nextIvaPorcentaje,
+      nextMaterialId,
+      nextActivo ? 1 : 0,
       input.id,
     );
     await ensureFinishedInventoryRow(input.id);
@@ -2276,7 +2467,7 @@ export async function updateProductRecord(input: {
       `UPDATE finished_product_inventory
        SET precio_venta = ?, fecha_actualizacion = ?
        WHERE product_id = ?`,
-      pvp,
+      nextPvp,
       nowIso(),
       input.id,
     );
@@ -3844,6 +4035,222 @@ export async function restockMaterial(materialId: string, quantityG: number, rea
       motivo: reason.trim() || "Reposicion manual",
       referencia: "REPOSICION",
     });
+  });
+}
+
+export async function createPurchaseRequestRecord(input: {
+  materialId: string;
+  cantidadSolicitada: number;
+  unidad?: string;
+  motivo?: string;
+  prioridad?: string;
+}) {
+  const actor = await getActorOrNull();
+  ensureActorPermission(actor, "purchaseRequest:create");
+
+  if (!actor) {
+    throw new Error("Debes iniciar sesion para crear una solicitud.");
+  }
+
+  const material = await getMaterialStatusOrThrow(input.materialId);
+  if (!material.activo) {
+    throw new Error("No se puede solicitar compra para un material archivado.");
+  }
+
+  const cantidadSolicitada = requirePositiveInteger(
+    input.cantidadSolicitada,
+    "La cantidad solicitada debe ser mayor que cero.",
+  );
+  const unidad = normalizePurchaseRequestUnit(input.unidad);
+  const prioridad = normalizePurchaseRequestPriority(input.prioridad);
+  const requestId = randomUUID();
+
+  await run(
+    `INSERT INTO purchase_requests
+      (id, codigo, fecha_solicitud, solicitante_user_id, material_id, cantidad_solicitada, unidad, motivo, prioridad, estado)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    requestId,
+    await nextCode("purchase_requests", "SOL-"),
+    nowIso(),
+    actor.id,
+    input.materialId,
+    cantidadSolicitada,
+    unidad,
+    input.motivo?.trim() || null,
+    prioridad,
+    "PENDIENTE",
+  );
+
+  return { id: requestId };
+}
+
+export async function approvePurchaseRequest(
+  requestId: string,
+  input?: { observacionesRevision?: string },
+) {
+  const actor = await getActorOrNull();
+  ensureActorPermission(actor, "purchaseRequest:approve");
+
+  const request = await row<{ id: string; estado: PurchaseRequestStatus }>(
+    `SELECT id, estado FROM purchase_requests WHERE id = ?`,
+    requestId,
+  );
+  if (!request) {
+    throw new Error("La solicitud no existe.");
+  }
+  if (request.estado !== "PENDIENTE") {
+    throw new Error("Solo se pueden aprobar solicitudes pendientes.");
+  }
+
+  await run(
+    `UPDATE purchase_requests
+     SET estado = ?, revisado_por_user_id = ?, fecha_revision = ?, observaciones_revision = ?
+     WHERE id = ?`,
+    "APROBADA",
+    actor?.id ?? null,
+    nowIso(),
+    input?.observacionesRevision?.trim() || null,
+    requestId,
+  );
+}
+
+export async function rejectPurchaseRequest(
+  requestId: string,
+  input?: { observacionesRevision?: string },
+) {
+  const actor = await getActorOrNull();
+  ensureActorPermission(actor, "purchaseRequest:reject");
+
+  const request = await row<{ id: string; estado: PurchaseRequestStatus }>(
+    `SELECT id, estado FROM purchase_requests WHERE id = ?`,
+    requestId,
+  );
+  if (!request) {
+    throw new Error("La solicitud no existe.");
+  }
+  if (request.estado !== "PENDIENTE") {
+    throw new Error("Solo se pueden rechazar solicitudes pendientes.");
+  }
+
+  await run(
+    `UPDATE purchase_requests
+     SET estado = ?, revisado_por_user_id = ?, fecha_revision = ?, observaciones_revision = ?
+     WHERE id = ?`,
+    "RECHAZADA",
+    actor?.id ?? null,
+    nowIso(),
+    input?.observacionesRevision?.trim() || null,
+    requestId,
+  );
+}
+
+export async function cancelPurchaseRequest(requestId: string) {
+  const actor = await getActorOrNull();
+  ensureActorPermission(actor, "purchaseRequest:cancelOwn");
+
+  const request = await row<{
+    id: string;
+    estado: PurchaseRequestStatus;
+    solicitante_user_id: string;
+  }>(
+    `SELECT id, estado, solicitante_user_id
+     FROM purchase_requests
+     WHERE id = ?`,
+    requestId,
+  );
+  if (!request) {
+    throw new Error("La solicitud no existe.");
+  }
+  if (request.estado !== "PENDIENTE") {
+    throw new Error("Solo se pueden cancelar solicitudes pendientes.");
+  }
+
+  ensureActorOwnsPurchaseRequest(actor, request.solicitante_user_id);
+
+  await run(`UPDATE purchase_requests SET estado = ? WHERE id = ?`, "CANCELADA", requestId);
+}
+
+export async function markPurchaseRequestPurchased(
+  requestId: string,
+  input?: { compraId?: string; observacionesRevision?: string },
+) {
+  const actor = await getActorOrNull();
+  ensureActorPermission(actor, "purchaseRequest:convertToStockEntry");
+
+  const request = await row<{ id: string; estado: PurchaseRequestStatus }>(
+    `SELECT id, estado FROM purchase_requests WHERE id = ?`,
+    requestId,
+  );
+  if (!request) {
+    throw new Error("La solicitud no existe.");
+  }
+  if (request.estado !== "APROBADA") {
+    throw new Error("Solo se pueden marcar compradas las solicitudes aprobadas.");
+  }
+
+  await run(
+    `UPDATE purchase_requests
+     SET estado = ?, compra_id = ?, observaciones_revision = COALESCE(?, observaciones_revision)
+     WHERE id = ?`,
+    "COMPRADA",
+    input?.compraId?.trim() || null,
+    input?.observacionesRevision?.trim() || null,
+    requestId,
+  );
+}
+
+export async function convertPurchaseRequestToStockEntry(input: {
+  requestId: string;
+  cantidadG?: number;
+  motivo?: string;
+  compraId?: string;
+}) {
+  const actor = await getActorOrNull();
+  ensureActorPermission(actor, "purchaseRequest:convertToStockEntry");
+
+  const request = await row<{
+    id: string;
+    codigo: string;
+    estado: PurchaseRequestStatus;
+    material_id: string;
+    cantidad_solicitada: number;
+  }>(
+    `SELECT id, codigo, estado, material_id, cantidad_solicitada
+     FROM purchase_requests
+     WHERE id = ?`,
+    input.requestId,
+  );
+  if (!request) {
+    throw new Error("La solicitud no existe.");
+  }
+  if (request.estado !== "APROBADA" && request.estado !== "COMPRADA") {
+    throw new Error("Solo se pueden registrar entradas desde solicitudes aprobadas o compradas.");
+  }
+
+  const cantidadG = requirePositiveInteger(
+    input.cantidadG ?? request.cantidad_solicitada,
+    "La entrada de stock debe ser mayor que cero.",
+  );
+
+  await transaction(async () => {
+    await applyMaterialInventoryMovement({
+      materialId: request.material_id,
+      tipo: "ENTRADA",
+      cantidadG,
+      motivo: input.motivo?.trim() || `Entrada desde solicitud ${request.codigo}`,
+      referencia: request.codigo,
+    });
+
+    await run(
+      `UPDATE purchase_requests
+       SET estado = ?, compra_id = COALESCE(?, compra_id), registrado_por_user_id = ?, fecha_registro_stock = ?
+       WHERE id = ?`,
+      "RECIBIDA",
+      input.compraId?.trim() || null,
+      actor?.id ?? null,
+      nowIso(),
+      input.requestId,
+    );
   });
 }
 

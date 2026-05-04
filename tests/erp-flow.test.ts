@@ -24,14 +24,17 @@ import {
   type AppRole,
 } from "../lib/auth";
 import {
+  approvePurchaseRequest,
   collectInvoicePayment,
   completeManufacturingOrder,
   completeManufacturingWorkflow,
+  convertPurchaseRequestToStockEntry,
   confirmOrder,
   createCustomerRecord,
   createInvoicePaymentRecord,
   createMaterialRecord,
   createOrderRecord,
+  createPurchaseRequestRecord,
   createStockManufacturingOrder,
   createPrinterRecord,
   createProductRecord,
@@ -47,6 +50,7 @@ import {
   matchesOrderFocusCode,
   processOrder,
   prioritizeOrdersByFocus,
+  rejectPurchaseRequest,
   resetDatabase,
   restockFinishedProduct,
   setCustomerActiveState,
@@ -180,11 +184,40 @@ async function setupPermissionsFixture() {
   await invoiceOrderWorkflow(orderRows[0].id);
 
   const firstInvoice = (await row<{ id: string }>(`SELECT id FROM invoices WHERE pedido_id = ?`, orderRows[0].id))!;
+  const operatorUser = await createUserRecord({
+    nombre: "Operador Roles",
+    email: "operador.roles@eli-print.test",
+    password: "supersegura123",
+    role: "OPERADOR",
+    activo: true,
+  });
+  const financialUser = await createUserRecord({
+    nombre: "Finanzas Roles",
+    email: "finanzas.roles@eli-print.test",
+    password: "supersegura123",
+    role: "GESTOR_FINANCIERO",
+    activo: true,
+  });
+  const adminUser = await createUserRecord({
+    nombre: "Admin Roles",
+    email: "admin.roles@eli-print.test",
+    password: "supersegura123",
+    role: "ADMIN",
+    activo: true,
+  });
+  const clientUser = await createUserRecord({
+    nombre: "Cliente Roles",
+    email: "cliente.roles@eli-print.test",
+    password: "supersegura123",
+    role: "CLIENTE",
+    clienteId: customerRows[0].id,
+    activo: true,
+  });
 
-  const operator = buildUser("OPERADOR");
-  const financial = buildUser("GESTOR_FINANCIERO");
-  const admin = buildUser("ADMIN");
-  const client = buildUser("CLIENTE", { clienteId: customerRows[0].id });
+  const operator = buildUser("OPERADOR", { id: operatorUser.id, email: "operador.roles@eli-print.test", nombre: "Operador Roles" });
+  const financial = buildUser("GESTOR_FINANCIERO", { id: financialUser.id, email: "finanzas.roles@eli-print.test", nombre: "Finanzas Roles" });
+  const admin = buildUser("ADMIN", { id: adminUser.id, email: "admin.roles@eli-print.test", nombre: "Admin Roles" });
+  const client = buildUser("CLIENTE", { id: clientUser.id, email: "cliente.roles@eli-print.test", nombre: "Cliente Roles", clienteId: customerRows[0].id });
 
   return { operator, financial, admin, client, firstInvoiceId: firstInvoice.id, customerRows };
 }
@@ -285,6 +318,8 @@ test("cliente solo ve sus pedidos", async () => {
   assert.equal(snapshot.customers[0]?.id, customerRows[0].id);
   assert.equal(snapshot.invoices.length, 0);
   assert.equal(snapshot.materials.length, 0);
+  assert.equal(snapshot.products.length, 0);
+  assert.equal(snapshot.purchaseRequests.length, 0);
   assert.equal(snapshot.inventoryMovements.length, 0);
 });
 
@@ -301,6 +336,11 @@ test("admin puede todo y puede crear usuarios internos y cliente", async () => {
   assert.equal(snapshot.invoices.length > 0, true);
   assert.equal(snapshot.orders.length, 2);
   assert.equal(snapshot.materials.length > 0, true);
+  assert.equal(canPerformAction(admin, "product:create"), true);
+  assert.equal(canPerformAction(admin, "product:editTechnical"), true);
+  assert.equal(canPerformAction(admin, "product:editFinancial"), true);
+  assert.equal(canPerformAction(admin, "purchaseRequest:approve"), true);
+  assert.equal(canPerformAction(admin, "purchaseRequest:convertToStockEntry"), true);
 
   const internalUser = await createUserRecord({
     nombre: "Operario Uno",
@@ -320,6 +360,245 @@ test("admin puede todo y puede crear usuarios internos y cliente", async () => {
 
   assert.equal(internalUser.role, "OPERADOR");
   assert.equal(customerUser.role, "CLIENTE");
+});
+
+test("operador puede crear solicitud de compra y verla en su bandeja", async () => {
+  const { operator, admin } = await setupPermissionsFixture();
+  const materialId = (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))!.id;
+
+  await withMockUser(operator, () =>
+    createPurchaseRequestRecord({
+      materialId,
+      cantidadSolicitada: 750,
+      motivo: "Reposicion para produccion",
+      prioridad: "ALTA",
+    }),
+  );
+
+  const stored = (await row<{
+    estado: string;
+    cantidad_solicitada: number;
+    solicitante_user_id: string;
+  }>(`SELECT estado, cantidad_solicitada, solicitante_user_id FROM purchase_requests LIMIT 1`))!;
+  assert.equal(stored.estado, "PENDIENTE");
+  assert.equal(stored.cantidad_solicitada, 750);
+  assert.equal(stored.solicitante_user_id, operator.id);
+
+  const operatorView = filterSnapshotByRole(await getAppSnapshot(), operator);
+  const adminView = filterSnapshotByRole(await getAppSnapshot(), admin);
+  assert.equal(operatorView.purchaseRequests.length, 1);
+  assert.equal(adminView.purchaseRequests.length, 1);
+  assert.equal(adminView.purchaseRequests.filter((request) => request.estado === "PENDIENTE").length, 1);
+});
+
+test("operador no puede aprobar ni convertir solicitudes en entrada de stock", async () => {
+  const { operator, admin } = await setupPermissionsFixture();
+  const materialId = (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))!.id;
+
+  const created = await withMockUser(operator, () =>
+    createPurchaseRequestRecord({
+      materialId,
+      cantidadSolicitada: 500,
+      motivo: "Reposicion operador",
+    }),
+  );
+
+  await assert.rejects(
+    () => withMockUser(operator, () => approvePurchaseRequest(created.id)),
+    /No tienes permisos/i,
+  );
+  await withMockUser(admin, () => approvePurchaseRequest(created.id));
+  await assert.rejects(
+    () =>
+      withMockUser(operator, () =>
+        convertPurchaseRequestToStockEntry({
+          requestId: created.id,
+        }),
+      ),
+    /No tienes permisos/i,
+  );
+});
+
+test("gestor financiero puede aprobar, rechazar y convertir solicitudes aprobadas en entrada de stock", async () => {
+  const { operator, financial } = await setupPermissionsFixture();
+  const materialId = (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))!.id;
+
+  const approved = await withMockUser(operator, () =>
+    createPurchaseRequestRecord({
+      materialId,
+      cantidadSolicitada: 600,
+      motivo: "Material urgente",
+    }),
+  );
+  const rejected = await withMockUser(operator, () =>
+    createPurchaseRequestRecord({
+      materialId,
+      cantidadSolicitada: 300,
+      motivo: "Solicitud secundaria",
+    }),
+  );
+
+  await withMockUser(financial, () =>
+    approvePurchaseRequest(approved.id, { observacionesRevision: "Aprobada para compra" }),
+  );
+  await withMockUser(financial, () =>
+    rejectPurchaseRequest(rejected.id, { observacionesRevision: "No procede" }),
+  );
+
+  const approvedRow = (await row<{ estado: string; revisado_por_user_id: string | null }>(
+    `SELECT estado, revisado_por_user_id FROM purchase_requests WHERE id = ?`,
+    approved.id,
+  ))!;
+  const rejectedRow = (await row<{ estado: string; revisado_por_user_id: string | null }>(
+    `SELECT estado, revisado_por_user_id FROM purchase_requests WHERE id = ?`,
+    rejected.id,
+  ))!;
+  assert.equal(approvedRow.estado, "APROBADA");
+  assert.equal(approvedRow.revisado_por_user_id, financial.id);
+  assert.equal(rejectedRow.estado, "RECHAZADA");
+  assert.equal(rejectedRow.revisado_por_user_id, financial.id);
+
+  const stockBefore = (await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId))!.stock_actual_g;
+  await withMockUser(financial, () =>
+    convertPurchaseRequestToStockEntry({
+      requestId: approved.id,
+      cantidadG: 650,
+      motivo: "Entrada real desde solicitud",
+    }),
+  );
+  const stockAfter = (await row<{ stock_actual_g: number }>(`SELECT stock_actual_g FROM materials WHERE id = ?`, materialId))!.stock_actual_g;
+  const requestAfter = (await row<{ estado: string; registrado_por_user_id: string | null }>(
+    `SELECT estado, registrado_por_user_id FROM purchase_requests WHERE id = ?`,
+    approved.id,
+  ))!;
+  const movement = (await row<{ tipo: string; cantidad_g: number; referencia: string }>(
+    `SELECT tipo, cantidad_g, referencia
+     FROM stock_movements
+     WHERE referencia = (SELECT codigo FROM purchase_requests WHERE id = ?)
+     ORDER BY fecha DESC
+     LIMIT 1`,
+    approved.id,
+  ))!;
+
+  assert.equal(stockAfter, stockBefore + 650);
+  assert.equal(requestAfter.estado, "RECIBIDA");
+  assert.equal(requestAfter.registrado_por_user_id, financial.id);
+  assert.equal(movement.tipo, "ENTRADA");
+  assert.equal(movement.cantidad_g, 650);
+});
+
+test("operador puede crear producto tecnico pero no editar PVP, margen ni IVA", async () => {
+  const { operator } = await setupPermissionsFixture();
+  const materialId = (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))!.id;
+
+  await withMockUser(operator, () =>
+    createProductRecord({
+      nombre: "Producto tecnico operador",
+      materialId,
+      gramosEstimados: 80,
+      tiempoImpresionHoras: 1.5,
+      descripcion: "Ficha tecnica",
+      enlaceModelo: "https://modelo.test/1",
+    }),
+  );
+
+  const created = (await row<{
+    nombre: string;
+    gramos_estimados: number;
+    pvp: number;
+    iva_porcentaje: number;
+  }>(`SELECT nombre, gramos_estimados, pvp, iva_porcentaje FROM products ORDER BY codigo DESC LIMIT 1`))!;
+  assert.equal(created.nombre, "Producto tecnico operador");
+  assert.equal(created.gramos_estimados, 80);
+  assert.equal(created.pvp, 0);
+  assert.equal(created.iva_porcentaje, 21);
+
+  const productId = (await row<{ id: string }>(`SELECT id FROM products ORDER BY codigo DESC LIMIT 1`))!.id;
+  await assert.rejects(
+    () =>
+      withMockUser(operator, () =>
+        updateProductRecord({
+          id: productId,
+          pvp: 25,
+          margen: 10,
+          ivaPorcentaje: 10,
+        }),
+      ),
+    /No tienes permisos/i,
+  );
+});
+
+test("gestor financiero puede editar PVP, IVA y margen pero no gramos, tiempo ni material tecnico", async () => {
+  const { productId } = await setupSingleProductFixture();
+  const financial = buildUser("GESTOR_FINANCIERO");
+  const materialId = (await row<{ id: string }>(`SELECT id FROM materials LIMIT 1`))!.id;
+
+  await withMockUser(financial, () =>
+    updateProductRecord({
+      id: productId,
+      pvp: 44,
+      margen: 18,
+      ivaPorcentaje: 10,
+    }),
+  );
+
+  const updated = (await row<{ pvp: number; margen: number; iva_porcentaje: number }>(
+    `SELECT pvp, margen, iva_porcentaje FROM products WHERE id = ?`,
+    productId,
+  ))!;
+  assert.equal(updated.pvp, 44);
+  assert.equal(updated.margen, 18);
+  assert.equal(updated.iva_porcentaje, 10);
+
+  await assert.rejects(
+    () =>
+      withMockUser(financial, () =>
+        updateProductRecord({
+          id: productId,
+          gramosEstimados: 999,
+          tiempoImpresionHoras: 8,
+          materialId,
+        }),
+      ),
+    /No tienes permisos/i,
+  );
+});
+
+test("admin puede editar todos los campos de producto", async () => {
+  const { productId, materialId } = await setupSingleProductFixture();
+  const admin = buildUser("ADMIN");
+
+  await withMockUser(admin, () =>
+    updateProductRecord({
+      id: productId,
+      nombre: "Producto admin",
+      gramosEstimados: 140,
+      tiempoImpresionHoras: 4,
+      materialId,
+      costeElectricidad: 2.5,
+      costeMaquina: 1.2,
+      costeManoObra: 0.8,
+      costePostprocesado: 1.1,
+      pvp: 55,
+      margen: 22,
+      ivaPorcentaje: 4,
+    }),
+  );
+
+  const updated = (await row<{
+    nombre: string;
+    gramos_estimados: number;
+    tiempo_impresion_horas: number;
+    pvp: number;
+    margen: number;
+    iva_porcentaje: number;
+  }>(`SELECT nombre, gramos_estimados, tiempo_impresion_horas, pvp, margen, iva_porcentaje FROM products WHERE id = ?`, productId))!;
+  assert.equal(updated.nombre, "Producto admin");
+  assert.equal(updated.gramos_estimados, 140);
+  assert.equal(updated.tiempo_impresion_horas, 4);
+  assert.equal(updated.pvp, 55);
+  assert.equal(updated.margen, 22);
+  assert.equal(updated.iva_porcentaje, 4);
 });
 
 test("ADMIN puede editar nombre, email y rol de un usuario", async () => {

@@ -8,6 +8,7 @@ export type AppModule =
   | "pedidos"
   | "fabricacion"
   | "stock"
+  | "solicitudes-compra"
   | "productos-terminados"
   | "facturas"
   | "impresoras"
@@ -25,6 +26,10 @@ export type AppPermission =
   | "create_material"
   | "edit_material"
   | "archive_material"
+  | "product:create"
+  | "product:editTechnical"
+  | "product:editFinancial"
+  | "product:archive"
   | "create_product"
   | "edit_product"
   | "archive_product"
@@ -38,6 +43,11 @@ export type AppPermission =
   | "create_stock_manufacturing"
   | "edit_manufacturing"
   | "restock_material"
+  | "purchaseRequest:create"
+  | "purchaseRequest:approve"
+  | "purchaseRequest:reject"
+  | "purchaseRequest:convertToStockEntry"
+  | "purchaseRequest:cancelOwn"
   | "create_printer"
   | "edit_printer"
   | "archive_printer"
@@ -84,6 +94,7 @@ const roleModules: Record<AppRole, AppModule[]> = {
     "pedidos",
     "fabricacion",
     "stock",
+    "solicitudes-compra",
     "productos-terminados",
     "facturas",
     "impresoras",
@@ -96,15 +107,19 @@ const roleModules: Record<AppRole, AppModule[]> = {
   OPERADOR: [
     "fabricacion",
     "stock",
+    "solicitudes-compra",
     "productos-terminados",
     "impresoras",
+    "productos",
     "materiales",
     "movimientos",
   ],
   GESTOR_FINANCIERO: [
     "pedidos",
+    "solicitudes-compra",
     "facturas",
     "stock",
+    "productos",
     "materiales",
     "clientes",
   ],
@@ -123,6 +138,10 @@ const rolePermissions: Record<AppRole, AppPermission[]> = {
     "create_material",
     "edit_material",
     "archive_material",
+    "product:create",
+    "product:editTechnical",
+    "product:editFinancial",
+    "product:archive",
     "create_product",
     "edit_product",
     "archive_product",
@@ -136,6 +155,11 @@ const rolePermissions: Record<AppRole, AppPermission[]> = {
     "create_stock_manufacturing",
     "edit_manufacturing",
     "restock_material",
+    "purchaseRequest:create",
+    "purchaseRequest:approve",
+    "purchaseRequest:reject",
+    "purchaseRequest:convertToStockEntry",
+    "purchaseRequest:cancelOwn",
     "create_printer",
     "edit_printer",
     "archive_printer",
@@ -151,6 +175,10 @@ const rolePermissions: Record<AppRole, AppPermission[]> = {
     "change_configuration",
   ],
   OPERADOR: [
+    "product:create",
+    "product:editTechnical",
+    "purchaseRequest:create",
+    "purchaseRequest:cancelOwn",
     "start_manufacturing",
     "complete_manufacturing",
     "create_stock_manufacturing",
@@ -160,6 +188,8 @@ const rolePermissions: Record<AppRole, AppPermission[]> = {
   ],
   GESTOR_FINANCIERO: [
     "view_costs",
+    "view_margins",
+    "product:editFinancial",
     "create_customer",
     "edit_customer",
     "archive_customer",
@@ -174,6 +204,9 @@ const rolePermissions: Record<AppRole, AppPermission[]> = {
     "edit_invoice",
     "register_payment",
     "restock_material",
+    "purchaseRequest:approve",
+    "purchaseRequest:reject",
+    "purchaseRequest:convertToStockEntry",
     "export_data",
   ],
   CLIENTE: [],
@@ -698,6 +731,10 @@ function canViewMargins(user: Pick<CurrentUser, "role">) {
   return canPerformAction(user, "view_margins");
 }
 
+function canViewProductFinancials(user: Pick<CurrentUser, "role">) {
+  return user.role === "ADMIN" || user.role === "GESTOR_FINANCIERO";
+}
+
 function redactOrder(order: Record<string, unknown>, user: Pick<CurrentUser, "role">) {
   const canSeeCosts = canViewCosts(user);
   const canSeeMargins = canViewMargins(user);
@@ -763,6 +800,7 @@ export function filterSnapshotByRole<T extends {
   customers: Array<Record<string, unknown>>;
   materials: Array<Record<string, unknown>>;
   products: Array<Record<string, unknown>>;
+  purchaseRequests: Array<Record<string, unknown>>;
   orders: Array<Record<string, unknown>>;
   manufacturingOrders: Array<Record<string, unknown>>;
   stockMovements: Array<Record<string, unknown>>;
@@ -805,6 +843,8 @@ export function filterSnapshotByRole<T extends {
     products: canAccessModule(user, "productos")
       ? snapshot.products.map((product) => ({
           ...product,
+          pvp: canViewProductFinancials(user) ? product.pvp : 0,
+          iva_porcentaje: canViewProductFinancials(user) ? product.iva_porcentaje : 0,
           coste_electricidad: canViewCosts(user) ? product.coste_electricidad : 0,
           coste_maquina: canViewCosts(user) ? product.coste_maquina : 0,
           coste_mano_obra: canViewCosts(user) ? product.coste_mano_obra : 0,
@@ -813,6 +853,15 @@ export function filterSnapshotByRole<T extends {
           coste_total_producto: canViewCosts(user) ? product.coste_total_producto : 0,
           margen: canViewMargins(user) ? product.margen : 0,
         }))
+      : [],
+    purchaseRequests: canAccessModule(user, "solicitudes-compra")
+      ? snapshot.purchaseRequests.filter((request) => {
+          if (user.role === "ADMIN" || user.role === "GESTOR_FINANCIERO") {
+            return true;
+          }
+
+          return request.solicitante_user_id === user.id;
+        })
       : [],
     orders: filteredOrders,
     manufacturingOrders: canAccessModule(user, "fabricacion")

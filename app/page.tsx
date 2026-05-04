@@ -1,12 +1,16 @@
 import { Fragment, type ReactNode } from "react";
 import Link from "next/link";
 import {
+  approvePurchaseRequestAction,
   bootstrapAdminAction,
+  cancelPurchaseRequestAction,
   confirmOrderAction,
+  convertPurchaseRequestToStockEntryAction,
   processOrderAction,
   createCustomerAction,
   createMaterialAction,
   createOrderAction,
+  createPurchaseRequestAction,
   createPrinterAction,
   createProductAction,
   createUserAction,
@@ -15,6 +19,8 @@ import {
   generateInvoiceAction,
   loginAction,
   logoutAction,
+  markPurchaseRequestPurchasedAction,
+  rejectPurchaseRequestAction,
   restockFinishedProductAction,
   restockMaterialAction,
   retryOrderAction,
@@ -35,7 +41,6 @@ import { SubmitButton } from "./components/form-ui";
 import { FilterSummary } from "./components/filter-summary";
 import { getAppSnapshot, matchesOrderFocusCode, prioritizeOrdersByFocus } from "@/lib/erp-service";
 import {
-  canAccessModule,
   canPerformAction,
   filterSnapshotByRole,
   getCurrentUser,
@@ -58,6 +63,7 @@ const sectionKeys = [
   "pedidos",
   "fabricacion",
   "stock",
+  "solicitudes-compra",
   "productos-terminados",
   "facturas",
   "impresoras",
@@ -73,6 +79,7 @@ const sectionLabels: Record<(typeof sectionKeys)[number], string> = {
   pedidos: "Pedidos",
   fabricacion: "Fabricacion",
   stock: "Stock materiales",
+  "solicitudes-compra": "Solicitudes compra",
   "productos-terminados": "Productos terminados",
   facturas: "Facturas",
   impresoras: "Impresoras",
@@ -389,6 +396,7 @@ export default async function Home({
     customerFilter?: string;
     clienteId?: string;
     productoId?: string;
+    requestMaterialId?: string;
     impresoraId?: string;
     origen?: string;
     printerStatus?: string;
@@ -466,6 +474,7 @@ export default async function Home({
     customers,
     materials,
     products,
+    purchaseRequests,
     orders,
     manufacturingOrders,
     stockMovements,
@@ -476,6 +485,15 @@ export default async function Home({
   } = snapshot;
   const canViewCosts = canPerformAction(currentUser, "view_costs");
   const canViewMargins = canPerformAction(currentUser, "view_margins");
+  const canCreateProducts = canPerformAction(currentUser, "product:create");
+  const canEditProductTechnical = canPerformAction(currentUser, "product:editTechnical");
+  const canEditProductFinancial = canPerformAction(currentUser, "product:editFinancial");
+  const canArchiveProducts = canPerformAction(currentUser, "product:archive");
+  const canCreatePurchaseRequests = canPerformAction(currentUser, "purchaseRequest:create");
+  const canApprovePurchaseRequests = canPerformAction(currentUser, "purchaseRequest:approve");
+  const canRejectPurchaseRequests = canPerformAction(currentUser, "purchaseRequest:reject");
+  const canConvertPurchaseRequests = canPerformAction(currentUser, "purchaseRequest:convertToStockEntry");
+  const canCancelOwnPurchaseRequests = canPerformAction(currentUser, "purchaseRequest:cancelOwn");
   const canManageUsers = canPerformAction(currentUser, "manage_users");
   const canCreateMaterials = canPerformAction(currentUser, "create_material");
   const canEditMaterials = canPerformAction(currentUser, "edit_material");
@@ -502,6 +520,7 @@ export default async function Home({
   const focusedOrderCode = resolved.pedidoId?.trim() || null;
   const focusedCustomerCode = resolved.clienteId?.trim() || null;
   const focusedProductCode = resolved.productoId?.trim() || null;
+  const requestedPurchaseMaterialId = resolved.requestMaterialId?.trim() || "";
   const focusedPrinterCode = resolved.impresoraId?.trim() || null;
   const focusedInvoiceCode = resolved.facturaId?.trim() || null;
   const customerFocusOrigin =
@@ -887,11 +906,23 @@ export default async function Home({
     .slice(0, 5);
   const nonAvailablePrintersPreview = unavailablePrinters.slice(0, 5);
   const lowStockMaterialsPreview = lowStockMaterials.slice(0, 5);
+  const pendingPurchaseRequests = purchaseRequests.filter((request) => request.estado === "PENDIENTE");
+  const pendingPurchaseRequestsPreview = pendingPurchaseRequests
+    .slice(0, 3)
+    .map((request) => `${request.codigo} · ${request.material_codigo}`)
+    .join(", ");
+  const stockActionHref = canRestockMaterials
+    ? "/?section=stock#restock-material"
+    : canCreatePurchaseRequests
+      ? "/?section=solicitudes-compra"
+      : "/?section=materiales";
+  const stockActionLabel = canRestockMaterials ? "Reponer material" : "Solicitar compra";
   const dashboardActionLinks = [
     { href: "/?section=facturas&invoiceStatus=ALL", label: "Ver cobros", count: pendingInvoices },
     { href: "/?section=pedidos&orderStatus=EN_PRODUCCION", label: "Pedidos con incidencia", count: blockedOrders.length },
     { href: "/?section=fabricacion&manufacturingStatus=EN_CURSO", label: "Fabricacion activa", count: activeManufacturingCount },
     { href: "/?section=impresoras&printerStatus=ALL&printerActiveFilter=ACTIVE", label: "Capacidad de impresoras", count: unavailablePrinters.length },
+    { href: "/?section=solicitudes-compra", label: "Solicitudes", count: pendingPurchaseRequests.length },
   ];
   const smartAlerts = [
     ...(blockedOrders.length > 0
@@ -933,6 +964,20 @@ export default async function Home({
           },
         ]
       : []),
+    ...(pendingPurchaseRequests.length > 0
+      ? [
+          {
+            tone: "info" as const,
+            title: "Solicitudes de compra pendientes",
+            description:
+              pendingPurchaseRequests.length === 1
+                ? `Hay 1 solicitud pendiente de revision. ${pendingPurchaseRequestsPreview}`
+                : `Hay ${pendingPurchaseRequests.length} solicitudes pendientes de revision. ${pendingPurchaseRequestsPreview || "Revisalas para no frenar la operativa."}`,
+            href: "/?section=solicitudes-compra",
+            actionLabel: "Ver solicitudes",
+          },
+        ]
+      : []),
     ...(pendingManufacturingOrders.length > 0
       ? [
           {
@@ -969,6 +1014,7 @@ export default async function Home({
     pedidos: openOrders,
     fabricacion: pendingManufacturing,
     stock: lowStockMaterials.length,
+    "solicitudes-compra": pendingPurchaseRequests.length,
     "productos-terminados": finishedUnits,
     facturas: pendingInvoices,
     impresoras: printers.filter((printer) => printer.estado !== "LIBRE").length,
@@ -993,7 +1039,7 @@ export default async function Home({
     },
     { href: "/?section=pedidos&orderStatus=LISTO", label: "Listos para entregar", count: readyToDeliver },
     { href: "/?section=pedidos&orderStatus=ENTREGADO", label: "Listos para facturar", count: readyToInvoice },
-    { href: "/?section=stock#restock-material", label: "Reponer material", count: lowStockMaterials.length },
+    { href: stockActionHref, label: stockActionLabel, count: lowStockMaterials.length },
   ];
   const dashboardShortcuts = shortcuts.filter((shortcut) => shortcut.label !== "Nuevo pedido");
   const dashboardHeroMetrics = [
@@ -1201,7 +1247,7 @@ export default async function Home({
                   <DashboardKpiCard label="Materiales activos" value={activeMaterials.length} detail="Disponibles en operativa diaria" href="/?section=materiales&materialFilter=ACTIVE" />
                   <DashboardKpiCard label="Stock bajo" value={lowStockMaterials.length} detail="En minimo o por debajo" href="/?section=materiales&materialFilter=ACTIVE" tone={lowStockMaterials.length > 0 ? "danger" : "neutral"} />
                   <DashboardKpiCard label="Valor estimado de stock" value={hasMaterialCostData ? currency(estimatedMaterialStockValue) : "No disponible"} detail="Segun coste por kilo existente" href="/?section=materiales&materialFilter=ACTIVE" />
-                  <DashboardKpiCard label="Reposiciones pendientes" value={lowStockMaterials.length} detail="Materiales a revisar hoy" href="/?section=stock#restock-material" tone={lowStockMaterials.length > 0 ? "warn" : "neutral"} />
+                  <DashboardKpiCard label="Reposiciones pendientes" value={lowStockMaterials.length} detail="Materiales a revisar hoy" href={stockActionHref} tone={lowStockMaterials.length > 0 ? "warn" : "neutral"} />
                 </div>
               </article>
             </div>
@@ -1567,10 +1613,10 @@ export default async function Home({
                             </p>
                           </div>
                           <Link
-                            href="/?section=stock#restock-material"
+                            href={stockActionHref}
                             className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800"
                           >
-                            Reponer
+                            {stockActionLabel}
                           </Link>
                         </div>
                       </div>
@@ -1935,10 +1981,10 @@ export default async function Home({
                                   </SubmitButton>
                                 </form>
                                 <Link
-                                  href="/?section=stock#restock-material"
+                                  href={stockActionHref}
                                   className="inline-flex items-center rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[color:var(--muted)]"
                                 >
-                                  Reponer material
+                                  {stockActionLabel}
                                 </Link>
                               </>
                             ) : null}
@@ -2150,37 +2196,240 @@ export default async function Home({
             </div>
           </Section>
 
-          <Section active={section === "stock"} title="Stock de materiales" subtitle="Inventario de materiales">
+          <Section active={section === "solicitudes-compra"} title="Solicitudes de compra" subtitle="Reposicion controlada">
             <div className="space-y-4">
-              {canRestockMaterials ? <CreatePanel title="Nueva reposicion" description="Registra una entrada de material con movimiento justificado y trazabilidad completa.">
-                <form id="restock-material" action={restockMaterialAction} className="form-shell p-6 space-y-5">
+              {canCreatePurchaseRequests ? (
+                <CreatePanel title="Solicitar compra" description="Solicita reposicion sin registrar compras ni tocar stock.">
+                  <form action={createPurchaseRequestAction} className="form-shell p-6 space-y-5">
+                    <div>
+                      <h3 className="text-xl font-semibold">Nueva solicitud</h3>
+                      <p className="mt-2 text-sm text-[color:var(--muted)]">
+                        La solicitud queda pendiente hasta que ADMIN o GESTOR_FINANCIERO la revise y, si procede, registre la entrada real.
+                      </p>
+                    </div>
+                    <Field label="Material">
+                      <select name="materialId" className="input" defaultValue={requestedPurchaseMaterialId}>
+                        <option value="">Material</option>
+                        {activeMaterials.map((material) => (
+                          <option key={material.id} value={material.id}>
+                            {material.codigo} &middot; {material.nombre} &middot; {material.color}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <div className="form-grid-2">
+                      <Field label="Cantidad solicitada (g)">
+                        <input name="cantidadSolicitada" type="number" min="1" placeholder="Cantidad en gramos" className="input" />
+                      </Field>
+                      <Field label="Prioridad">
+                        <select name="prioridad" className="input" defaultValue="NORMAL">
+                          <option value="BAJA">baja</option>
+                          <option value="NORMAL">normal</option>
+                          <option value="ALTA">alta</option>
+                          <option value="URGENTE">urgente</option>
+                        </select>
+                      </Field>
+                    </div>
+                    <input type="hidden" name="unidad" value="g" />
+                    <Field label="Motivo">
+                      <textarea name="motivo" rows={3} placeholder="Motivo de la solicitud" className="input" />
+                    </Field>
+                    <SubmitButton pendingText="Creando...">Solicitar compra</SubmitButton>
+                  </form>
+                </CreatePanel>
+              ) : null}
+
+              <div className="panel p-6">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h3 className="text-xl font-semibold">Registrar reposicion</h3>
-                    <p className="mt-2 text-sm text-[color:var(--muted)]">
-                      Toda entrada de material queda registrada con movimiento de inventario. Este flujo cubre compras y reposiciones justificadas.
+                    <h3 className="text-xl font-semibold">
+                      {currentUser.role === "OPERADOR" ? "Tus solicitudes" : "Bandeja de solicitudes"}
+                    </h3>
+                    <p className="mt-1 text-sm text-[color:var(--muted)]">
+                      {currentUser.role === "OPERADOR"
+                        ? "Puedes seguir el estado y cancelar solo las que sigan pendientes."
+                        : "Aprueba, rechaza o registra la entrada real manteniendo movimientos de stock como fuente de verdad."}
                     </p>
                   </div>
-                  <Field label="Material">
-                    <select name="materialId" className="input" defaultValue="">
-                      <option value="">Material</option>
-                      {activeMaterials.map((material) => (
-                        <option key={material.id} value={material.id}>
-                          {material.codigo} &middot; {material.nombre} &middot; {material.color}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <div className="form-grid-2">
-                    <Field label="Cantidad en gramos">
-                      <input name="cantidadG" type="number" min="1" placeholder="Cantidad en gramos" className="input" />
-                    </Field>
-                    <Field label="Motivo de la reposicion">
-                      <input name="motivo" placeholder="Motivo de la reposicion" className="input" />
-                    </Field>
+                  <div className="flex flex-wrap gap-2">
+                    <StatusPill label={`${purchaseRequests.length} visibles`} tone="neutral" />
+                    <StatusPill label={`${pendingPurchaseRequests.length} pendientes`} tone={pendingPurchaseRequests.length > 0 ? "warn" : "success"} />
                   </div>
-                  <SubmitButton pendingText="Registrando...">Registrar reposicion</SubmitButton>
-                </form>
-              </CreatePanel> : null}
+                </div>
+                <div className="table-wrap table-scroll">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Acciones</th>
+                        <th>Codigo</th>
+                        <th>Fecha</th>
+                        <th>Material</th>
+                        <th>Cantidad</th>
+                        <th>Prioridad</th>
+                        <th>Estado</th>
+                        <th>Auditoria</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {purchaseRequests.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="text-sm text-[color:var(--muted)]">No hay solicitudes para mostrar.</td>
+                        </tr>
+                      ) : (
+                        purchaseRequests.map((request) => (
+                          <tr key={request.id}>
+                            <td>
+                              <div className="flex flex-wrap gap-2">
+                                {canCancelOwnPurchaseRequests && request.estado === "PENDIENTE" ? (
+                                  <form action={cancelPurchaseRequestAction}>
+                                    <input type="hidden" name="requestId" value={request.id} />
+                                    <SubmitButton variant="secondary" pendingText="Cancelando...">Cancelar</SubmitButton>
+                                  </form>
+                                ) : null}
+                                {canApprovePurchaseRequests && request.estado === "PENDIENTE" ? (
+                                  <form action={approvePurchaseRequestAction} className="flex flex-wrap gap-2">
+                                    <input type="hidden" name="requestId" value={request.id} />
+                                    <input name="observacionesRevision" placeholder="Obs. aprobacion" className="input max-w-44" />
+                                    <SubmitButton variant="secondary" pendingText="Aprobando...">Aprobar</SubmitButton>
+                                  </form>
+                                ) : null}
+                                {canRejectPurchaseRequests && request.estado === "PENDIENTE" ? (
+                                  <form action={rejectPurchaseRequestAction} className="flex flex-wrap gap-2">
+                                    <input type="hidden" name="requestId" value={request.id} />
+                                    <input name="observacionesRevision" placeholder="Motivo rechazo" className="input max-w-44" />
+                                    <SubmitButton variant="secondary" pendingText="Rechazando...">Rechazar</SubmitButton>
+                                  </form>
+                                ) : null}
+                                {canConvertPurchaseRequests && request.estado === "APROBADA" ? (
+                                  <form action={markPurchaseRequestPurchasedAction} className="flex flex-wrap gap-2">
+                                    <input type="hidden" name="requestId" value={request.id} />
+                                    <input name="compraId" placeholder="Compra/Gasto opc." className="input max-w-40" />
+                                    <SubmitButton variant="secondary" pendingText="Marcando...">Marcar comprada</SubmitButton>
+                                  </form>
+                                ) : null}
+                                {canConvertPurchaseRequests && (request.estado === "APROBADA" || request.estado === "COMPRADA") ? (
+                                  <form action={convertPurchaseRequestToStockEntryAction} className="flex flex-wrap gap-2">
+                                    <input type="hidden" name="requestId" value={request.id} />
+                                    <input type="hidden" name="compraId" value={request.compra_id ?? ""} />
+                                    <input name="cantidadG" type="number" min="1" defaultValue={request.cantidad_solicitada} className="input max-w-32" />
+                                    <input name="motivo" defaultValue={`Entrada desde solicitud ${request.codigo}`} className="input max-w-52" />
+                                    <SubmitButton pendingText="Registrando...">Registrar entrada</SubmitButton>
+                                  </form>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td>{request.codigo}</td>
+                            <td>{dateLabel(request.fecha_solicitud)}</td>
+                            <td>
+                              <div>{request.material_codigo} &middot; {request.material_nombre}</div>
+                              <div className="text-xs text-[color:var(--muted)]">{request.material_color}</div>
+                            </td>
+                            <td>{request.cantidad_solicitada} {request.unidad}</td>
+                            <td>{String(request.prioridad).toLowerCase()}</td>
+                            <td>
+                              <StatusPill
+                                label={String(request.estado).toLowerCase()}
+                                tone={
+                                  request.estado === "RECIBIDA"
+                                    ? "success"
+                                    : request.estado === "APROBADA" || request.estado === "COMPRADA"
+                                      ? "info"
+                                      : request.estado === "RECHAZADA" || request.estado === "CANCELADA"
+                                        ? "danger"
+                                        : "warn"
+                                }
+                              />
+                            </td>
+                            <td>
+                              <div className="space-y-1 text-xs text-[color:var(--muted)]">
+                                <div>Solicita: {request.solicitante_nombre ?? request.solicitante_user_id}</div>
+                                {request.revisado_por_nombre ? <div>Revisa: {request.revisado_por_nombre}</div> : null}
+                                {request.registrado_por_nombre ? <div>Registra stock: {request.registrado_por_nombre}</div> : null}
+                                {request.observaciones_revision ? <div>Obs: {request.observaciones_revision}</div> : null}
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </Section>
+
+          <Section active={section === "stock"} title="Stock de materiales" subtitle="Inventario de materiales">
+            <div className="space-y-4">
+              {canRestockMaterials ? (
+                <CreatePanel title="Nueva reposicion" description="Registra una entrada de material con movimiento justificado y trazabilidad completa.">
+                  <form id="restock-material" action={restockMaterialAction} className="form-shell p-6 space-y-5">
+                    <div>
+                      <h3 className="text-xl font-semibold">Registrar reposicion</h3>
+                      <p className="mt-2 text-sm text-[color:var(--muted)]">
+                        Toda entrada de material queda registrada con movimiento de inventario. Este flujo cubre compras y reposiciones justificadas.
+                      </p>
+                    </div>
+                    <Field label="Material">
+                      <select name="materialId" className="input" defaultValue="">
+                        <option value="">Material</option>
+                        {activeMaterials.map((material) => (
+                          <option key={material.id} value={material.id}>
+                            {material.codigo} &middot; {material.nombre} &middot; {material.color}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <div className="form-grid-2">
+                      <Field label="Cantidad en gramos">
+                        <input name="cantidadG" type="number" min="1" placeholder="Cantidad en gramos" className="input" />
+                      </Field>
+                      <Field label="Motivo de la reposicion">
+                        <input name="motivo" placeholder="Motivo de la reposicion" className="input" />
+                      </Field>
+                    </div>
+                    <SubmitButton pendingText="Registrando...">Registrar reposicion</SubmitButton>
+                  </form>
+                </CreatePanel>
+              ) : canCreatePurchaseRequests ? (
+                <CreatePanel title="Solicitar compra" description="El OPERADOR puede pedir reposicion sin tocar stock ni registrar compras.">
+                  <form action={createPurchaseRequestAction} className="form-shell p-6 space-y-5">
+                    <div>
+                      <h3 className="text-xl font-semibold">Solicitar compra</h3>
+                      <p className="mt-2 text-sm text-[color:var(--muted)]">
+                        La solicitud queda pendiente para revision de ADMIN o GESTOR_FINANCIERO. El stock solo cambia al registrar la entrada.
+                      </p>
+                    </div>
+                    <Field label="Material">
+                      <select name="materialId" className="input" defaultValue={requestedPurchaseMaterialId}>
+                        <option value="">Material</option>
+                        {activeMaterials.map((material) => (
+                          <option key={material.id} value={material.id}>
+                            {material.codigo} &middot; {material.nombre} &middot; {material.color}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <div className="form-grid-2">
+                      <Field label="Cantidad solicitada (g)">
+                        <input name="cantidadSolicitada" type="number" min="1" placeholder="Cantidad en gramos" className="input" />
+                      </Field>
+                      <Field label="Prioridad">
+                        <select name="prioridad" className="input" defaultValue="NORMAL">
+                          <option value="BAJA">baja</option>
+                          <option value="NORMAL">normal</option>
+                          <option value="ALTA">alta</option>
+                          <option value="URGENTE">urgente</option>
+                        </select>
+                      </Field>
+                    </div>
+                    <input type="hidden" name="unidad" value="g" />
+                    <Field label="Motivo">
+                      <textarea name="motivo" rows={3} placeholder="Motivo de la reposicion" className="input" />
+                    </Field>
+                    <SubmitButton pendingText="Creando...">Solicitar compra</SubmitButton>
+                  </form>
+                </CreatePanel>
+              ) : null}
               <div className="panel p-6">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -2638,7 +2887,7 @@ export default async function Home({
 
           <Section active={section === "productos"} title="Productos" subtitle="Catalogo">
             <div className="space-y-4">
-              {!focusedProductCode && canAccessModule(currentUser, "productos") ? (
+              {!focusedProductCode && canCreateProducts ? (
               <CreatePanel title="Nuevo producto" description="Abre el alta solo cuando necesites crear una ficha nueva.">
               <form action={createProductAction} className="form-shell p-6 space-y-5">
                 <div>
@@ -2674,40 +2923,48 @@ export default async function Home({
                     <input name="tiempoImpresionHoras" type="number" min="0.1" step="0.1" placeholder="Horas impresion" className="input" />
                   </Field>
                 </div>
-                <div className="form-grid-3">
-                  <Field label="Coste electricidad">
-                    <input name="costeElectricidad" type="number" min="0" step="0.01" placeholder="Coste electricidad" className="input" />
-                  </Field>
-                  <Field label="Coste maquina">
-                    <input name="costeMaquina" type="number" min="0" step="0.01" placeholder="Coste maquina" className="input" />
-                  </Field>
-                  <Field label="Coste mano de obra">
-                    <input name="costeManoObra" type="number" min="0" step="0.01" placeholder="Coste mano de obra" className="input" />
-                  </Field>
-                </div>
-                <div className="form-grid-3">
-                  <Field label="Coste postprocesado">
-                    <input name="costePostprocesado" type="number" min="0" step="0.01" placeholder="Coste postprocesado" className="input" />
-                  </Field>
-                  <Field label="Margen">
-                    <input name="margen" type="number" step="0.01" placeholder="Margen" className="input" />
-                  </Field>
-                  <Field label="PVP">
-                    <input name="pvp" type="number" min="0.01" step="0.01" placeholder="PVP" className="input" />
-                  </Field>
-                </div>
-                <Field label="IVA producto (%)" hint="Se usa en el pedido/factura al crear la linea. Si queda vacio, se aplica 21.">
-                  <input
-                    name="ivaPorcentaje"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    defaultValue="21"
-                    placeholder="21"
-                    className="input"
-                  />
-                </Field>
+                {canEditProductFinancial ? (
+                  <>
+                    <div className="form-grid-3">
+                      <Field label="Coste electricidad">
+                        <input name="costeElectricidad" type="number" min="0" step="0.01" placeholder="Coste electricidad" className="input" />
+                      </Field>
+                      <Field label="Coste maquina">
+                        <input name="costeMaquina" type="number" min="0" step="0.01" placeholder="Coste maquina" className="input" />
+                      </Field>
+                      <Field label="Coste mano de obra">
+                        <input name="costeManoObra" type="number" min="0" step="0.01" placeholder="Coste mano de obra" className="input" />
+                      </Field>
+                    </div>
+                    <div className="form-grid-3">
+                      <Field label="Coste postprocesado">
+                        <input name="costePostprocesado" type="number" min="0" step="0.01" placeholder="Coste postprocesado" className="input" />
+                      </Field>
+                      <Field label="Margen">
+                        <input name="margen" type="number" step="0.01" placeholder="Margen" className="input" />
+                      </Field>
+                      <Field label="PVP">
+                        <input name="pvp" type="number" min="0.01" step="0.01" placeholder="PVP" className="input" />
+                      </Field>
+                    </div>
+                    <Field label="IVA producto (%)" hint="Se usa en el pedido/factura al crear la linea. Si queda vacio, se aplica 21.">
+                      <input
+                        name="ivaPorcentaje"
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        defaultValue="21"
+                        placeholder="21"
+                        className="input"
+                      />
+                    </Field>
+                  </>
+                ) : (
+                  <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
+                    El alta para OPERADOR crea solo la ficha tecnica. Los campos economicos quedan reservados para ADMIN o GESTOR_FINANCIERO.
+                  </div>
+                )}
                 <label className="form-checkbox">
                   <input type="checkbox" name="activo" defaultChecked /> Producto activo
                 </label>
@@ -2776,9 +3033,9 @@ export default async function Home({
                       <div className="odoo-field"><span className="odoo-field-label">Modelo</span><span className="odoo-field-value">{focusedProduct.enlace_modelo ? <a href={focusedProduct.enlace_modelo} className="odoo-link" target="_blank" rel="noreferrer">Abrir enlace</a> : "-"}</span></div>
                       <div className="odoo-field"><span className="odoo-field-label">Material base</span><span className="odoo-field-value">{focusedProduct.material_nombre}</span></div>
                       <div className="odoo-field"><span className="odoo-field-label">Gramos estimados</span><span className="odoo-field-value">{focusedProduct.gramos_estimados} g</span></div>
-                      <div className="odoo-field"><span className="odoo-field-label">Coste total</span><span className="odoo-field-value">{currency(focusedProduct.coste_total_producto)}</span></div>
-                      <div className="odoo-field"><span className="odoo-field-label">PVP</span><span className="odoo-field-value">{currency(focusedProduct.pvp)}</span></div>
-                      <div className="odoo-field"><span className="odoo-field-label">Margen</span><span className="odoo-field-value">{currency(focusedProduct.margen)}</span></div>
+                      {canViewCosts ? <div className="odoo-field"><span className="odoo-field-label">Coste total</span><span className="odoo-field-value">{currency(focusedProduct.coste_total_producto)}</span></div> : null}
+                      {canEditProductFinancial ? <div className="odoo-field"><span className="odoo-field-label">PVP</span><span className="odoo-field-value">{currency(focusedProduct.pvp)}</span></div> : null}
+                      {canViewMargins ? <div className="odoo-field"><span className="odoo-field-label">Margen</span><span className="odoo-field-value">{currency(focusedProduct.margen)}</span></div> : null}
                     </div>
                     <div className="odoo-record-body space-y-4">
                       <div>
@@ -2888,11 +3145,13 @@ export default async function Home({
                     }))}
                     focusedProductCode={focusedProductCode}
                     focusOriginLabel={productFocusOrigin}
-                    orders={orders}
-                    invoices={invoices}
-                    manufacturingOrders={manufacturingOrders}
                     finishedInventory={finishedInventory}
                     showFocusedDetails={false}
+                    canEditTechnical={canEditProductTechnical}
+                    canEditFinancial={canEditProductFinancial}
+                    canArchive={canArchiveProducts}
+                    canViewCosts={canViewCosts}
+                    canViewMargins={canViewMargins}
                   />
                 </div>
               </div>
@@ -3018,6 +3277,7 @@ export default async function Home({
                     materials={filteredMaterials}
                     canManage={canEditMaterials}
                     canViewEconomicDetails={canViewCosts}
+                    canRequestPurchase={canCreatePurchaseRequests}
                   />
                 </div>
               </div>

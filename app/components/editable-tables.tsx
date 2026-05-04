@@ -2018,10 +2018,12 @@ export function MaterialsInlineTable({
   materials,
   canManage = true,
   canViewEconomicDetails = true,
+  canRequestPurchase = false,
 }: {
   materials: Material[];
   canManage?: boolean;
   canViewEconomicDetails?: boolean;
+  canRequestPurchase?: boolean;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeProductTab, setActiveProductTab] = useState<"customers" | "orders" | "invoices" | "printers">("customers");
@@ -2274,6 +2276,14 @@ export function MaterialsInlineTable({
                       </SubmitButton>
                     </form>
                   ) : null}
+                  {!editing && canRequestPurchase ? (
+                    <a
+                      href={`/?section=solicitudes-compra&requestMaterialId=${encodeURIComponent(material.id)}`}
+                      className="button-secondary"
+                    >
+                      Solicitar compra
+                    </a>
+                  ) : null}
                 </div>
               </td>
               <td>{material.codigo}</td>
@@ -2439,24 +2449,27 @@ export function ProductsInlineTable({
   materials,
   focusedProductCode,
   focusOriginLabel,
-  orders,
-  invoices,
-  manufacturingOrders,
   finishedInventory,
   showFocusedDetails = true,
+  canEditTechnical = true,
+  canEditFinancial = true,
+  canArchive = true,
+  canViewCosts = true,
+  canViewMargins = true,
 }: {
   products: Product[];
   materials: MaterialOption[];
   focusedProductCode?: string | null;
   focusOriginLabel?: string | null;
-  orders: OrderCard[];
-  invoices: Invoice[];
-  manufacturingOrders: ManufacturingOrder[];
   finishedInventory: FinishedInventory[];
   showFocusedDetails?: boolean;
+  canEditTechnical?: boolean;
+  canEditFinancial?: boolean;
+  canArchive?: boolean;
+  canViewCosts?: boolean;
+  canViewMargins?: boolean;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [activeProductTab, setActiveProductTab] = useState<"customers" | "orders" | "invoices" | "printers">("customers");
   const focusedProduct = focusedProductCode ? products.find((product) => product.codigo === focusedProductCode) ?? null : null;
   const visibleProducts = focusedProduct
     ? [focusedProduct, ...products.filter((product) => product.codigo !== focusedProductCode)]
@@ -2464,54 +2477,12 @@ export function ProductsInlineTable({
   const focusedInventory = focusedProduct
     ? finishedInventory.find((item) => item.product_id === focusedProduct.id) ?? null
     : null;
-  const productOrders = focusedProduct
-    ? orders.filter((order) => order.lineas.some((line) => line.producto_id === focusedProduct.id))
-    : [];
-  const relatedOrderIds = new Set(productOrders.map((order) => order.id));
-  const relatedInvoices = focusedProduct ? invoices.filter((invoice) => relatedOrderIds.has(invoice.pedido_id)) : [];
-  const customerPurchases = focusedProduct
-    ? Array.from(
-        productOrders
-          .reduce((accumulator, order) => {
-            const quantity = order.lineas
-              .filter((line) => line.producto_id === focusedProduct.id)
-              .reduce((sum, line) => sum + line.cantidad, 0);
-            const current = accumulator.get(order.cliente_id);
-            accumulator.set(order.cliente_id, {
-              clienteId: order.cliente_id,
-              clienteCodigo: order.cliente_codigo,
-              clienteNombre: order.cliente_nombre,
-              cantidad: (current?.cantidad ?? 0) + quantity,
-            });
-            return accumulator;
-          }, new Map<string, { clienteId: string; clienteCodigo: string; clienteNombre: string; cantidad: number }>())
-          .values(),
-      ).sort((a, b) => a.clienteCodigo.localeCompare(b.clienteCodigo, "es"))
-    : [];
-  const printerUsage = focusedProduct
-    ? Array.from(
-        manufacturingOrders
-          .filter(
-            (order) =>
-              order.producto_id === focusedProduct.id &&
-              order.impresora_id &&
-              order.impresora_codigo &&
-              order.impresora_nombre,
-          )
-          .reduce((accumulator, order) => {
-            const current = accumulator.get(order.impresora_id!);
-            accumulator.set(order.impresora_id!, {
-              impresoraId: order.impresora_id!,
-              impresoraCodigo: order.impresora_codigo!,
-              impresoraNombre: order.impresora_nombre!,
-              fabricaciones: (current?.fabricaciones ?? 0) + 1,
-              cantidad: (current?.cantidad ?? 0) + order.cantidad,
-            });
-            return accumulator;
-          }, new Map<string, { impresoraId: string; impresoraCodigo: string; impresoraNombre: string; fabricaciones: number; cantidad: number }>())
-          .values(),
-      ).sort((a, b) => a.impresoraCodigo.localeCompare(b.impresoraCodigo, "es"))
-    : [];
+  const [activeProductTab, setActiveProductTab] = useState<"customers" | "orders" | "invoices" | "printers">("customers");
+  const customerPurchases: Array<{ clienteId: string; clienteCodigo: string; clienteNombre: string; cantidad: number }> = [];
+  const productOrders: Array<OrderCard> = [];
+  const relatedInvoices: Array<Invoice> = [];
+  const printerUsage: Array<{ impresoraId: string; impresoraCodigo: string; impresoraNombre: string; fabricaciones: number; cantidad: number }> = [];
+  const showFinancialColumn = canEditFinancial || canViewCosts || canViewMargins;
 
   return (
     <>
@@ -2570,13 +2541,14 @@ export function ProductsInlineTable({
           <th>ID</th>
           <th>Producto</th>
           <th>Material</th>
-          <th>Costes</th>
-          <th>PVP / IVA</th>
+          <th>Ficha tecnica</th>
+          {showFinancialColumn ? <th>Economico</th> : null}
         </tr>
       </thead>
       <tbody>
         {visibleProducts.map((product) => {
           const editing = editingId === product.id;
+          const canEditRow = canEditTechnical || canEditFinancial;
           const focused = focusedProductCode === product.codigo;
           const formId = `product-form-${product.id}`;
           const availableMaterials = materials.filter(
@@ -2599,13 +2571,15 @@ export function ProductsInlineTable({
                   <input type="hidden" name="id" value={product.id} />
                 </form>
                 <div className="table-action-group">
-                  <ActionButtons
-                    editing={editing}
-                    onEdit={() => setEditingId(product.id)}
-                    onCancel={() => setEditingId(null)}
-                    formId={formId}
-                  />
-                  {!editing ? (
+                  {canEditRow ? (
+                    <ActionButtons
+                      editing={editing}
+                      onEdit={() => setEditingId(product.id)}
+                      onCancel={() => setEditingId(null)}
+                      formId={formId}
+                    />
+                  ) : null}
+                  {!editing && canArchive ? (
                     <form action={toggleProductActiveAction} onSubmit={confirmArchiveOnSubmit(product.activo)}>
                       <input type="hidden" name="id" value={product.id} />
                       <input type="hidden" name="active" value={product.activo ? "false" : "true"} />
@@ -2625,7 +2599,7 @@ export function ProductsInlineTable({
               <td>{product.codigo}</td>
 
               <td>
-                {editing ? (
+                {editing && canEditTechnical ? (
                   <div className="table-edit-stack table-cell-edit--wide">
                     <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
                       <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
@@ -2673,15 +2647,17 @@ export function ProductsInlineTable({
                           />
                         </div>
 
-                        <label className="mt-1 flex items-center gap-2 text-sm font-medium text-[color:var(--muted-strong)]">
-                          <input
-                            form={formId}
-                            type="checkbox"
-                            name="activo"
-                            defaultChecked={product.activo}
-                          />
-                          Producto activo
-                        </label>
+                        {canArchive ? (
+                          <label className="mt-1 flex items-center gap-2 text-sm font-medium text-[color:var(--muted-strong)]">
+                            <input
+                              form={formId}
+                              type="checkbox"
+                              name="activo"
+                              defaultChecked={product.activo}
+                            />
+                            Producto activo
+                          </label>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -2705,7 +2681,7 @@ export function ProductsInlineTable({
               </td>
 
               <td>
-                {editing ? (
+                {editing && canEditTechnical ? (
                   <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
                       Material base
@@ -2732,7 +2708,7 @@ export function ProductsInlineTable({
               </td>
 
               <td>
-                {editing ? (
+                {editing && canEditTechnical ? (
                   <div className="table-edit-stack table-cell-edit">
                     <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
                       <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
@@ -2772,7 +2748,7 @@ export function ProductsInlineTable({
                         </div>
                       </div>
 
-                      <div className="mt-3 table-edit-grid-2">
+                      {canEditFinancial ? <div className="mt-3 table-edit-grid-2">
                         <div>
                           <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
                             Coste electricidad
@@ -2804,9 +2780,9 @@ export function ProductsInlineTable({
                             placeholder="1.20"
                           />
                         </div>
-                      </div>
+                      </div> : null}
 
-                      <div className="mt-3 table-edit-grid-2">
+                      {canEditFinancial ? <div className="mt-3 table-edit-grid-2">
                         <div>
                           <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
                             Coste mano de obra
@@ -2838,9 +2814,9 @@ export function ProductsInlineTable({
                             placeholder="1.00"
                           />
                         </div>
-                      </div>
+                      </div> : null}
 
-                      <div className="mt-3">
+                      {canEditFinancial ? <div className="mt-3">
                         <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
                           Margen
                         </label>
@@ -2853,9 +2829,9 @@ export function ProductsInlineTable({
                           className={tableInputClass}
                           placeholder="2.20"
                         />
-                      </div>
+                      </div> : null}
 
-                      <div className="mt-3">
+                      {canEditFinancial ? <div className="mt-3">
                         <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
                           IVA producto (%)
                         </label>
@@ -2870,12 +2846,12 @@ export function ProductsInlineTable({
                           className={tableInputClass}
                           placeholder="21"
                         />
-                      </div>
+                      </div> : null}
                     </div>
                   </div>
                 ) : (
                   <div>
-                    <div>Receta: {formatCurrency(product.coste_total_producto)}</div>
+                    <div>{product.gramos_estimados} g Â· {product.tiempo_impresion_horas} h</div>
                     <div className="text-xs text-[color:var(--muted)]">
                       Material {formatCurrency(product.coste_material_estimado)} · Máquina {formatCurrency(product.coste_maquina)}
                     </div>
@@ -2883,8 +2859,9 @@ export function ProductsInlineTable({
                 )}
               </td>
 
+              {showFinancialColumn ? (
               <td>
-                {editing ? (
+                {editing && canEditFinancial ? (
                   <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
                       Venta
@@ -2905,11 +2882,17 @@ export function ProductsInlineTable({
                   </div>
                 ) : (
                   <div>
-                    <div>{formatCurrency(product.pvp)}</div>
-                    <div className="text-xs text-[color:var(--muted)]">IVA: {product.iva_porcentaje}%</div>
+                    {canViewCosts ? <div>Receta: {formatCurrency(product.coste_total_producto)}</div> : null}
+                    {canEditFinancial ? <div>{formatCurrency(product.pvp)}</div> : null}
+                    <div className="text-xs text-[color:var(--muted)]">
+                      {canEditFinancial ? `IVA: ${product.iva_porcentaje}%` : ""}
+                      {canEditFinancial && canViewMargins ? " · " : ""}
+                      {canViewMargins ? `Margen: ${formatCurrency(product.margen)}` : ""}
+                    </div>
                   </div>
                 )}
               </td>
+              ) : null}
             </tr>
           );
         })}
