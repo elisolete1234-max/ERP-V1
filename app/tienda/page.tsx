@@ -75,14 +75,12 @@ export default function TiendaPage() {
     <main className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-100 text-slate-900">
       <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/90 backdrop-blur">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-sm font-bold text-white shadow-md">
-              E3D
-            </div>
-            <div>
-              <p className="text-base font-bold tracking-tight">Eli 3D Print Barcelona</p>
-              <p className="text-xs text-slate-500">Impresion 3D personalizada para clientes</p>
-            </div>
+          <div className="w-40 sm:w-52 lg:w-64">
+            <img
+              src="/logo.png"
+              alt="Eli 3D Print"
+              className="h-auto w-full scale-125 object-contain"
+            />
           </div>
           <nav className="hidden gap-6 text-sm font-medium text-slate-600 md:flex">
             <a href="#catalogo-productos" className="transition hover:text-blue-700">
