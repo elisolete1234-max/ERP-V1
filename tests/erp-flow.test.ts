@@ -2,6 +2,7 @@ import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createOrderAction, updateProductAction } from "../app/actions";
 import { buildCsvFilename, formatCsvDateTime, formatCsvMoney, serializeCsv } from "../lib/csv";
+import { formatMaterialDisplay } from "../lib/display-format";
 import { row, rows, run } from "../lib/db";
 import {
   deriveInvoiceStatus,
@@ -1018,6 +1019,20 @@ test("el estado visual de factura diferencia pagada, parcial y pendiente", () =>
   assert.equal(getInvoiceStatusTone(partialStatus), "warn");
   assert.equal(pendingStatus, "PENDIENTE");
   assert.equal(getInvoiceStatusTone(pendingStatus), "danger");
+});
+
+test("el resumen visual de material muestra codigo, marca y variante completa", () => {
+  const display = formatMaterialDisplay({
+    codigo: "MAT-001",
+    marca: "Panchroma",
+    tipo: "PLA",
+    color: "Negro",
+    efecto: "Mate",
+  });
+
+  assert.equal(display.code, "MAT-001");
+  assert.equal(display.title, "Panchroma");
+  assert.equal(display.variant, "PLA · Negro · Mate");
 });
 
 test("calcula coste de filamento correctamente con precio por kilo", () => {

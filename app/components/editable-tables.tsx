@@ -32,6 +32,7 @@ import {
   ORDER_STATUS_LABELS,
 } from "@/lib/erp-status";
 import type { StatusTone } from "@/lib/erp-status";
+import { formatMaterialDisplay } from "@/lib/display-format";
 import { SubmitButton } from "./form-ui";
 
 type Customer = {
@@ -299,6 +300,36 @@ function formatCurrency(value: number) {
     style: "currency",
     currency: "EUR",
   }).format(value);
+}
+
+function renderMaterialSummary(input: {
+  codigo?: string | null;
+  marca?: string | null;
+  tipo?: string | null;
+  color?: string | null;
+  efecto?: string | null;
+  nombre?: string | null;
+  nombreComercial?: string | null;
+  tipoColor?: string | null;
+  colorBase?: string | null;
+}) {
+  const material = formatMaterialDisplay(input);
+
+  return (
+    <div className="primary-data-cell">
+      {material.code ? <span className="code-cell">{material.code}</span> : null}
+      <span>{material.title || "Material sin detalle"}</span>
+      {material.variant ? <span className="secondary-line">{material.variant}</span> : null}
+    </div>
+  );
+}
+
+function renderStatusBadge(label: string, tone: StatusTone) {
+  return (
+    <span className={`status-badge ${badgeClasses(tone)}`}>
+      {label}
+    </span>
+  );
 }
 
 function formatDate(value: string) {
@@ -2286,7 +2317,7 @@ export function MaterialsInlineTable({
                   ) : null}
                 </div>
               </td>
-              <td>{material.codigo}</td>
+              <td><span className="code-cell">{material.codigo}</span></td>
               <td>
                 {editing && canManage ? (
                   <div className="table-edit-stack table-cell-edit--wide table-edit-card">
@@ -2517,7 +2548,7 @@ export function ProductsInlineTable({
               <div className="odoo-field"><span className="odoo-field-label">PVP</span><span className="odoo-field-value">{formatCurrency(focusedProduct.pvp)}</span></div>
               <div className="odoo-field"><span className="odoo-field-label">Margen</span><span className="odoo-field-value">{formatCurrency(focusedProduct.margen)}</span></div>
                   <div className="odoo-field"><span className="odoo-field-label">Estado / stock</span><span className="odoo-field-value">{focusedInventory ? `${archiveStatusLabel(focusedProduct.activo)} · ${focusedInventory.cantidad_disponible} uds disponibles` : archiveStatusLabel(focusedProduct.activo)}</span></div>
-              <div className="odoo-field"><span className="odoo-field-label">Material base</span><span className="odoo-field-value">{focusedProduct.material_nombre}</span></div>
+              <div className="odoo-field"><span className="odoo-field-label">Material base</span><div className="odoo-field-value">{renderMaterialSummary(materials.find((material) => material.id === focusedProduct.material_id) ?? { nombre: focusedProduct.material_nombre })}</div></div>
             </div>
             <div className="odoo-tabs">
               <button type="button" onClick={() => setActiveProductTab("customers")} className={`odoo-tab ${activeProductTab === "customers" ? "is-active" : ""}`}>Clientes que lo han comprado<span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{customerPurchases.length}</span></button>
@@ -2551,6 +2582,7 @@ export function ProductsInlineTable({
           const canEditRow = canEditTechnical || canEditFinancial;
           const focused = focusedProductCode === product.codigo;
           const formId = `product-form-${product.id}`;
+          const relatedMaterial = materials.find((material) => material.id === product.material_id);
           const availableMaterials = materials.filter(
             (material) => material.activo || material.id === product.material_id,
           );
@@ -2596,7 +2628,7 @@ export function ProductsInlineTable({
                 </div>
               </td>
 
-              <td>{product.codigo}</td>
+              <td><span className="code-cell">{product.codigo}</span></td>
 
               <td>
                 {editing && canEditTechnical ? (
@@ -2702,9 +2734,7 @@ export function ProductsInlineTable({
                       ))}
                     </select>
                   </div>
-                ) : (
-                  product.material_nombre
-                )}
+                ) : renderMaterialSummary(relatedMaterial ?? { nombre: product.material_nombre })}
               </td>
 
               <td>
@@ -2916,7 +2946,7 @@ export function ManufacturingInlineTable({
   return (
     <table className="table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Origen</th><th>Pedido</th><th>Producto</th><th>Material</th><th>Estado</th><th>Impresora</th>{canViewCosts ? <th>Coste</th> : null}<th>Consumo</th></tr>
+        <tr><th>Acciones</th><th>ID</th><th>Origen</th><th>Pedido</th><th>Produccion</th><th>Material</th><th>Estado</th><th>Impresora y consumo</th>{canViewCosts ? <th>Resumen economico</th> : null}<th>Tiempo real</th></tr>
       </thead>
       <tbody>
         {manufacturingOrders.map((order) => {
@@ -2963,22 +2993,41 @@ export function ManufacturingInlineTable({
                   ) : null}
                 </div>
               </td>
-              <td>{order.codigo}</td>
+              <td><span className="code-cell">{order.codigo}</span></td>
               <td>
-                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.origen_fabricacion === "PARA_STOCK" ? "accent" : "info")}`}>
-                  {order.origen_fabricacion_label}
-                </span>
+                {renderStatusBadge(order.origen_fabricacion_label, order.origen_fabricacion === "PARA_STOCK" ? "accent" : "info")}
               </td>
-              <td>{order.pedido_codigo ?? "-"}</td>
+              <td><span className="secondary-line">{order.pedido_codigo ?? "-"}</span></td>
               <td>
                 {editing && canManage ? (
                   <div className="table-edit-stack table-cell-edit">
-                    <div className="text-sm font-medium">{order.producto_nombre}</div>
+                    <div className="primary-data-cell">
+                      <span className="font-semibold text-slate-900">{order.producto_nombre}</span>
+                      <span className="secondary-line">
+                        {order.pedido_codigo ? `Pedido ${order.pedido_codigo}` : "Reposicion para stock"}
+                      </span>
+                      {renderMaterialSummary({
+                        codigo: order.material_codigo,
+                        nombre: order.material_nombre,
+                        color: order.material_color,
+                      })}
+                    </div>
                     <input form={formId} name="cantidad" type="number" min="1" defaultValue={order.cantidad} className={tableInputClass} />
                     <textarea form={formId} name="incidencia" defaultValue={order.incidencia ?? ""} rows={2} className={tableTextareaClass} />
                   </div>
                 ) : (
-                  order.producto_nombre
+                  <div className="primary-data-cell">
+                    <span className="font-semibold text-slate-900">{order.producto_nombre}</span>
+                    <span className="secondary-line">
+                      {order.pedido_codigo ? `Pedido ${order.pedido_codigo}` : "Reposicion para stock"}
+                    </span>
+                    {renderMaterialSummary({
+                      codigo: order.material_codigo,
+                      nombre: order.material_nombre,
+                      color: order.material_color,
+                    })}
+                    <span className="secondary-line">Cantidad: {order.cantidad} uds</span>
+                  </div>
                 )}
               </td>
               <td>
@@ -2994,26 +3043,29 @@ export function ManufacturingInlineTable({
                     <option value="BLOQUEADA_POR_STOCK">bloqueada_por_stock</option>
                   </select>
                 ) : (
-                  <div className="space-y-2">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_badge_tone)}`}>
-                      {MANUFACTURING_STATUS_LABELS[order.estado_derivado as keyof typeof MANUFACTURING_STATUS_LABELS] ?? order.estado_derivado.toLowerCase()}
-                    </span>
+                  <div className="primary-data-cell">
+                    {renderStatusBadge(
+                      MANUFACTURING_STATUS_LABELS[order.estado_derivado as keyof typeof MANUFACTURING_STATUS_LABELS] ?? order.estado_derivado.toLowerCase(),
+                      order.estado_badge_tone,
+                    )}
+                    {order.incidencia ? <span className="secondary-line text-rose-700">{order.incidencia}</span> : null}
                     {stockAlert ? (
-                      <div className="space-y-1">
-                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("danger")}`}>
-                          {stockAlert.title}
-                        </span>
-                        <div className="text-xs font-medium text-rose-700">{stockAlert.detail}</div>
-                      </div>
+                      <>
+                        {renderStatusBadge(stockAlert.title, "danger")}
+                        <span className="secondary-line text-rose-700">{stockAlert.detail}</span>
+                      </>
                     ) : null}
                   </div>
                 )}
               </td>
               <td>
                 {canViewCosts && order.impresora_nombre ? (
-                  <div className="space-y-1.5">
-                    <div>{order.impresora_codigo} - {order.impresora_nombre}</div>
-                    <div className="text-xs text-[color:var(--muted)]">Coste: {formatCurrency(printerUsageCost)}</div>
+                  <div className="primary-data-cell">
+                    <span>{order.impresora_codigo} - {order.impresora_nombre}</span>
+                    <span className="secondary-line">
+                      {order.gramos_consumidos ?? order.gramos_estimados_totales} g · {order.tiempo_real_horas ?? "-"} h
+                    </span>
+                    <span className="secondary-line">Coste impresora: {formatCurrency(printerUsageCost)}</span>
                     <ProductionCostBreakdown
                       total={order.coste_estimado_total}
                       unit={order.coste_estimado_unitario}
@@ -3049,26 +3101,24 @@ export function ManufacturingInlineTable({
                     showLabor={false}
                   />
                 ) : order.impresora_nombre ? (
-                  <div>{order.impresora_codigo} - {order.impresora_nombre}</div>
+                  <div className="primary-data-cell">
+                    <span>{order.impresora_codigo} - {order.impresora_nombre}</span>
+                    <span className="secondary-line">
+                      {order.gramos_consumidos ?? order.gramos_estimados_totales} g · {order.tiempo_real_horas ?? "-"} h
+                    </span>
+                  </div>
                 ) : (
                   "-"
                 )}
               </td>
               {canViewCosts ? (
               <td>
-                <ProductionCostBreakdown
-                  total={order.coste_estimado_total}
-                  unit={order.coste_estimado_unitario}
-                  material={order.coste_material}
-                  electricity={order.coste_electricidad}
-                  machine={order.coste_maquina}
-                  postProcessing={order.coste_postprocesado}
-                  labor={order.coste_mano_obra}
-                  warnings={order.coste_warnings}
-                  compact
-                  showElectricity={false}
-                  showMachine={false}
-                />
+                <div className="money-summary">
+                  <div><span>Total</span><strong>{formatCurrency(order.coste_estimado_total)}</strong></div>
+                  <div><span>Unitario</span><strong>{formatCurrency(order.coste_estimado_unitario)}</strong></div>
+                  <div><span>Material</span><strong>{formatCurrency(order.coste_material)}</strong></div>
+                  <div><span>Margen est.</span><strong>{order.margen_estimado_porcentaje.toFixed(1)}%</strong></div>
+                </div>
               </td>
               ) : null}
               <td>

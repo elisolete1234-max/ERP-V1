@@ -654,6 +654,50 @@ input[type="checkbox"] {
   max-width: 100%;
 }
 
+.actions-cell {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.code-cell {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.2rem 0.48rem;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.primary-data-cell {
+  display: grid;
+  gap: 0.32rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.secondary-line {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.status-badge {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.record-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .button-primary {
   width: 100%;
   color: white;
@@ -771,7 +815,8 @@ summary:focus-visible {
   background: transparent;
   box-shadow: inset -1px 0 0 rgba(15, 23, 42, 0.02);
   line-height: 1.45;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .table,
@@ -969,7 +1014,8 @@ summary::-webkit-details-marker {
 
 .erp-sidebar-link > span:first-child {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .erp-sidebar-link:hover {
@@ -1331,7 +1377,8 @@ summary::-webkit-details-marker {
   text-align: left;
   vertical-align: top;
   line-height: 1.45;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .odoo-list-table th {

@@ -1,6 +1,7 @@
+import fs from "node:fs";
 import path from "node:path";
 import PDFDocument from "pdfkit";
-import { BRAND_NAME } from "../../../../../../lib/brand";
+import { BRAND_LOGO_PATH, BRAND_NAME, BRAND_TAGLINE } from "../../../../../../lib/brand";
 import { assertInvoiceAccess } from "../../../../../../lib/auth";
 import { getInvoicePdfData } from "../../../../../../lib/erp-service";
 
@@ -47,6 +48,16 @@ function collectPdfBuffer(doc: PDFKit.PDFDocument) {
   });
 }
 
+function getInvoiceStatusColors(status: string) {
+  if (status === "PAGADA") {
+    return { fill: "#ECFDF5", border: "#A7F3D0", text: "#047857" };
+  }
+  if (status === "PARCIAL") {
+    return { fill: "#FFF7ED", border: "#FCD34D", text: "#B45309" };
+  }
+  return { fill: "#FEF2F2", border: "#FCA5A5", text: "#B91C1C" };
+}
+
 export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> },
@@ -57,6 +68,7 @@ export async function GET(
     const invoice = await getInvoicePdfData(params.id);
     const fontPath = path.join(process.cwd(), "public", "fonts", "Geist-Regular.ttf");
 
+    const logoPath = path.join(process.cwd(), "public", BRAND_LOGO_PATH.replace(/^\/+/, "").replaceAll("/", path.sep));
     const doc = new PDFDocument({
       size: "A4",
       margin: 42,
@@ -88,14 +100,19 @@ export async function GET(
       }
     }
 
-    const paymentState = truncate(`Estado: ${invoice.resumen.estadoPago}`, 24);
+    const paymentState = truncate(invoice.resumen.estadoPago, 16);
+    const paymentColors = getInvoiceStatusColors(invoice.resumen.estadoPago);
 
-  doc.font(fontPath).fontSize(22).fillColor(ink).text(BRAND_NAME, 42, 40, {
-      width: 220,
+    if (fs.existsSync(logoPath)) {
+      doc.image(logoPath, 42, 38, { fit: [78, 42], valign: "center" });
+    }
+
+    doc.font(fontPath).fontSize(22).fillColor(ink).text(BRAND_NAME, 128, 40, {
+      width: 200,
       lineBreak: false,
     });
-    doc.font(fontPath).fontSize(10.5).fillColor(accent).text("Produccion 3D profesional", 42, 66, {
-      width: 240,
+    doc.font(fontPath).fontSize(10.5).fillColor(accent).text(BRAND_TAGLINE, 128, 66, {
+      width: 220,
       lineBreak: false,
     });
 
@@ -109,9 +126,10 @@ export async function GET(
       align: "right",
       lineBreak: false,
     });
-    doc.font(fontPath).fontSize(10).fillColor(accent).text(paymentState, 360, 84, {
-      width: 195,
-      align: "right",
+    doc.roundedRect(416, 82, 139, 22, 11).fillAndStroke(paymentColors.fill, paymentColors.border);
+    doc.font(fontPath).fontSize(10).fillColor(paymentColors.text).text(paymentState, 426, 89, {
+      width: 118,
+      align: "center",
       lineBreak: false,
     });
 
@@ -304,8 +322,10 @@ export async function GET(
       rowY += 20;
     });
 
-    doc.font(fontPath).fontSize(9.5).fillColor(accent).text(`Estado: ${invoice.resumen.estadoPago}`, summaryX + 14, y + summaryHeight - 20, {
-      width: 180,
+    doc.roundedRect(summaryX + 14, y + summaryHeight - 28, 120, 20, 10).fillAndStroke(paymentColors.fill, paymentColors.border);
+    doc.font(fontPath).fontSize(9.2).fillColor(paymentColors.text).text(`Estado: ${paymentState}`, summaryX + 22, y + summaryHeight - 22, {
+      width: 104,
+      align: "center",
       lineBreak: false,
     });
 

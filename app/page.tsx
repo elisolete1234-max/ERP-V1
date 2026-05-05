@@ -1072,12 +1072,9 @@ export default async function Home({
     { href: "/?section=pedidos&orderStatus=ALL", label: "Pedidos abiertos", value: activeOrdersCount },
     { href: "/?section=facturas&invoiceStatus=ALL", label: "Facturas pendientes", value: pendingInvoices },
   ];
-  const headerActions =
+  const headerActions: Array<{ href: string; label: string; variant: "primary" | "secondary" }> =
     section === "dashboard"
-      ? [
-          { href: "/?section=pedidos#create-order", label: "Nuevo pedido", variant: "primary" as const },
-          { href: "/?section=facturas", label: "Ver facturas", variant: "secondary" as const },
-        ]
+      ? []
       : section === "facturas"
         ? [{ href: "/?section=facturas&invoiceStatus=PENDIENTE", label: "Pendientes", variant: "secondary" as const }]
         : [];
@@ -2508,9 +2505,14 @@ export default async function Home({
                     <tbody>
                       {stockMovements.map((movement) => (
                         <tr key={movement.id}>
-                          <td>{movement.codigo}</td>
+                          <td><span className="code-cell">{movement.codigo}</span></td>
                           <td>{dateLabel(movement.fecha)}</td>
-                          <td>{movement.material_nombre}</td>
+                          <td>
+                            <div className="primary-data-cell">
+                              <span className="font-semibold text-slate-900">{movement.material_codigo} · {movement.material_nombre}</span>
+                              <span className="secondary-line">{movement.material_color}</span>
+                            </div>
+                          </td>
                           <td>{movement.tipo.toLowerCase()}</td>
                           <td>{movement.cantidad_g} g</td>
                           <td>{movement.motivo}</td>

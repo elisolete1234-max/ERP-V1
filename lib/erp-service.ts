@@ -1490,9 +1490,11 @@ export async function getAppSnapshot() {
     motivo: string;
     referencia: string;
     fecha: string;
+    material_codigo: string;
     material_nombre: string;
+    material_color: string;
   }>(
-    `SELECT sm.*, m.nombre AS material_nombre
+    `SELECT sm.*, m.codigo AS material_codigo, m.nombre AS material_nombre, m.color AS material_color
      FROM stock_movements sm
      JOIN materials m ON m.id = sm.material_id`,
   );
