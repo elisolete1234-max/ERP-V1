@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Inter } from "next/font/google";
+import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import "./globals.css";
 
 const appSans = Inter({
@@ -16,8 +17,8 @@ const appMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Eli Print 3D",
-  description: "Producción 3D profesional: pedidos, stock y facturación",
+  title: BRAND_NAME,
+  description: `${BRAND_TAGLINE}: pedidos, stock y facturacion`,
 };
 
 export default function RootLayout({

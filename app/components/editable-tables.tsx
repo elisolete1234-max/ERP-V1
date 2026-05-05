@@ -530,7 +530,7 @@ function deriveInvoicePresentation(input: {
     return {
       badgeTone: paymentTone(status),
       badgeLabel: label,
-      summaryTone: "info" as const,
+      summaryTone: "warn" as const,
       summaryLabel: "Parcial",
       detailLines: [
         `Cobrado: ${formatCurrency(input.totalPaid)}`,
@@ -551,9 +551,9 @@ function deriveInvoicePresentation(input: {
 
   return {
     badgeTone: paymentTone(status),
-    badgeLabel: label,
-    summaryTone: "warn" as const,
-    summaryLabel: "Pendiente",
+    badgeLabel: "Sin cobrar",
+    summaryTone: "danger" as const,
+    summaryLabel: "Sin cobrar",
     detailLines: [`Pendiente: ${formatCurrency(input.pendingAmount)}`],
   };
 }
@@ -3089,7 +3089,7 @@ export function ManufacturingInlineTable({
   );
 }
 
-export function InvoicesInlineTable({
+function LegacyInvoicesInlineTable({
   invoices,
   focusedInvoiceCode,
   canManagePayments = true,
@@ -3523,6 +3523,457 @@ export function InvoicesInlineTable({
         })}
       </tbody>
     </table>
+  );
+}
+
+void LegacyInvoicesInlineTable;
+
+export function InvoicesInlineTable({
+  invoices,
+  focusedInvoiceCode,
+  canManagePayments = true,
+  canEditInvoices = true,
+  canDownloadPdf = true,
+  showPaymentHistory = true,
+}: {
+  invoices: Invoice[];
+  focusedInvoiceCode?: string | null;
+  canManagePayments?: boolean;
+  canEditInvoices?: boolean;
+  canDownloadPdf?: boolean;
+  showPaymentHistory?: boolean;
+}) {
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [paymentId, setPaymentId] = useState<string | null>(null);
+  const focusedInvoice = focusedInvoiceCode ? invoices.find((invoice) => invoice.codigo === focusedInvoiceCode) ?? null : null;
+  const visibleInvoices = focusedInvoice ? [focusedInvoice, ...invoices.filter((invoice) => invoice.codigo !== focusedInvoiceCode)] : invoices;
+
+  const renderInvoiceDetailPanel = ({
+    invoice,
+    focused,
+    canEditDiscount,
+    canOpenPaymentDetail,
+    canQuickCollect,
+    canRegisterPayment,
+    paymentPresentation,
+    pendingAmount,
+    registeringPayment,
+    taxableBase,
+    total,
+    totalPaid,
+  }: {
+    invoice: Invoice;
+    focused: boolean;
+    canEditDiscount: boolean;
+    canOpenPaymentDetail: boolean;
+    canQuickCollect: boolean;
+    canRegisterPayment: boolean;
+    paymentPresentation: ReturnType<typeof deriveInvoicePresentation>;
+    pendingAmount: number;
+    registeringPayment: boolean;
+    taxableBase: number;
+    total: number;
+    totalPaid: number;
+  }) => (
+    <div className={`invoice-detail-panel ${focused ? "invoice-detail-panel--focused" : ""}`.trim()}>
+      <div className="grid gap-4 px-2 py-4 xl:grid-cols-[1.25fr_0.95fr]">
+        <div className="odoo-record">
+          <div className="odoo-record-header">
+            <div>
+              <p className="eyebrow">Factura</p>
+              <h4 className="mt-2 text-[1.45rem] font-semibold tracking-[-0.03em] text-slate-950">{invoice.codigo}</h4>
+              <p className="mt-2 text-sm text-[color:var(--muted)]">
+                Pedido{" "}
+                <a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="odoo-link">
+                  {invoice.pedido_codigo}
+                </a>
+                {" · "}
+                Cliente{" "}
+                <a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`} className="odoo-link">
+                  {invoice.cliente_codigo}
+                </a>
+              </p>
+            </div>
+            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentPresentation.badgeTone)}`}>
+              {paymentPresentation.badgeLabel}
+            </span>
+          </div>
+          <div className="odoo-record-body">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="eyebrow">Trazabilidad de cobro</p>
+                <h4 className="mt-2 text-base font-semibold text-slate-900">Historial de pagos</h4>
+              </div>
+              <div className="table-action-group">
+                <a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="erp-button-secondary">
+                  Ver pedido
+                </a>
+                <a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`} className="erp-button-secondary">
+                  Ver cliente
+                </a>
+              </div>
+            </div>
+            <div className="mt-4 odoo-summary-grid">
+              <div className="odoo-muted-box"><p className="odoo-field-label">Subtotal IVA incluido</p><p className="mt-2 font-semibold">{formatCurrency(invoice.subtotal)}</p></div>
+              <div className="odoo-muted-box"><p className="odoo-field-label">Descuento IVA incluido</p><p className="mt-2 font-semibold">{formatCurrency(invoice.descuento)}</p></div>
+              <div className="odoo-muted-box"><p className="odoo-field-label">Base imponible</p><p className="mt-2 font-semibold">{formatCurrency(taxableBase)}</p></div>
+              <div className="odoo-muted-box"><p className="odoo-field-label">IVA incluido</p><p className="mt-2 font-semibold">{formatCurrency(invoice.iva)}</p></div>
+              <div className="odoo-muted-box"><p className="odoo-field-label">Cobrado</p><p className="mt-2 font-semibold">{formatCurrency(totalPaid)}</p></div>
+              <div className="odoo-muted-box"><p className="odoo-field-label">Pendiente</p><p className="mt-2 font-semibold">{formatCurrency(pendingAmount)}</p></div>
+            </div>
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="odoo-field-label">Pagos registrados</p>
+              {!showPaymentHistory ? (
+                <p className="mt-2 text-sm text-[color:var(--muted)]">Historial de pagos no disponible para tu rol.</p>
+              ) : invoice.pagos.length === 0 ? (
+                <p className="mt-2 text-sm text-[color:var(--muted)]">Esta factura aun no tiene pagos registrados.</p>
+              ) : (
+                <div className="table-wrap mt-3">
+                  <table className="odoo-list-table">
+                    <thead>
+                      <tr>
+                        <th>Pago</th>
+                        <th>Fecha</th>
+                        <th>Pedido</th>
+                        <th>Cliente</th>
+                        <th>Metodo</th>
+                        <th>Importe</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invoice.pagos.map((payment) => (
+                        <tr key={payment.id}>
+                          <td>{payment.displayCode}</td>
+                          <td>{formatDate(payment.fecha_pago)}</td>
+                          <td><a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="odoo-link">{invoice.pedido_codigo}</a></td>
+                          <td><a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=pago`} className="odoo-link">{invoice.cliente_codigo}</a></td>
+                          <td>{payment.metodo_pago.toLowerCase()}</td>
+                          <td>{formatCurrency(payment.importe)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="odoo-record">
+          <div className="odoo-record-header">
+            <div>
+              <p className="eyebrow">Resumen economico</p>
+              <h4 className="mt-2 text-base font-semibold text-slate-900">Cobro y ajustes</h4>
+            </div>
+            <div className="text-right">
+              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Total final</p>
+              <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(total)}</p>
+            </div>
+          </div>
+          <div className="odoo-record-body">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="eyebrow">Ajustes y cobro</p>
+                <h4 className="mt-2 text-base font-semibold text-slate-900">Factura {invoice.codigo}</h4>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {canDownloadPdf ? (
+                  <a href={`/api/exports/invoices/${invoice.id}/pdf`} className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-900 transition hover:-translate-y-0.5 hover:bg-sky-100">
+                    Descargar PDF
+                  </a>
+                ) : null}
+                <div className={`rounded-2xl border px-3 py-2 text-right text-xs font-medium ${badgeClasses(paymentPresentation.summaryTone)}`}>
+                  <div>{paymentPresentation.summaryLabel}</div>
+                  <div className="mt-1">Total: {formatCurrency(total)}</div>
+                  {paymentPresentation.detailLines.map((line) => (
+                    <div key={`${invoice.id}-summary-${line}`} className="mt-1">{line}</div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 odoo-muted-box">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="eyebrow">Descuento final</p>
+                  <h5 className="mt-2 text-sm font-semibold text-slate-900">Editar descuento de factura</h5>
+                </div>
+                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(canEditDiscount ? "info" : "neutral")}`}>
+                  {canEditDiscount ? "editable" : "bloqueada"}
+                </span>
+              </div>
+              {canEditDiscount && canEditInvoices ? (
+                <form action={updateInvoiceAction} className="mt-4 space-y-3">
+                  <input type="hidden" name="id" value={invoice.id} />
+                  <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
+                    Puedes ajustar el descuento mientras la factura no este totalmente pagada. El total nunca puede quedar por debajo de lo ya cobrado.
+                  </div>
+                  <div className="table-edit-card">
+                    <InlineField label="Descuento (EUR)" hint="Importe final a descontar, IVA incluido">
+                      <input name="descuento" type="number" min="0" step="0.01" defaultValue={invoice.descuento.toFixed(2)} className={tableInputClass} required />
+                    </InlineField>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3"><p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Base actual</p><p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(taxableBase)}</p></div>
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3"><p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Total actual</p><p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(total)}</p></div>
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3"><p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Cobrado</p><p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(totalPaid)}</p></div>
+                  </div>
+                  <SubmitButton variant="chip-dark" pendingText="Actualizando...">Guardar descuento</SubmitButton>
+                </form>
+              ) : (
+                <div className="mt-4 rounded-2xl border border-black/8 bg-white/92 px-4 py-3 text-sm text-[color:var(--muted)]">
+                  La factura ya esta totalmente pagada. El descuento queda bloqueado para no alterar el cobro historico.
+                </div>
+              )}
+            </div>
+            {registeringPayment && canRegisterPayment && canManagePayments ? (
+              <form action={registerInvoicePaymentAction} className="mt-4 space-y-3">
+                <input type="hidden" name="facturaId" value={invoice.id} />
+                <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
+                  Introduce un importe entre 0,01 EUR y {formatCurrency(pendingAmount)}. Este formulario queda para cobros parciales o para usar un metodo distinto al cobro rapido.
+                  <div className="mt-1 text-xs text-sky-700">Metodos admitidos: {["EFECTIVO", "TRANSFERENCIA", "TARJETA", "BIZUM", "PAYPAL", "OTRO"].map(paymentMethodLabel).join(", ")}.</div>
+                </div>
+                <div className="table-edit-card">
+                  <div className="table-edit-grid-2">
+                    <InlineField label="Importe">
+                      <input name="importe" type="number" min="0.01" step="0.01" max={pendingAmount.toFixed(2)} defaultValue={pendingAmount.toFixed(2)} placeholder="Importe" className={tableInputClass} required />
+                    </InlineField>
+                    <InlineField label="Metodo de pago">
+                      <select name="metodoPago" defaultValue="TRANSFERENCIA" className={tableInputClass}>
+                        <option value="EFECTIVO">efectivo</option>
+                        <option value="TRANSFERENCIA">transferencia</option>
+                        <option value="TARJETA">tarjeta</option>
+                        <option value="BIZUM">bizum</option>
+                        <option value="PAYPAL">paypal</option>
+                        <option value="OTRO">otro</option>
+                      </select>
+                    </InlineField>
+                  </div>
+                </div>
+                <div className="table-edit-card">
+                  <InlineField label="Fecha de pago">
+                    <input name="fechaPago" type="date" defaultValue={new Date().toISOString().slice(0, 10)} className={tableInputClass} required />
+                  </InlineField>
+                </div>
+                <div className="table-edit-card">
+                  <InlineField label="Notas del pago">
+                    <textarea name="notas" rows={2} placeholder="Notas del pago" className={tableTextareaClass} />
+                  </InlineField>
+                </div>
+                <div className="table-action-group">
+                  <SubmitButton variant="chip-dark" pendingText="Guardando...">Registrar cobro detallado</SubmitButton>
+                  <button type="button" onClick={() => setPaymentId(null)} className="button-secondary">Cancelar</button>
+                </div>
+              </form>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3 text-sm text-[color:var(--muted)]">
+                  {canRegisterPayment ? "Usa Cobrar para liquidar todo el pendiente al instante, o abre el detalle si necesitas un cobro parcial." : "La factura ya esta cerrada y no admite mas cobros."}
+                </div>
+                <div className="compact-actions">
+                  {canQuickCollect ? (
+                    <form action={collectInvoicePaymentAction}>
+                      <input type="hidden" name="facturaId" value={invoice.id} />
+                      <input type="hidden" name="metodoPago" value="TRANSFERENCIA" />
+                      <SubmitButton variant="secondary" pendingText="Cobrando...">Cobrar</SubmitButton>
+                    </form>
+                  ) : null}
+                  {canOpenPaymentDetail ? (
+                    <button type="button" onClick={() => setPaymentId(invoice.id)} className="button-secondary">Abrir cobro detallado</button>
+                  ) : null}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="responsive-record-list invoice-responsive-list">
+      <div className="responsive-table responsive-table--desktop">
+        <table className="table invoice-table">
+          <thead>
+            <tr>
+              <th>Acciones</th>
+              <th>Factura</th>
+              <th>Cliente</th>
+              <th>Resumen</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleInvoices.map((invoice) => {
+              const focused = focusedInvoiceCode === invoice.codigo;
+              const expanded = detailId === invoice.id || focused;
+              const registeringPayment = paymentId === invoice.id;
+              const { total, totalPaid, pendingAmount, paymentStatus, canRegisterPayment } = deriveInvoicePaymentView(invoice);
+              const paymentPresentation = deriveInvoicePresentation({ paymentStatus, total, totalPaid, pendingAmount });
+              const taxableBase = deriveTaxableBase(total, invoice.iva);
+              const canEditDiscount = paymentStatus !== "PAGADA";
+              const canQuickCollect = canManagePayments && invoice.acciones_permitidas.includes("collect_invoice_payment") && canRegisterPayment;
+              const canOpenPaymentDetail = canManagePayments && invoice.acciones_permitidas.includes("open_payment_detail") && canRegisterPayment;
+              const highlight = paymentStatus === "VENCIDA" ? "danger" : paymentStatus === "PENDIENTE" ? "warn" : paymentStatus === "PARCIAL" ? "attention" : null;
+
+              return [
+                <tr key={`invoice-${invoice.id}`} className={`${focused ? "bg-sky-50/80 ring-2 ring-inset ring-sky-300" : rowHighlight(highlight)}`.trim()}>
+                  <td>
+                    <div className="compact-actions">
+                      <button
+                        type="button"
+                        title={expanded ? "Ocultar detalle" : "Ver detalle"}
+                        aria-label={expanded ? "Ocultar detalle" : "Ver detalle"}
+                        className="icon-action-button icon-action-button--soft"
+                        onClick={() => {
+                          const nextOpen = detailId === invoice.id ? null : invoice.id;
+                          setDetailId(nextOpen);
+                          if (nextOpen === null) {
+                            setPaymentId((current) => (current === invoice.id ? null : current));
+                          }
+                        }}
+                      >
+                        <EyeIcon />
+                      </button>
+                      {canQuickCollect ? (
+                        <form action={collectInvoicePaymentAction}>
+                          <input type="hidden" name="facturaId" value={invoice.id} />
+                          <input type="hidden" name="metodoPago" value="TRANSFERENCIA" />
+                          <SubmitButton variant="secondary" pendingText="Cobrando...">Cobrar</SubmitButton>
+                        </form>
+                      ) : canManagePayments ? (
+                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("success")}`}>Cerrada</span>
+                      ) : null}
+                      {canDownloadPdf ? (
+                        <a href={`/api/exports/invoices/${invoice.id}/pdf`} title="Descargar PDF" aria-label="Descargar PDF" className="icon-action-button icon-action-button--soft">
+                          <DownloadIcon />
+                        </a>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="invoice-cell-stack">
+                      <span className="font-semibold text-slate-950">{invoice.codigo}</span>
+                      <span className="text-sm text-[color:var(--muted)]">{formatDate(invoice.fecha)}</span>
+                      <span className="text-sm text-[color:var(--muted)]">
+                        Pedido{" "}
+                        <a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900">
+                          {invoice.pedido_codigo}
+                        </a>
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="invoice-cell-stack">
+                      <span>{invoice.cliente_nombre}</span>
+                      <a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`} className="text-xs font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900">
+                        Ver cliente {invoice.cliente_codigo}
+                      </a>
+                      <span className="text-xs text-[color:var(--muted)]">Ref. cliente {invoice.cliente_codigo}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="money-summary">
+                      <div><span>Total</span><strong>{formatCurrency(total)}</strong></div>
+                      <div><span>Pagado</span><strong>{formatCurrency(totalPaid)}</strong></div>
+                      <div><span>Pendiente</span><strong>{formatCurrency(pendingAmount)}</strong></div>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="invoice-cell-stack">
+                      <span className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentPresentation.badgeTone)}`}>{paymentPresentation.badgeLabel}</span>
+                      <div className={`rounded-2xl border px-3 py-2 text-xs font-medium ${badgeClasses(paymentPresentation.summaryTone)}`}>
+                        <div>{paymentPresentation.summaryLabel}</div>
+                        {paymentPresentation.detailLines.map((line) => (
+                          <div key={`${invoice.id}-${line}`} className="mt-1">{line}</div>
+                        ))}
+                      </div>
+                    </div>
+                  </td>
+                </tr>,
+                expanded ? (
+                  <tr key={`invoice-detail-${invoice.id}`} className={focused ? "bg-sky-50/40" : rowHighlight(highlight)}>
+                    <td colSpan={5} className="bg-[color:var(--surface-strong)]">
+                      {renderInvoiceDetailPanel({ invoice, focused, canEditDiscount, canOpenPaymentDetail, canQuickCollect, canRegisterPayment, paymentPresentation, pendingAmount, registeringPayment, taxableBase, total, totalPaid })}
+                    </td>
+                  </tr>
+                ) : null,
+              ];
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="invoice-card-list">
+        {visibleInvoices.map((invoice) => {
+          const focused = focusedInvoiceCode === invoice.codigo;
+          const expanded = detailId === invoice.id || focused;
+          const registeringPayment = paymentId === invoice.id;
+          const { total, totalPaid, pendingAmount, paymentStatus, canRegisterPayment } = deriveInvoicePaymentView(invoice);
+          const paymentPresentation = deriveInvoicePresentation({ paymentStatus, total, totalPaid, pendingAmount });
+          const taxableBase = deriveTaxableBase(total, invoice.iva);
+          const canEditDiscount = paymentStatus !== "PAGADA";
+          const canQuickCollect = canManagePayments && invoice.acciones_permitidas.includes("collect_invoice_payment") && canRegisterPayment;
+          const canOpenPaymentDetail = canManagePayments && invoice.acciones_permitidas.includes("open_payment_detail") && canRegisterPayment;
+
+          return (
+            <article key={`invoice-card-${invoice.id}`} className={`mobile-card invoice-card ${focused ? "mobile-card--focused" : ""}`.trim()}>
+              <div className="mobile-card-header">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-950">{invoice.codigo}</p>
+                  <p className="mt-1 text-sm text-[color:var(--muted)]">{formatDate(invoice.fecha)}</p>
+                </div>
+                <span className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentPresentation.badgeTone)}`}>{paymentPresentation.badgeLabel}</span>
+              </div>
+              <div className="mobile-card-meta">
+                <div><span className="mobile-card-meta-label">Cliente</span><span>{invoice.cliente_nombre}</span></div>
+                <div><span className="mobile-card-meta-label">Pedido</span><a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="odoo-link">{invoice.pedido_codigo}</a></div>
+                <div><span className="mobile-card-meta-label">Cliente ref.</span><a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`} className="odoo-link">{invoice.cliente_codigo}</a></div>
+                <div><span className="mobile-card-meta-label">Estado cobro</span><span>{paymentPresentation.summaryLabel}</span></div>
+              </div>
+              <div className="money-summary mt-4">
+                <div><span>Total</span><strong>{formatCurrency(total)}</strong></div>
+                <div><span>Pagado</span><strong>{formatCurrency(totalPaid)}</strong></div>
+                <div><span>Pendiente</span><strong>{formatCurrency(pendingAmount)}</strong></div>
+              </div>
+              <div className={`mt-4 rounded-2xl border px-3 py-2 text-xs font-medium ${badgeClasses(paymentPresentation.summaryTone)}`}>
+                <div>{paymentPresentation.summaryLabel}</div>
+                {paymentPresentation.detailLines.map((line) => (
+                  <div key={`${invoice.id}-card-${line}`} className="mt-1">{line}</div>
+                ))}
+              </div>
+              <div className="compact-actions mt-4">
+                <button
+                  type="button"
+                  title={expanded ? "Ocultar detalle" : "Ver detalle"}
+                  aria-label={expanded ? "Ocultar detalle" : "Ver detalle"}
+                  className="button-secondary compact-action-button"
+                  onClick={() => {
+                    const nextOpen = detailId === invoice.id ? null : invoice.id;
+                    setDetailId(nextOpen);
+                    if (nextOpen === null) {
+                      setPaymentId((current) => (current === invoice.id ? null : current));
+                    }
+                  }}
+                >
+                  {expanded ? "Ocultar" : "Ver"}
+                </button>
+                {canQuickCollect ? (
+                  <form action={collectInvoicePaymentAction} className="compact-action-button">
+                    <input type="hidden" name="facturaId" value={invoice.id} />
+                    <input type="hidden" name="metodoPago" value="TRANSFERENCIA" />
+                    <SubmitButton variant="secondary" pendingText="Cobrando...">Cobrar</SubmitButton>
+                  </form>
+                ) : null}
+                {canDownloadPdf ? (
+                  <a href={`/api/exports/invoices/${invoice.id}/pdf`} className="button-secondary compact-action-button">Descargar</a>
+                ) : null}
+              </div>
+              {expanded ? renderInvoiceDetailPanel({ invoice, focused, canEditDiscount, canOpenPaymentDetail, canQuickCollect, canRegisterPayment, paymentPresentation, pendingAmount, registeringPayment, taxableBase, total, totalPaid }) : null}
+            </article>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

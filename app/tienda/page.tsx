@@ -1,4 +1,5 @@
-import Image from "next/image";
+import { BrandLogo } from "../components/brand-logo";
+import { BRAND_NAME } from "@/lib/brand";
 
 const mockProducts = [
   {
@@ -98,15 +99,13 @@ export default function TiendaPage() {
     <main className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-100 text-slate-900">
       <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/90 backdrop-blur">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-          <div className="w-40 sm:w-52 lg:w-64">
-            <Image
-              src="/logo.png"
-              alt="Eli 3D Print"
-              width={512}
-              height={192}
-              className="h-auto w-full scale-125 object-contain"
-            />
-          </div>
+            <div className="w-40 sm:w-52 lg:w-64">
+              <BrandLogo
+                size="lg"
+                priority
+                imageClassName="h-auto w-full object-contain sm:scale-110"
+              />
+            </div>
           <nav className="hidden gap-6 text-sm font-medium text-slate-600 md:flex">
             <a href="#catalogo-productos" className="transition hover:text-blue-700">
               Productos
@@ -227,7 +226,7 @@ export default function TiendaPage() {
 
       <section className="mx-auto w-full max-w-7xl px-4 pb-10 sm:px-6 lg:px-8">
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-2xl font-bold tracking-tight">Por que confiar en Eli 3D Print</h2>
+          <h2 className="text-2xl font-bold tracking-tight">Por que confiar en {BRAND_NAME}</h2>
           <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {trustItems.map((item) => (
               <div key={item} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
@@ -243,8 +242,8 @@ export default function TiendaPage() {
           <h2 className="text-2xl font-bold tracking-tight">Catalogo de materiales</h2>
           <p className="mt-1 text-sm text-slate-600">Comparativa rapida para elegir acabado y resistencia.</p>
         </div>
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
+        <div className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm md:block">
+          <div>
             <table className="min-w-full text-left text-sm">
               <thead className="bg-slate-50 text-slate-600">
                 <tr>
@@ -266,6 +265,28 @@ export default function TiendaPage() {
               </tbody>
             </table>
           </div>
+        </div>
+        <div className="grid gap-3 md:hidden">
+          {mockMaterials.map((material) => (
+            <article key={material.name} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <h3 className="text-base font-semibold text-slate-900">{material.name}</h3>
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                  {material.eco}
+                </span>
+              </div>
+              <div className="mt-3 grid gap-2 text-sm text-slate-700">
+                <div>
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Acabado</span>
+                  <p className="mt-1">{material.finish}</p>
+                </div>
+                <div>
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Uso recomendado</span>
+                  <p className="mt-1">{material.use}</p>
+                </div>
+              </div>
+            </article>
+          ))}
         </div>
       </section>
 

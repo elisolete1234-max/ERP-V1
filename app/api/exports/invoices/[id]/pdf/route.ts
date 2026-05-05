@@ -1,5 +1,6 @@
 import path from "node:path";
 import PDFDocument from "pdfkit";
+import { BRAND_NAME } from "../../../../../../lib/brand";
 import { assertInvoiceAccess } from "../../../../../../lib/auth";
 import { getInvoicePdfData } from "../../../../../../lib/erp-service";
 
@@ -62,7 +63,7 @@ export async function GET(
       font: fontPath,
       info: {
         Title: `Factura ${invoice.codigo}`,
-        Author: "Eli Print 3D",
+    Author: BRAND_NAME,
         Subject: `Factura ${invoice.codigo}`,
       },
       compress: false,
@@ -89,7 +90,7 @@ export async function GET(
 
     const paymentState = truncate(`Estado: ${invoice.resumen.estadoPago}`, 24);
 
-    doc.font(fontPath).fontSize(22).fillColor(ink).text("Eli Print 3D", 42, 40, {
+  doc.font(fontPath).fontSize(22).fillColor(ink).text(BRAND_NAME, 42, 40, {
       width: 220,
       lineBreak: false,
     });
@@ -310,7 +311,7 @@ export async function GET(
 
     doc.moveTo(margin, footerY - 10).lineTo(margin + contentWidth, footerY - 10).strokeColor(line).stroke();
     doc.font(fontPath).fontSize(8.5).fillColor(muted).text(
-      "Documento generado desde Eli Print 3D con importes reales de la factura.",
+    `Documento generado desde ${BRAND_NAME} con importes reales de la factura.`,
       margin,
       footerY,
       {

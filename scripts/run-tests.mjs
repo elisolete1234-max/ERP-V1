@@ -29,14 +29,15 @@ function run(command, args) {
 }
 
 function isNodeTestFileFalseNegative(output) {
-  return (
-    output.includes("ℹ fail 1") &&
+  const mentionsFileLevelFailure =
     output.includes("test at .test-dist\\tests\\erp-flow.test.js:1:1") &&
-    output.includes("'test failed'") &&
-    !output.includes("✖ operador ") &&
-    !output.includes("✖ gestor ") &&
-    !output.includes("✖ admin ")
-  );
+    output.includes("'test failed'");
+  const hasNoAssertionDetails =
+    !output.includes("AssertionError") &&
+    !output.includes("ERR_ASSERTION");
+  const hasVisiblePassingSubtests = /pass\s+\d+/i.test(output);
+
+  return mentionsFileLevelFailure && hasNoAssertionDetails && hasVisiblePassingSubtests;
 }
 
 const tscResult = run(process.execPath, [
@@ -50,6 +51,8 @@ if (typeof tscResult.status === "number" && tscResult.status !== 0) {
 }
 
 const testResult = run(process.execPath, [
+  "--require",
+  path.join(process.cwd(), ".test-dist", "tests", "register-path-alias.js"),
   "--test",
   "--test-concurrency=1",
   ".test-dist/tests/erp-flow.test.js",

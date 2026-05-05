@@ -37,9 +37,11 @@ import {
   ProductsInlineTable,
   StockManufacturingForm,
 } from "./components/editable-tables";
+import { BrandLogo } from "./components/brand-logo";
 import { SubmitButton } from "./components/form-ui";
 import { FilterSummary } from "./components/filter-summary";
 import { getAppSnapshot, matchesOrderFocusCode, prioritizeOrdersByFocus } from "@/lib/erp-service";
+import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import {
   canPerformAction,
   filterSnapshotByRole,
@@ -57,6 +59,8 @@ import {
   ORDER_STATUS_FILTERS,
   ORDER_STATUS_LABELS,
 } from "@/lib/erp-status";
+
+export const dynamic = "force-dynamic";
 
 const sectionKeys = [
   "dashboard",
@@ -141,11 +145,11 @@ function buildDateRangeEnd(value?: string) {
 }
 
 function invoiceStatusFilterLabel(status: string) {
-  if (status === "PENDIENTE") return "pendientes";
-  if (status === "PARCIAL") return "parciales";
-  if (status === "PAGADA") return "pagadas";
-  if (status === "VENCIDA") return "vencidas";
-  return "todas";
+  if (status === "PENDIENTE") return "Sin cobrar";
+  if (status === "PARCIAL") return "Parcial";
+  if (status === "PAGADA") return "Pagada";
+  if (status === "VENCIDA") return "Vencida";
+  return "Todas";
 }
 
 const clientVisibleRoleOptions = listRoles();
@@ -418,6 +422,16 @@ export default async function Home({
     return (
       <main className="erp-shell">
         <section className="mx-auto max-w-xl panel p-8">
+          <BrandLogo
+            size="md"
+            priority
+            showName
+            showSubtitle
+            className="flex flex-col items-start gap-3"
+            imageClassName="h-auto w-44 object-contain"
+            nameClassName="text-xl font-semibold tracking-[-0.04em] text-slate-950"
+            subtitleClassName="text-sm text-[color:var(--muted)]"
+          />
           <p className="eyebrow">Bootstrap seguro</p>
           <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">Crear administrador inicial</h1>
           <p className="mt-3 text-sm text-[color:var(--muted)]">
@@ -445,6 +459,16 @@ export default async function Home({
     return (
       <main className="erp-shell">
         <section className="mx-auto max-w-xl panel p-8">
+          <BrandLogo
+            size="md"
+            priority
+            showName
+            showSubtitle
+            className="flex flex-col items-start gap-3"
+            imageClassName="h-auto w-44 object-contain"
+            nameClassName="text-xl font-semibold tracking-[-0.04em] text-slate-950"
+            subtitleClassName="text-sm text-[color:var(--muted)]"
+          />
           <p className="eyebrow">Acceso</p>
           <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">Iniciar sesion</h1>
           <p className="mt-3 text-sm text-[color:var(--muted)]">
@@ -1063,9 +1087,14 @@ export default async function Home({
       <div className="erp-layout">
         <aside className="erp-sidebar">
           <div className="erp-sidebar-brand">
+            <BrandLogo
+              size="md"
+              priority
+              imageClassName="h-auto w-40 object-contain"
+            />
             <p className="eyebrow">ERP</p>
-            <h1 className="erp-sidebar-title">Eli Print 3D</h1>
-            <p className="erp-sidebar-subtitle">Produccion 3D profesional</p>
+            <h1 className="erp-sidebar-title">{BRAND_NAME}</h1>
+            <p className="erp-sidebar-subtitle">{BRAND_TAGLINE}</p>
           </div>
           <div className="erp-sidebar-meta">
             <div className="erp-sidebar-stat">
@@ -1109,7 +1138,11 @@ export default async function Home({
         <div className="erp-main">
           <div className="erp-header">
             <div className="erp-header-brand">
-              <span className="erp-header-name">Eli Print 3D</span>
+              <BrandLogo
+                size="sm"
+                imageClassName="h-auto w-24 object-contain"
+              />
+              <span className="erp-header-name">{BRAND_NAME}</span>
               <span className="erp-header-divider">|</span>
               <span className="erp-header-role">{getRoleLabel(currentUser.role)}</span>
             </div>
@@ -1564,7 +1597,7 @@ export default async function Home({
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="eyebrow">Alertas inteligentes</p>
-                    <h3 className="mt-3 text-xl font-semibold">Prioridades operativas de Eli Print 3D</h3>
+                    <h3 className="mt-3 text-xl font-semibold">Prioridades operativas de {BRAND_NAME}</h3>
                   </div>
                   <StatusPill
                     label={smartAlerts.length === 0 ? "Todo en orden" : `${smartAlerts.length} alertas activas`}
@@ -1676,7 +1709,7 @@ export default async function Home({
                 {[1, 2, 3].map((index) => (
                   <div key={index} className="form-field--stack">
                     <p className="form-label">Linea {index}</p>
-                    <div className="grid gap-3 sm:grid-cols-[1.45fr_0.55fr_0.8fr]">
+                    <div className="grid gap-3 lg:grid-cols-[1.45fr_0.55fr_0.8fr]">
                     <Field label="Producto">
                       <select name={`producto_${index}`} className="input" defaultValue="">
                       <option value="">Producto linea {index}</option>
@@ -2036,7 +2069,7 @@ export default async function Home({
                               {[1, 2, 3].map((index) => {
                                 const line = order.lineas[index - 1];
                                 return (
-                                  <div key={`${order.id}-line-${index}`} className="grid gap-3 sm:grid-cols-[1.45fr_0.55fr_0.8fr]">
+                                  <div key={`${order.id}-line-${index}`} className="grid gap-3 lg:grid-cols-[1.45fr_0.55fr_0.8fr]">
                                     <select name={`producto_${index}`} className="input" defaultValue={line?.producto_id ?? ""}>
                                       <option value="">Producto linea {index}</option>
                                       {products.map((product) => (
@@ -2676,10 +2709,10 @@ export default async function Home({
                       }
                     />
                   ))}
-                  <StatusPill label={`${pendingInvoices} pendientes`} tone={pendingInvoices > 0 ? "warn" : "success"} />
+                  <StatusPill label={`${pendingInvoices} pendientes`} tone={pendingInvoices > 0 ? "danger" : "success"} />
                 </div>
               </div>
-              <form className="mb-4 grid gap-3 rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] p-4 md:grid-cols-[1fr_1fr_auto_auto]" method="get">
+              <form className="mb-4 grid gap-3 rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] p-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]" method="get">
                 <input type="hidden" name="section" value="facturas" />
                 <input type="hidden" name="invoiceStatus" value={invoiceFilter} />
                 <label className="space-y-1 text-sm text-[color:var(--muted-strong)]">
@@ -2715,7 +2748,7 @@ export default async function Home({
                   Mostrando la trazabilidad de la factura <span className="font-semibold">{focusedInvoiceCode}</span>.
                 </div>
               ) : null}
-              <div className="table-wrap table-scroll">
+              <div className="table-wrap">
                 <InvoicesInlineTable
                   invoices={dateFilteredInvoices}
                   focusedInvoiceCode={focusedInvoiceCode}
@@ -3699,7 +3732,7 @@ export default async function Home({
                           <Fragment key={user.id}>
                             <tr>
                               <td className="align-top">
-                                <details className="min-w-[19rem] rounded-2xl border border-black/8 bg-white/80 p-3">
+                                <details className="w-full min-w-0 rounded-2xl border border-black/8 bg-white/80 p-3">
                                   <summary className="cursor-pointer text-sm font-semibold text-slate-800">
                                     Editar
                                   </summary>

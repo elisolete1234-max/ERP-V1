@@ -1,11 +1,13 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { createOrderAction, updateProductAction } from "../app/actions";
 import { buildCsvFilename, formatCsvDateTime, formatCsvMoney, serializeCsv } from "../lib/csv";
 import { row, rows, run } from "../lib/db";
 import {
   deriveInvoiceStatus,
   deriveManufacturingStatus,
   deriveOrderStatus,
+  getInvoiceStatusTone,
   getNextAllowedActions,
   normalizeOrderStatus,
 } from "../lib/erp-status";
@@ -79,6 +81,19 @@ type CsvFixtureRow = {
   cliente: string;
   notas: string;
 };
+
+function getRedirectDigest(error: unknown) {
+  if (!error || typeof error !== "object" || !("digest" in error)) {
+    throw error;
+  }
+
+  const digest = (error as { digest?: unknown }).digest;
+  if (typeof digest !== "string" || !digest.startsWith("NEXT_REDIRECT")) {
+    throw error;
+  }
+
+  return digest;
+}
 
 async function ids() {
   return {
@@ -601,6 +616,138 @@ test("admin puede editar todos los campos de producto", async () => {
   assert.equal(updated.iva_porcentaje, 4);
 });
 
+test("ADMIN autenticado puede crear pedido desde la action sin reenviar email ni contrasena", async () => {
+  const { admin } = await setupPermissionsFixture();
+  const customerId = (await row<{ id: string }>(`SELECT id FROM customers ORDER BY codigo ASC LIMIT 1`))!.id;
+  const productId = (await row<{ id: string }>(`SELECT id FROM products ORDER BY codigo ASC LIMIT 1`))!.id;
+  const formData = new FormData();
+  formData.set("clienteId", customerId);
+  formData.set("producto_1", productId);
+  formData.set("cantidad_1", "2");
+  formData.set("precio_1", "30");
+  formData.set("descuento", "0");
+  formData.set("observaciones", "Pedido desde sesion");
+
+  await withMockUser(admin, async () => {
+    await assert.rejects(
+      () => createOrderAction(formData),
+      (error) => {
+        const digest = getRedirectDigest(error);
+        assert.match(digest, /section=pedidos/);
+        assert.doesNotMatch(decodeURIComponent(digest), /Debes iniciar sesion|No tienes permisos/);
+        return true;
+      },
+    );
+  });
+
+  const created = await row<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM orders WHERE observaciones = ?`,
+    "Pedido desde sesion",
+  );
+  assert.equal(created?.total, 1);
+});
+
+test("las server actions internas rechazan crear pedido sin sesion valida", async () => {
+  const { customerId, productId } = await setupSingleProductFixture();
+  const formData = new FormData();
+  formData.set("clienteId", customerId);
+  formData.set("producto_1", productId);
+  formData.set("cantidad_1", "1");
+  formData.set("precio_1", "30");
+  formData.set("descuento", "0");
+
+  await assert.rejects(
+    () => createOrderAction(formData),
+    (error) => {
+      const digest = getRedirectDigest(error);
+      assert.match(digest, /tone=error/);
+      assert.match(decodeURIComponent(digest), /Debes iniciar sesion para acceder/);
+      return true;
+    },
+  );
+
+  const totalOrders = await row<{ total: number }>(`SELECT COUNT(*) AS total FROM orders`);
+  assert.equal(totalOrders?.total, 0);
+});
+
+test("OPERADOR sigue bloqueado en la action de producto si intenta enviar campos economicos manualmente", async () => {
+  const { operator } = await setupPermissionsFixture();
+  const productId = (await row<{ id: string }>(`SELECT id FROM products ORDER BY codigo ASC LIMIT 1`))!.id;
+  const formData = new FormData();
+  formData.set("id", productId);
+  formData.set("pvp", "48");
+  formData.set("margen", "15");
+  formData.set("ivaPorcentaje", "10");
+
+  await withMockUser(operator, async () => {
+    await assert.rejects(
+      () => updateProductAction(formData),
+      (error) => {
+        const digest = getRedirectDigest(error);
+        assert.match(digest, /tone=error/);
+        assert.match(decodeURIComponent(digest), /No tienes permisos/);
+        return true;
+      },
+    );
+  });
+
+  const stored = (await row<{ pvp: number; margen: number; iva_porcentaje: number }>(
+    `SELECT pvp, margen, iva_porcentaje FROM products WHERE id = ?`,
+    productId,
+  ))!;
+  assert.equal(stored.pvp, 35);
+  assert.equal(stored.margen, 12);
+  assert.equal(stored.iva_porcentaje, 21);
+});
+
+test("GESTOR_FINANCIERO puede editar campos economicos desde la action y no tecnicos", async () => {
+  const { financial } = await setupPermissionsFixture();
+  const productId = (await row<{ id: string }>(`SELECT id FROM products ORDER BY codigo ASC LIMIT 1`))!.id;
+
+  const financialForm = new FormData();
+  financialForm.set("id", productId);
+  financialForm.set("pvp", "44");
+  financialForm.set("margen", "18");
+  financialForm.set("ivaPorcentaje", "10");
+
+  await withMockUser(financial, async () => {
+    await assert.rejects(
+      () => updateProductAction(financialForm),
+      (error) => {
+        const digest = getRedirectDigest(error);
+        assert.match(digest, /section=productos/);
+        assert.doesNotMatch(decodeURIComponent(digest), /No tienes permisos/);
+        return true;
+      },
+    );
+  });
+
+  const financialUpdate = (await row<{ pvp: number; margen: number; iva_porcentaje: number }>(
+    `SELECT pvp, margen, iva_porcentaje FROM products WHERE id = ?`,
+    productId,
+  ))!;
+  assert.equal(financialUpdate.pvp, 44);
+  assert.equal(financialUpdate.margen, 18);
+  assert.equal(financialUpdate.iva_porcentaje, 10);
+
+  const technicalForm = new FormData();
+  technicalForm.set("id", productId);
+  technicalForm.set("gramosEstimados", "999");
+  technicalForm.set("tiempoImpresionHoras", "8");
+
+  await withMockUser(financial, async () => {
+    await assert.rejects(
+      () => updateProductAction(technicalForm),
+      (error) => {
+        const digest = getRedirectDigest(error);
+        assert.match(digest, /tone=error/);
+        assert.match(decodeURIComponent(digest), /No tienes permisos/);
+        return true;
+      },
+    );
+  });
+});
+
 test("ADMIN puede editar nombre, email y rol de un usuario", async () => {
   await createInitialAdmin({
     nombre: "Admin",
@@ -846,6 +993,31 @@ test("los helpers de estado normalizan estados legacy y exponen acciones permiti
     }),
     ["process_order", "restock_material", "view_manufacturing"],
   );
+});
+
+test("el estado visual de factura diferencia pagada, parcial y pendiente", () => {
+  const paidStatus = deriveInvoiceStatus({
+    total: 100,
+    total_pagado: 100,
+    importe_pendiente: 0,
+  });
+  const partialStatus = deriveInvoiceStatus({
+    total: 100,
+    total_pagado: 40,
+    importe_pendiente: 60,
+  });
+  const pendingStatus = deriveInvoiceStatus({
+    total: 100,
+    total_pagado: 0,
+    importe_pendiente: 100,
+  });
+
+  assert.equal(paidStatus, "PAGADA");
+  assert.equal(getInvoiceStatusTone(paidStatus), "success");
+  assert.equal(partialStatus, "PARCIAL");
+  assert.equal(getInvoiceStatusTone(partialStatus), "warn");
+  assert.equal(pendingStatus, "PENDIENTE");
+  assert.equal(getInvoiceStatusTone(pendingStatus), "danger");
 });
 
 test("calcula coste de filamento correctamente con precio por kilo", () => {
@@ -1955,6 +2127,9 @@ test("la factura arranca pendiente y sincroniza pagos parciales y totales con el
   assert.equal(invoice.estado_pago, "PENDIENTE");
   assert.equal(invoice.total_pagado, 0);
   assert.equal(invoice.importe_pendiente, invoice.total);
+  const pendingVisible = (await getAppSnapshot()).invoices.find((item) => item.id === invoice.id)!;
+  assert.equal(pendingVisible.estado_pago_derivado, "PENDIENTE");
+  assert.equal(pendingVisible.estado_pago_badge_tone, "danger");
 
   await createInvoicePaymentRecord({
     facturaId: invoice.id,
@@ -1973,6 +2148,9 @@ test("la factura arranca pendiente y sincroniza pagos parciales y totales con el
   assert.equal(afterPartial.total_pagado, 10);
   assert.equal(afterPartial.importe_pendiente, Number((invoice.total - 10).toFixed(2)));
   assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM orders WHERE id = ?`, orderId))!.estado_pago, "PARCIAL");
+  const partialVisible = (await getAppSnapshot()).invoices.find((item) => item.id === invoice.id)!;
+  assert.equal(partialVisible.estado_pago_derivado, "PARCIAL");
+  assert.equal(partialVisible.estado_pago_badge_tone, "warn");
 
   await createInvoicePaymentRecord({
     facturaId: invoice.id,
@@ -1984,6 +2162,9 @@ test("la factura arranca pendiente y sincroniza pagos parciales y totales con el
   assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM invoices WHERE id = ?`, invoice.id))!.estado_pago, "PAGADA");
   assert.equal((await row<{ estado_pago: string }>(`SELECT estado_pago FROM orders WHERE id = ?`, orderId))!.estado_pago, "PAGADA");
   assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM invoice_payments WHERE factura_id = ?`, invoice.id))!.total, 2);
+  const paidVisible = (await getAppSnapshot()).invoices.find((item) => item.id === invoice.id)!;
+  assert.equal(paidVisible.estado_pago_derivado, "PAGADA");
+  assert.equal(paidVisible.estado_pago_badge_tone, "success");
 });
 
 test("cobrar factura rapido liquida todo el pendiente y es idempotente al repetirlo", async () => {
