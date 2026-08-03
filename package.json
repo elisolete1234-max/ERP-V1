@@ -9,8 +9,11 @@
     "lint": "eslint",
     "test": "node ./scripts/run-tests.mjs",
     "users:list": "node ./scripts/users-maintenance.mjs list",
+    "users:roles": "node ./scripts/users-maintenance.mjs roles",
     "users:reset-password": "node ./scripts/users-maintenance.mjs reset-password",
     "users:promote-admin": "node ./scripts/users-maintenance.mjs promote-admin",
+    "users:recover-admin": "node ./scripts/users-maintenance.mjs recover-admin",
+    "users:set-role": "node ./scripts/users-maintenance.mjs set-role",
     "users:create-admin": "node ./scripts/users-maintenance.mjs create-admin",
     "backup:db": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\backup-db.ps1",
     "backup:register-task": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\register-backup-task.ps1"

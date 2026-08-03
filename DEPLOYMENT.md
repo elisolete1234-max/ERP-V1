@@ -81,7 +81,38 @@ Opcional en local:
 ERP_BACKUP_DESTINATION=C:\Users\mateo\OneDrive\ERP-backups
 ```
 
-## 5. Como usar despues V1 y V2
+## 5. Recuperacion de usuarios y roles
+
+Las contrasenas no se guardan en claro y no se pueden leer. Si alguien pierde acceso, se debe resetear la contrasena o recuperar un administrador.
+
+Para operar contra la base local:
+
+```bash
+npm run users:list -- --local
+npm run users:roles
+npm run users:reset-password -- --local elisolete1234@gmail.com NuevaPassword123
+npm run users:recover-admin -- --local elisolete1234@gmail.com NuevaPassword123 Eli
+```
+
+Para operar contra la base remota de Vercel/Turso, primero carga estas variables en tu terminal:
+
+```bash
+TURSO_DATABASE_URL=libsql://tu-base-tu-organizacion.turso.io
+TURSO_AUTH_TOKEN=tu-token-de-turso
+```
+
+Luego usa:
+
+```bash
+npm run users:list -- --remote
+npm run users:reset-password -- --remote elisolete1234@gmail.com NuevaPassword123
+npm run users:recover-admin -- --remote elisolete1234@gmail.com NuevaPassword123 Eli
+npm run users:set-role -- --remote usuario@email.com ADMIN
+```
+
+`recover-admin` crea el usuario si no existe; si ya existe, lo activa, le pone rol `ADMIN`, cambia la contrasena e invalida sesiones anteriores.
+
+## 6. Como usar despues V1 y V2
 
 ### V1 estable
 
@@ -104,7 +135,7 @@ npm run dev
 - V1: desplegar `main`
 - V2: desplegar `v2-dev`
 
-## 6. Notas importantes
+## 7. Notas importantes
 
 - SQLite local no es adecuado para Vercel porque el sistema de archivos del runtime no es persistente entre ejecuciones.
 - Turso si aporta persistencia online y acceso multiusuario.
