@@ -239,6 +239,8 @@ async function ensureIndexes() {
     CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(creado_en DESC);
     CREATE INDEX IF NOT EXISTS idx_purchase_requests_estado ON purchase_requests(estado);
     CREATE INDEX IF NOT EXISTS idx_purchase_requests_solicitante ON purchase_requests(solicitante_user_id);
+    CREATE INDEX IF NOT EXISTS idx_public_quote_requests_estado ON public_quote_requests(estado);
+    CREATE INDEX IF NOT EXISTS idx_public_quote_requests_creado_en ON public_quote_requests(creado_en DESC);
   `);
 }
 
@@ -311,6 +313,13 @@ async function migrateDatabase() {
   await ensureColumn("products", "coste_maquina", "REAL DEFAULT 0");
   await ensureColumn("products", "coste_mano_obra", "REAL DEFAULT 0");
   await ensureColumn("products", "coste_postprocesado", "REAL DEFAULT 0");
+  await ensureColumn("products", "imagen_url", "TEXT");
+  await ensureColumn("products", "descripcion_publica", "TEXT");
+  await ensureColumn("products", "visible_en_tienda", "INTEGER DEFAULT 0");
+  await ensureColumn("products", "destacado", "INTEGER DEFAULT 0");
+  await ensureColumn("products", "orden_tienda", "INTEGER DEFAULT 0");
+  await ensureColumn("products", "categoria_publica", "TEXT");
+  await ensureColumn("products", "galeria_imagenes", "TEXT");
   await ensureColumn("order_lines", "codigo", "TEXT");
   await ensureColumn("order_lines", "cantidad_desde_stock", "INTEGER DEFAULT 0");
   await ensureColumn("order_lines", "cantidad_a_fabricar", "INTEGER DEFAULT 0");
@@ -401,6 +410,13 @@ async function createSchema() {
       iva_porcentaje REAL NOT NULL DEFAULT 21,
       material_id TEXT NOT NULL,
       activo INTEGER NOT NULL DEFAULT 1,
+      imagen_url TEXT,
+      descripcion_publica TEXT,
+      visible_en_tienda INTEGER NOT NULL DEFAULT 0,
+      destacado INTEGER NOT NULL DEFAULT 0,
+      orden_tienda INTEGER NOT NULL DEFAULT 0,
+      categoria_publica TEXT,
+      galeria_imagenes TEXT,
       FOREIGN KEY(material_id) REFERENCES materials(id) ON DELETE RESTRICT
     );
 
@@ -642,6 +658,19 @@ async function createSchema() {
       summary TEXT NOT NULL,
       creado_en TEXT NOT NULL,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS public_quote_requests (
+      id TEXT PRIMARY KEY,
+      nombre TEXT NOT NULL,
+      email TEXT NOT NULL,
+      telefono TEXT,
+      servicio TEXT,
+      material TEXT,
+      cantidad TEXT,
+      mensaje TEXT NOT NULL,
+      estado TEXT NOT NULL DEFAULT 'NUEVA',
+      creado_en TEXT NOT NULL
     );
   `);
 

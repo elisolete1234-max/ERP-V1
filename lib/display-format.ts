@@ -18,8 +18,9 @@ function compactParts(parts: Array<string | null | undefined>) {
 
 export function formatMaterialDisplay(input: MaterialDisplayInput) {
   const code = input.codigo?.trim() || null;
-  const titleParts = compactParts([input.marca, input.nombreComercial, input.nombre, input.tipo]);
+  const titleParts = compactParts([input.marca, input.nombreComercial, input.nombre]);
   const variantParts = compactParts([
+    input.tipo,
     input.tipoColor && input.tipoColor !== input.color ? input.tipoColor : null,
     input.color,
     input.colorBase && input.colorBase !== input.color ? input.colorBase : null,

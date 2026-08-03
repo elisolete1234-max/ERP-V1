@@ -40,8 +40,9 @@ import {
 import { BrandLogo } from "./components/brand-logo";
 import { SubmitButton } from "./components/form-ui";
 import { FilterSummary } from "./components/filter-summary";
+import { ProductImageFields } from "./components/product-images";
 import { getAppSnapshot, matchesOrderFocusCode, prioritizeOrdersByFocus } from "@/lib/erp-service";
-import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
+import { BRAND_NAME } from "@/lib/brand";
 import {
   canPerformAction,
   filterSnapshotByRole,
@@ -82,9 +83,9 @@ const sectionLabels: Record<(typeof sectionKeys)[number], string> = {
   dashboard: "Resumen",
   pedidos: "Pedidos",
   fabricacion: "Fabricacion",
-  stock: "Stock materiales",
-  "solicitudes-compra": "Solicitudes compra",
-  "productos-terminados": "Productos terminados",
+  stock: "Stock mat.",
+  "solicitudes-compra": "Solicitudes",
+  "productos-terminados": "Stock prod.",
   facturas: "Facturas",
   impresoras: "Impresoras",
   productos: "Productos",
@@ -334,13 +335,12 @@ function Section({
   compact?: boolean;
 }) {
   return (
-    <section className={active ? "space-y-5" : "hidden"}>
-      <div className={`section-header px-6 py-5 ${compact ? "section-header--compact" : ""}`.trim()}>
-        {subtitle ? <p className="eyebrow">{subtitle}</p> : null}
-        <h2 className={`${subtitle ? "mt-3" : ""} text-[clamp(1.55rem,2vw,1.95rem)] font-semibold tracking-[-0.04em] text-slate-900`.trim()}>
-          {title}
-        </h2>
-      </div>
+    <section aria-label={title} className={active ? "space-y-5" : "hidden"}>
+      {subtitle && !compact ? (
+        <div className="section-header section-header--context px-4 py-3">
+          <p className="eyebrow">{subtitle}</p>
+        </div>
+      ) : null}
       {children}
     </section>
   );
@@ -1028,12 +1028,6 @@ export default async function Home({
         ]
       : []),
   ];
-  const todayLabelText = new Intl.DateTimeFormat("es-ES", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  }).format(new Date());
-
   const sectionCounters: Partial<Record<(typeof sectionKeys)[number], number>> = {
     pedidos: openOrders,
     fabricacion: pendingManufacturing,
@@ -1085,28 +1079,12 @@ export default async function Home({
         <aside className="erp-sidebar">
           <div className="erp-sidebar-brand">
             <BrandLogo
-              size="md"
+              size="sm"
               priority
-              imageClassName="h-auto w-40 object-contain"
+              imageClassName="h-auto w-28 object-contain"
             />
-            <p className="eyebrow">ERP</p>
             <h1 className="erp-sidebar-title">{BRAND_NAME}</h1>
-            <p className="erp-sidebar-subtitle">{BRAND_TAGLINE}</p>
-          </div>
-          <div className="erp-sidebar-meta">
-            <div className="erp-sidebar-stat">
-              <p className="erp-sidebar-stat-label">Pedidos abiertos</p>
-              <p className="erp-sidebar-stat-value">{openOrders}</p>
-            </div>
-            <div className="erp-sidebar-stat">
-              <p className="erp-sidebar-stat-label">Impresoras ocupadas</p>
-              <p className="erp-sidebar-stat-value">{busyPrinters}</p>
-            </div>
-            <div className="erp-sidebar-stat">
-              <p className="erp-sidebar-stat-label">Jornada</p>
-              <p className="mt-1 text-sm font-medium text-slate-800">{todayLabelText}</p>
-              <p className="mt-1 text-xs text-[color:var(--muted)]">Operacion sincronizada y trazabilidad activa.</p>
-            </div>
+            <p className="erp-sidebar-subtitle">ERP operativo</p>
           </div>
           <nav className="erp-sidebar-nav">
             {visibleSections.map((key) => (
@@ -1135,17 +1113,12 @@ export default async function Home({
         <div className="erp-main">
           <div className="erp-header">
             <div className="erp-header-brand">
-              <BrandLogo
-                size="sm"
-                imageClassName="h-auto w-24 object-contain"
-              />
-              <span className="erp-header-name">{BRAND_NAME}</span>
-              <span className="erp-header-divider">|</span>
+              <span className="erp-header-name">{sectionLabels[section]}</span>
               <span className="erp-header-role">{getRoleLabel(currentUser.role)}</span>
             </div>
             <div className="erp-toolbar">
               <div className="rounded-full border border-black/8 bg-white/90 px-3 py-1 text-xs font-semibold text-slate-700">
-                {currentUser.nombre} · {currentUser.email}
+                {currentUser.nombre}
               </div>
               {headerActions.map((action) => (
                 <Link
@@ -1885,7 +1858,7 @@ export default async function Home({
                                 {hasAction(focusedOrder.acciones_permitidas, "invoice_order") ? (
                                   <form action={generateInvoiceAction}>
                                     <input type="hidden" name="pedidoId" value={focusedOrder.id} />
-                                    <SubmitButton pendingText="Facturando pedido...">Facturar pedido</SubmitButton>
+                                    <SubmitButton pendingText="Facturando...">Facturar</SubmitButton>
                                   </form>
                                 ) : null}
                                 {hasAction(focusedOrder.acciones_permitidas, "view_manufacturing") ? (
@@ -2088,10 +2061,10 @@ export default async function Home({
                       );
                     }) : (
                       <div className="table-wrap table-scroll">
-                        <table className="table">
+                        <table className="table orders-table">
                           <thead>
                             <tr>
-                              <th>Acciones</th>
+                              <th className="orders-table__actions">Acciones</th>
                               <th>ID</th>
                               <th>Cliente</th>
                               <th>Fecha</th>
@@ -2114,7 +2087,7 @@ export default async function Home({
                                         : ""
                                 }`}
                               >
-                                <td>
+                                <td className="orders-table__actions">
                                   <div className="table-action-group">
                                     {hasAction(order.acciones_permitidas, "process_order") ? (
                                       <form action={processOrderAction}>
@@ -2136,7 +2109,7 @@ export default async function Home({
                                       <form action={generateInvoiceAction}>
                                         <input type="hidden" name="pedidoId" value={order.id} />
                                         <SubmitButton variant="chip-dark" pendingText="Facturando...">
-                                          Facturar pedido
+                                          Facturar
                                         </SubmitButton>
                                       </form>
                                     ) : null}
@@ -2287,7 +2260,7 @@ export default async function Home({
                   </div>
                 </div>
                 <div className="table-wrap table-scroll">
-                  <table className="table">
+                  <table className="table users-table">
                     <thead>
                       <tr>
                         <th>Acciones</th>
@@ -2490,7 +2463,7 @@ export default async function Home({
                   </div>
                 ) : null}
                 <div className="table-wrap table-scroll">
-                  <table className="table">
+                  <table className="table users-table">
                     <thead>
                       <tr>
                         <th>ID</th>
@@ -2940,6 +2913,31 @@ export default async function Home({
                 <Field label="Enlace del modelo">
                   <input name="enlaceModelo" placeholder="Enlace del modelo" className="input" />
                 </Field>
+                <ProductImageFields />
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">Tienda publica</p>
+                  <div className="mt-3 grid gap-4">
+                    <Field label="Descripcion publica">
+                      <textarea name="descripcionPublica" placeholder="Texto corto para la tienda" rows={2} className="input" />
+                    </Field>
+                    <div className="form-grid-2">
+                      <Field label="Categoria publica">
+                        <input name="categoriaPublica" placeholder="Figuras decorativas" className="input" />
+                      </Field>
+                      <Field label="Orden en tienda">
+                        <input name="ordenTienda" type="number" min="0" step="1" placeholder="0" className="input" />
+                      </Field>
+                    </div>
+                    <div className="flex flex-wrap gap-4">
+                      <label className="form-checkbox">
+                        <input type="checkbox" name="visibleEnTienda" /> Visible en tienda
+                      </label>
+                      <label className="form-checkbox">
+                        <input type="checkbox" name="destacado" /> Destacado
+                      </label>
+                    </div>
+                  </div>
+                </div>
                 <Field label="Material principal">
                   <select name="materialId" className="input" defaultValue="">
                   <option value="">Material principal</option>
@@ -3614,17 +3612,17 @@ export default async function Home({
                 allItemsText="Mostrando todos los movimientos"
               />
               <div className="table-wrap table-scroll">
-                <table className="table">
+                <table className="table movements-table">
                 <thead>
                   <tr>
                     <th>ID</th>
                     <th>Fecha</th>
-                    <th>Inventario</th>
-                    <th>Item</th>
+                    <th className="movements-table__secondary">Inventario</th>
+                    <th className="movements-table__secondary">Item</th>
                     <th>Tipo</th>
                     <th>Cantidad</th>
                     <th>Motivo</th>
-                    <th>Referencia</th>
+                    <th className="movements-table__secondary">Referencia</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3632,12 +3630,12 @@ export default async function Home({
                     <tr key={movement.id}>
                       <td>{movement.codigo}</td>
                       <td>{dateLabel(movement.fecha)}</td>
-                      <td>{movement.inventario_tipo.toLowerCase()}</td>
-                      <td>{movement.item_codigo || movement.item_id}</td>
+                      <td className="movements-table__secondary">{movement.inventario_tipo.toLowerCase()}</td>
+                      <td className="movements-table__secondary">{movement.item_codigo || movement.item_id}</td>
                       <td>{movement.tipo.toLowerCase()}</td>
                       <td>{movementQuantityLabel(movement)}</td>
                       <td>{movement.motivo}</td>
-                      <td>{movement.referencia}</td>
+                      <td className="movements-table__secondary">{movement.referencia}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -3710,16 +3708,16 @@ export default async function Home({
                   </div>
                 </div>
                 <div className="table-wrap table-scroll">
-                  <table className="table">
+                  <table className="table users-table">
                     <thead>
                       <tr>
                         <th>Acciones</th>
                         <th>Nombre</th>
-                        <th>Email</th>
+                        <th className="users-table__secondary">Email</th>
                         <th>Rol</th>
-                        <th>Cliente</th>
+                        <th className="users-table__secondary">Cliente</th>
                         <th>Estado</th>
-                        <th>Alta</th>
+                        <th className="users-table__secondary">Alta</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3784,18 +3782,18 @@ export default async function Home({
                                 </details>
                               </td>
                               <td>{user.nombre}</td>
-                              <td>{user.email}</td>
+                              <td className="users-table__secondary">{user.email}</td>
                               <td>
                                 <StatusPill
                                   label={getRoleLabel(user.role)}
                                   tone={user.role === "ADMIN" ? "strong" : user.role === "OPERADOR" ? "warn" : user.role === "GESTOR_FINANCIERO" ? "info" : "accent"}
                                 />
                               </td>
-                              <td>{user.cliente_nombre ?? "—"}</td>
+                              <td className="users-table__secondary">{user.cliente_nombre ?? "—"}</td>
                               <td>
                                 <StatusPill label={user.activo === 1 ? "Activo" : "Inactivo"} tone={user.activo === 1 ? "success" : "danger"} />
                               </td>
-                              <td>{dateLabel(user.creado_en)}</td>
+                              <td className="users-table__secondary">{dateLabel(user.creado_en)}</td>
                             </tr>
                           </Fragment>
                         ))

@@ -62,6 +62,7 @@ import {
   updateProductRecord,
   cancelPurchaseRequest,
 } from "@/lib/erp-service";
+import { createPublicQuoteRequest } from "@/lib/public-site";
 
 function asString(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
@@ -95,6 +96,10 @@ function maybeString(formData: FormData, key: string) {
 
 function maybeOptionalNumber(formData: FormData, key: string) {
   return formData.has(key) ? asOptionalNumber(formData.get(key)) : undefined;
+}
+
+function maybeCheckbox(formData: FormData, key: string) {
+  return formData.has(key) ? formData.getAll(key).some((value) => String(value) === "on") : undefined;
 }
 
 function asRole(value: FormDataEntryValue | null) {
@@ -472,6 +477,13 @@ export async function createProductAction(formData: FormData) {
         ivaPorcentaje: maybeOptionalNumber(formData, "ivaPorcentaje"),
         materialId: maybeString(formData, "materialId"),
         activo: formData.has("activo") ? formData.get("activo") === "on" : undefined,
+        imagenUrl: maybeString(formData, "imagenUrl"),
+        descripcionPublica: maybeString(formData, "descripcionPublica"),
+        visibleEnTienda: maybeCheckbox(formData, "visibleEnTienda") ?? false,
+        destacado: maybeCheckbox(formData, "destacado") ?? false,
+        ordenTienda: maybeOptionalNumber(formData, "ordenTienda"),
+        categoriaPublica: maybeString(formData, "categoriaPublica"),
+        galeriaImagenes: maybeString(formData, "galeriaImagenes"),
       }),
     "Producto creado correctamente.",
     "/?section=productos",
@@ -498,6 +510,13 @@ export async function updateProductAction(formData: FormData) {
         ivaPorcentaje: maybeOptionalNumber(formData, "ivaPorcentaje"),
         materialId: maybeString(formData, "materialId"),
         activo: formData.has("activo") ? formData.get("activo") === "on" : undefined,
+        imagenUrl: maybeString(formData, "imagenUrl"),
+        descripcionPublica: maybeString(formData, "descripcionPublica"),
+        visibleEnTienda: maybeCheckbox(formData, "visibleEnTienda"),
+        destacado: maybeCheckbox(formData, "destacado"),
+        ordenTienda: maybeOptionalNumber(formData, "ordenTienda"),
+        categoriaPublica: maybeString(formData, "categoriaPublica"),
+        galeriaImagenes: maybeString(formData, "galeriaImagenes"),
       }),
     "Producto actualizado.",
     "/?section=productos",
@@ -1051,4 +1070,23 @@ export async function registerInvoicePaymentAction(formData: FormData) {
       auditEntityId: asString(formData.get("facturaId")),
     },
   );
+}
+
+export async function submitPublicQuoteAction(formData: FormData) {
+  try {
+    await createPublicQuoteRequest({
+      nombre: asString(formData.get("nombre")),
+      email: asString(formData.get("email")),
+      telefono: asString(formData.get("telefono")),
+      servicio: asString(formData.get("servicio")),
+      material: asString(formData.get("material")),
+      cantidad: asString(formData.get("cantidad")),
+      mensaje: asString(formData.get("mensaje")),
+    });
+    redirect("/tienda?contact=ok#presupuesto");
+  } catch (error) {
+    unstable_rethrow(error);
+    const message = error instanceof Error ? error.message : "No se pudo enviar la solicitud.";
+    redirect(`/tienda?contact=error&error=${encodeURIComponent(message)}#presupuesto`);
+  }
 }

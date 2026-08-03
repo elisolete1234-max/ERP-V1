@@ -34,6 +34,7 @@ import {
 import type { StatusTone } from "@/lib/erp-status";
 import { formatMaterialDisplay } from "@/lib/display-format";
 import { SubmitButton } from "./form-ui";
+import { ProductImageFields, ProductImagePreview } from "./product-images";
 
 type Customer = {
   id: string;
@@ -89,6 +90,13 @@ type Product = {
   iva_porcentaje: number;
   material_id: string;
   activo: boolean;
+  imagen_url: string | null;
+  descripcion_publica: string | null;
+  visible_en_tienda: boolean;
+  destacado: boolean;
+  orden_tienda: number;
+  categoria_publica: string | null;
+  galeria_imagenes: string | null;
   material_nombre: string;
   precio_kg: number;
 };
@@ -2310,9 +2318,11 @@ export function MaterialsInlineTable({
                   {!editing && canRequestPurchase ? (
                     <a
                       href={`/?section=solicitudes-compra&requestMaterialId=${encodeURIComponent(material.id)}`}
+                      title="Solicitar compra"
+                      aria-label="Solicitar compra"
                       className="button-secondary"
                     >
-                      Solicitar compra
+                      Solicitar
                     </a>
                   ) : null}
                 </div>
@@ -2401,7 +2411,7 @@ export function MaterialsInlineTable({
                           .join(" · ")}
                       </div>
                     ) : null}
-                    <div className="mt-2">
+                    <div className="mt-2 flex flex-wrap gap-2">
                       <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(material.activo ? "success" : "neutral")}`}>
                         {archiveStatusLabel(material.activo)}
                       </span>
@@ -2565,15 +2575,15 @@ export function ProductsInlineTable({
           </article>
         </div>
       ) : null}
-      <table className="table">
+      <table className="table product-table">
       <thead>
         <tr>
           <th>Acciones</th>
           <th>ID</th>
           <th>Producto</th>
           <th>Material</th>
-          <th>Ficha tecnica</th>
-          {showFinancialColumn ? <th>Economico</th> : null}
+          <th className="product-table__secondary">Ficha tecnica</th>
+          {showFinancialColumn ? <th className="product-table__secondary">Economico</th> : null}
         </tr>
       </thead>
       <tbody>
@@ -2692,14 +2702,95 @@ export function ProductsInlineTable({
                         ) : null}
                       </div>
                     </div>
+
+                    <ProductImageFields
+                      formId={formId}
+                      imagenUrl={product.imagen_url}
+                      galeriaImagenes={product.galeria_imagenes}
+                      productName={product.nombre}
+                    />
+
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                        Tienda publica
+                      </p>
+                      <div className="table-edit-stack">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Categoria publica
+                          </label>
+                          <input
+                            form={formId}
+                            name="categoriaPublica"
+                            defaultValue={product.categoria_publica ?? ""}
+                            className={tableInputClass}
+                            placeholder="Figuras decorativas"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Descripcion publica
+                          </label>
+                          <textarea
+                            form={formId}
+                            name="descripcionPublica"
+                            defaultValue={product.descripcion_publica ?? ""}
+                            rows={2}
+                            className={tableTextareaClass}
+                            placeholder="Texto corto para la tienda"
+                          />
+                        </div>
+                        <div className="table-edit-grid-2">
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                              Orden en tienda
+                            </label>
+                            <input
+                              form={formId}
+                              name="ordenTienda"
+                              type="number"
+                              min="0"
+                              step="1"
+                              defaultValue={product.orden_tienda ?? 0}
+                              className={tableInputClass}
+                              placeholder="0"
+                            />
+                          </div>
+                          <div className="grid gap-2 pt-5">
+                            <input form={formId} type="hidden" name="visibleEnTienda" value="off" />
+                            <label className="flex items-center gap-2 text-sm font-medium text-[color:var(--muted-strong)]">
+                              <input
+                                form={formId}
+                                type="checkbox"
+                                name="visibleEnTienda"
+                                defaultChecked={product.visible_en_tienda}
+                              />
+                              Visible en tienda
+                            </label>
+                            <input form={formId} type="hidden" name="destacado" value="off" />
+                            <label className="flex items-center gap-2 text-sm font-medium text-[color:var(--muted-strong)]">
+                              <input
+                                form={formId}
+                                type="checkbox"
+                                name="destacado"
+                                defaultChecked={product.destacado}
+                              />
+                              Destacado
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : (
-                  <div>
+                  <div className="flex min-w-0 items-start gap-3">
+                    <ProductImagePreview src={product.imagen_url} alt={product.nombre} size="sm" />
+                    <div className="min-w-0">
                     <a href={`/?section=productos&productoId=${encodeURIComponent(product.codigo)}`} className="odoo-link font-medium">{product.nombre}</a>
                     <div className="text-xs text-[color:var(--muted)]">
                       {product.gramos_estimados} g · {product.tiempo_impresion_horas} h
                     </div>
-                    <div className="mt-2">
+                    <div className="mt-2 flex flex-wrap gap-2">
                       <span
                         className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
                           badgeClasses(product.activo ? "success" : "neutral")
@@ -2707,6 +2798,12 @@ export function ProductsInlineTable({
                       >
                           {archiveStatusLabel(product.activo)}
                       </span>
+                      {product.visible_en_tienda ? (
+                        <span className="inline-flex rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-800">
+                          tienda
+                        </span>
+                      ) : null}
+                    </div>
                     </div>
                   </div>
                 )}
@@ -2737,7 +2834,7 @@ export function ProductsInlineTable({
                 ) : renderMaterialSummary(relatedMaterial ?? { nombre: product.material_nombre })}
               </td>
 
-              <td>
+              <td className="product-table__secondary">
                 {editing && canEditTechnical ? (
                   <div className="table-edit-stack table-cell-edit">
                     <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
@@ -2890,7 +2987,7 @@ export function ProductsInlineTable({
               </td>
 
               {showFinancialColumn ? (
-              <td>
+                <td className="product-table__secondary">
                 {editing && canEditFinancial ? (
                   <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
@@ -2944,9 +3041,9 @@ export function ManufacturingInlineTable({
   const [editingId, setEditingId] = useState<string | null>(null);
 
   return (
-    <table className="table">
+    <table className="table manufacturing-table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Origen</th><th>Pedido</th><th>Produccion</th><th>Material</th><th>Estado</th><th>Impresora y consumo</th>{canViewCosts ? <th>Resumen economico</th> : null}<th>Tiempo real</th></tr>
+        <tr><th>Acciones</th><th>ID</th><th className="manufacturing-table__secondary">Origen</th><th className="manufacturing-table__secondary">Pedido</th><th>Produccion</th><th>Material</th><th>Estado</th><th className="manufacturing-table__secondary">Impresora y consumo</th>{canViewCosts ? <th className="manufacturing-table__secondary">Resumen economico</th> : null}<th className="manufacturing-table__secondary">Tiempo real</th></tr>
       </thead>
       <tbody>
         {manufacturingOrders.map((order) => {

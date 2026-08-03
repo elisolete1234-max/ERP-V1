@@ -19,6 +19,13 @@ const appMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: BRAND_NAME,
   description: `${BRAND_TAGLINE}: pedidos, stock y facturacion`,
+  icons: {
+    icon: [
+      { url: "/icon", type: "image/png", sizes: "32x32" },
+      { url: "/icon", type: "image/png", sizes: "192x192" },
+    ],
+    apple: [{ url: "/apple-icon", sizes: "180x180", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({

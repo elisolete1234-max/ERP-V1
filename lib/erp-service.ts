@@ -1159,6 +1159,13 @@ export async function getAppSnapshot() {
     iva_porcentaje: number;
     material_id: string;
     activo: number;
+    imagen_url: string | null;
+    descripcion_publica: string | null;
+    visible_en_tienda: number;
+    destacado: number;
+    orden_tienda: number;
+    categoria_publica: string | null;
+    galeria_imagenes: string | null;
     material_nombre: string;
     precio_kg: number;
   }>(
@@ -1183,6 +1190,8 @@ export async function getAppSnapshot() {
     return {
       ...product,
       activo: parseBoolean(product.activo),
+      visible_en_tienda: parseBoolean(product.visible_en_tienda),
+      destacado: parseBoolean(product.destacado),
       coste_material_estimado: recipeCost.costeFilamento,
       coste_total_producto: recipeCost.costeTotal,
     };
@@ -2210,10 +2219,46 @@ type ProductMutationInput = {
   ivaPorcentaje?: number;
   materialId?: string;
   activo?: boolean;
+  imagenUrl?: string;
+  descripcionPublica?: string;
+  visibleEnTienda?: boolean;
+  destacado?: boolean;
+  ordenTienda?: number;
+  categoriaPublica?: string;
+  galeriaImagenes?: string;
 };
 
 function normalizeOptionalText(value?: string) {
   return value?.trim() || null;
+}
+
+function normalizePublicProductImagePath(value?: string | null) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+  if (!normalized.startsWith("/products/")) {
+    throw new Error("Las imagenes de producto deben usar rutas publicas como /products/figura.jpg.");
+  }
+  return normalized;
+}
+
+function normalizeProductGallery(value?: string | null) {
+  const raw = value?.trim();
+  if (!raw) {
+    return null;
+  }
+
+  let items: string[];
+  try {
+    const parsed = JSON.parse(raw);
+    items = Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    items = raw.split(/[\n,]+/);
+  }
+
+  const normalized = Array.from(new Set(items.map((item) => normalizePublicProductImagePath(item)).filter((item): item is string => Boolean(item))));
+  return normalized.length > 0 ? JSON.stringify(normalized) : null;
 }
 
 export async function createProductRecord(input: ProductMutationInput) {
@@ -2253,6 +2298,9 @@ export async function createProductRecord(input: ProductMutationInput) {
   const margen = roundMoney(input.margen ?? 0);
   const pvp = roundMoney(input.pvp ?? 0);
   const ivaPorcentaje = normalizeVatRate(input.ivaPorcentaje);
+  const ordenTienda = Math.max(0, Math.round(input.ordenTienda ?? 0));
+  const imagenUrl = normalizePublicProductImagePath(input.imagenUrl);
+  const galeriaImagenes = normalizeProductGallery(input.galeriaImagenes);
 
   if (
     tiempoImpresionHoras < 0 ||
@@ -2280,8 +2328,8 @@ export async function createProductRecord(input: ProductMutationInput) {
   await transaction(async () => {
     await run(
       `INSERT INTO products
-        (id, codigo, nombre, descripcion, enlace_modelo, gramos_estimados, tiempo_impresion_horas, coste_electricidad, coste_maquina, coste_mano_obra, coste_postprocesado, margen, pvp, iva_porcentaje, material_id, activo)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, codigo, nombre, descripcion, enlace_modelo, gramos_estimados, tiempo_impresion_horas, coste_electricidad, coste_maquina, coste_mano_obra, coste_postprocesado, margen, pvp, iva_porcentaje, material_id, activo, imagen_url, descripcion_publica, visible_en_tienda, destacado, orden_tienda, categoria_publica, galeria_imagenes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       productId,
       await nextCode("products", "PRO-"),
       nombre,
@@ -2298,6 +2346,13 @@ export async function createProductRecord(input: ProductMutationInput) {
       ivaPorcentaje,
       input.materialId,
       input.activo === false ? 0 : 1,
+      imagenUrl,
+      normalizeOptionalText(input.descripcionPublica),
+      input.visibleEnTienda ? 1 : 0,
+      input.destacado ? 1 : 0,
+      ordenTienda,
+      normalizeOptionalText(input.categoriaPublica),
+      galeriaImagenes,
     );
     await ensureFinishedInventoryRow(productId);
     await run(
@@ -2333,6 +2388,13 @@ export async function updateProductRecord(input: ProductMutationInput & { id: st
     iva_porcentaje: number;
     material_id: string;
     activo: number;
+    imagen_url: string | null;
+    descripcion_publica: string | null;
+    visible_en_tienda: number;
+    destacado: number;
+    orden_tienda: number;
+    categoria_publica: string | null;
+    galeria_imagenes: string | null;
   }>(
     `SELECT *
      FROM products
@@ -2368,6 +2430,18 @@ export async function updateProductRecord(input: ProductMutationInput & { id: st
     input.ivaPorcentaje !== undefined ? normalizeVatRate(input.ivaPorcentaje) : currentProduct.iva_porcentaje;
   const nextMaterialId = input.materialId ?? currentProduct.material_id;
   const nextActivo = input.activo ?? currentActivo;
+  const nextDescripcionPublica =
+    input.descripcionPublica !== undefined ? normalizeOptionalText(input.descripcionPublica) : currentProduct.descripcion_publica;
+  const nextVisibleEnTienda =
+    input.visibleEnTienda !== undefined ? input.visibleEnTienda : parseBoolean(currentProduct.visible_en_tienda);
+  const nextDestacado = input.destacado !== undefined ? input.destacado : parseBoolean(currentProduct.destacado);
+  const nextOrdenTienda =
+    input.ordenTienda !== undefined ? Math.max(0, Math.round(input.ordenTienda)) : Math.max(0, Math.round(currentProduct.orden_tienda ?? 0));
+  const nextCategoriaPublica =
+    input.categoriaPublica !== undefined ? normalizeOptionalText(input.categoriaPublica) : currentProduct.categoria_publica;
+  const nextValidatedImagenUrl = input.imagenUrl !== undefined ? normalizePublicProductImagePath(input.imagenUrl) : currentProduct.imagen_url;
+  const nextGaleriaImagenes =
+    input.galeriaImagenes !== undefined ? normalizeProductGallery(input.galeriaImagenes) : currentProduct.galeria_imagenes;
 
   if (!nextNombre || !nextMaterialId) {
     throw new Error("Producto incompleto.");
@@ -2389,7 +2463,14 @@ export async function updateProductRecord(input: ProductMutationInput & { id: st
     (input.enlaceModelo !== undefined && nextEnlaceModelo !== currentProduct.enlace_modelo) ||
     (input.gramosEstimados !== undefined && nextGramosEstimados !== currentProduct.gramos_estimados) ||
     (input.tiempoImpresionHoras !== undefined && nextTiempoImpresionHoras !== currentProduct.tiempo_impresion_horas) ||
-    (input.materialId !== undefined && nextMaterialId !== currentProduct.material_id);
+    (input.materialId !== undefined && nextMaterialId !== currentProduct.material_id) ||
+    (input.imagenUrl !== undefined && nextValidatedImagenUrl !== currentProduct.imagen_url) ||
+    (input.descripcionPublica !== undefined && nextDescripcionPublica !== currentProduct.descripcion_publica) ||
+    (input.visibleEnTienda !== undefined && nextVisibleEnTienda !== parseBoolean(currentProduct.visible_en_tienda)) ||
+    (input.destacado !== undefined && nextDestacado !== parseBoolean(currentProduct.destacado)) ||
+    (input.ordenTienda !== undefined && nextOrdenTienda !== Math.max(0, Math.round(currentProduct.orden_tienda ?? 0))) ||
+    (input.categoriaPublica !== undefined && nextCategoriaPublica !== currentProduct.categoria_publica) ||
+    (input.galeriaImagenes !== undefined && nextGaleriaImagenes !== currentProduct.galeria_imagenes);
   const financialChanged =
     (input.costeElectricidad !== undefined && nextCosteElectricidad !== currentProduct.coste_electricidad) ||
     (input.costeMaquina !== undefined && nextCosteMaquina !== currentProduct.coste_maquina) ||
@@ -2446,7 +2527,7 @@ export async function updateProductRecord(input: ProductMutationInput & { id: st
   await transaction(async () => {
     await run(
       `UPDATE products
-       SET nombre = ?, descripcion = ?, enlace_modelo = ?, gramos_estimados = ?, tiempo_impresion_horas = ?, coste_electricidad = ?, coste_maquina = ?, coste_mano_obra = ?, coste_postprocesado = ?, margen = ?, pvp = ?, iva_porcentaje = ?, material_id = ?, activo = ?
+       SET nombre = ?, descripcion = ?, enlace_modelo = ?, gramos_estimados = ?, tiempo_impresion_horas = ?, coste_electricidad = ?, coste_maquina = ?, coste_mano_obra = ?, coste_postprocesado = ?, margen = ?, pvp = ?, iva_porcentaje = ?, material_id = ?, activo = ?, imagen_url = ?, descripcion_publica = ?, visible_en_tienda = ?, destacado = ?, orden_tienda = ?, categoria_publica = ?, galeria_imagenes = ?
        WHERE id = ?`,
       nextNombre,
       nextDescripcion,
@@ -2462,6 +2543,13 @@ export async function updateProductRecord(input: ProductMutationInput & { id: st
       nextIvaPorcentaje,
       nextMaterialId,
       nextActivo ? 1 : 0,
+      nextValidatedImagenUrl,
+      nextDescripcionPublica,
+      nextVisibleEnTienda ? 1 : 0,
+      nextDestacado ? 1 : 0,
+      nextOrdenTienda,
+      nextCategoriaPublica,
+      nextGaleriaImagenes,
       input.id,
     );
     await ensureFinishedInventoryRow(input.id);
