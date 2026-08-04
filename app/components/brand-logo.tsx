@@ -39,7 +39,7 @@ export function BrandLogo({
         height={dimensions.height}
         priority={priority}
         className={imageClassName}
-        style={{ height: "auto" }}
+        style={{ width: "auto", height: "auto" }}
       />
       {showName || showSubtitle ? (
         <div>

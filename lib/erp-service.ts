@@ -1084,17 +1084,18 @@ async function restoreOrderInventoryAllocations(orderId: string, orderCode: stri
 }
 
 export async function getAppSnapshot() {
-  const materialIds = await rows<{ id: string }>(`SELECT id FROM materials`);
+  const [materialIds, inventoryProducts, invoiceIds] = await Promise.all([
+    rows<{ id: string }>(`SELECT id FROM materials`),
+    rows<{ product_id: string }>(`SELECT product_id FROM finished_product_inventory`),
+    rows<{ id: string }>(`SELECT id FROM invoices`),
+  ]);
+
   for (const item of materialIds) {
     await syncMaterialStockCache(item.id);
   }
-
-  const inventoryProducts = await rows<{ product_id: string }>(`SELECT product_id FROM finished_product_inventory`);
   for (const item of inventoryProducts) {
     await syncFinishedInventoryMetrics(item.product_id);
   }
-
-  const invoiceIds = await rows<{ id: string }>(`SELECT id FROM invoices`);
   for (const item of invoiceIds) {
     await syncInvoicePaymentSummary(item.id);
   }
@@ -1912,6 +1913,7 @@ export async function getInvoicePaymentsExportRows(status?: string, fromDate?: s
 export async function resetDatabase() {
   await transaction(async () => {
     await run("DELETE FROM audit_logs");
+    await run("DELETE FROM password_reset_tokens");
     await run("DELETE FROM user_sessions");
     await run("DELETE FROM demo_scenario_results");
     await run("DELETE FROM demo_runs");

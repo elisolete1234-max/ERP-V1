@@ -21,6 +21,8 @@ import {
   getVisibleSections,
   hasUsers,
   requirePermission,
+  requestPasswordReset,
+  resetPassword,
   updateUserRecord,
   withMockUser,
   type CurrentUser,
@@ -274,6 +276,124 @@ test("bootstrap del primer admin solo se permite una vez", async () => {
         password: "supersegura123",
       }),
     /bootstrap inicial/i,
+  );
+});
+
+test("solicitar recuperacion con email existente crea token seguro y no expone hash", async () => {
+  await createInitialAdmin({
+    nombre: "Admin Reset",
+    email: "admin.reset@eli-print.test",
+    password: "supersegura123",
+  });
+
+  const result = await requestPasswordReset({ email: "ADMIN.RESET@eli-print.test" });
+  assert.equal(result.message, "Si existe una cuenta con ese email, recibiras instrucciones.");
+  assert.ok(result.devResetUrl);
+
+  const stored = (await row<{
+    token_hash: string;
+    used_at: string | null;
+    requested_ip: string | null;
+  }>(`SELECT token_hash, used_at, requested_ip FROM password_reset_tokens LIMIT 1`))!;
+  assert.equal(stored.used_at, null);
+  assert.equal(result.devResetUrl!.includes(stored.token_hash), false);
+});
+
+test("solicitar recuperacion con email inexistente no revela si existe cuenta", async () => {
+  const result = await requestPasswordReset({ email: "nadie@eli-print.test" });
+  assert.equal(result.message, "Si existe una cuenta con ese email, recibiras instrucciones.");
+  assert.equal(result.devResetUrl, null);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM password_reset_tokens`))!.total, 0);
+});
+
+test("token valido cambia contrasena y permite login con la nueva", async () => {
+  await createInitialAdmin({
+    nombre: "Admin Reset",
+    email: "admin.reset@eli-print.test",
+    password: "supersegura123",
+  });
+  const result = await requestPasswordReset({ email: "admin.reset@eli-print.test" });
+  const token = new URL(result.devResetUrl!).searchParams.get("token")!;
+
+  await resetPassword({
+    token,
+    newPassword: "NuevaSegura1",
+    confirmPassword: "NuevaSegura1",
+  });
+
+  await assert.rejects(
+    () => authenticateUser({ email: "admin.reset@eli-print.test", password: "supersegura123" }),
+    /Credenciales invalidas/i,
+  );
+  const logged = await authenticateUser({ email: "admin.reset@eli-print.test", password: "NuevaSegura1" });
+  assert.equal(logged.role, "ADMIN");
+});
+
+test("token caducado rechaza el cambio de contrasena", async () => {
+  await createInitialAdmin({
+    nombre: "Admin Reset",
+    email: "admin.reset@eli-print.test",
+    password: "supersegura123",
+  });
+  const result = await requestPasswordReset({ email: "admin.reset@eli-print.test" });
+  const token = new URL(result.devResetUrl!).searchParams.get("token")!;
+  await run(`UPDATE password_reset_tokens SET expires_at = ?`, "2020-01-01T00:00:00.000Z");
+
+  await assert.rejects(
+    () => resetPassword({ token, newPassword: "NuevaSegura1", confirmPassword: "NuevaSegura1" }),
+    /no es valido o ha caducado/i,
+  );
+});
+
+test("token usado rechaza un segundo uso", async () => {
+  await createInitialAdmin({
+    nombre: "Admin Reset",
+    email: "admin.reset@eli-print.test",
+    password: "supersegura123",
+  });
+  const result = await requestPasswordReset({ email: "admin.reset@eli-print.test" });
+  const token = new URL(result.devResetUrl!).searchParams.get("token")!;
+  await resetPassword({ token, newPassword: "NuevaSegura1", confirmPassword: "NuevaSegura1" });
+
+  await assert.rejects(
+    () => resetPassword({ token, newPassword: "OtraSegura1", confirmPassword: "OtraSegura1" }),
+    /no es valido o ha caducado/i,
+  );
+});
+
+test("usuario inactivo no obtiene recuperacion efectiva", async () => {
+  await createUserRecord({
+    nombre: "Operador Inactivo",
+    email: "inactivo@eli-print.test",
+    password: "supersegura123",
+    role: "OPERADOR",
+    activo: false,
+  });
+
+  const result = await requestPasswordReset({ email: "inactivo@eli-print.test" });
+  assert.equal(result.message, "Si existe una cuenta con ese email, recibiras instrucciones.");
+  assert.equal(result.devResetUrl, null);
+  assert.equal((await row<{ total: number }>(`SELECT COUNT(*) AS total FROM password_reset_tokens`))!.total, 0);
+});
+
+test("recuperacion rechaza contrasenas no coincidentes o debiles", async () => {
+  await createInitialAdmin({
+    nombre: "Admin Reset",
+    email: "admin.reset@eli-print.test",
+    password: "supersegura123",
+  });
+  const first = await requestPasswordReset({ email: "admin.reset@eli-print.test" });
+  const firstToken = new URL(first.devResetUrl!).searchParams.get("token")!;
+  await assert.rejects(
+    () => resetPassword({ token: firstToken, newPassword: "NuevaSegura1", confirmPassword: "NuevaSegura2" }),
+    /no coinciden/i,
+  );
+
+  const second = await requestPasswordReset({ email: "admin.reset@eli-print.test" });
+  const secondToken = new URL(second.devResetUrl!).searchParams.get("token")!;
+  await assert.rejects(
+    () => resetPassword({ token: secondToken, newPassword: "debil123", confirmPassword: "debil123" }),
+    /mayuscula/i,
   );
 });
 

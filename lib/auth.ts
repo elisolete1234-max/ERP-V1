@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createHash } from "node:crypto";
 import { row, rows, run } from "./db";
+import { sendPasswordResetEmail } from "./email";
 
 export type AppRole = "ADMIN" | "OPERADOR" | "GESTOR_FINANCIERO" | "CLIENTE";
 export type AppModule =
@@ -79,11 +80,16 @@ const SESSION_COOKIE = "eli_print_3d_session";
 const PASSWORD_KEYLEN = 64;
 const SESSION_TOKEN_BYTES = 32;
 const SESSION_DAYS = 30;
+const PASSWORD_RESET_TOKEN_BYTES = 32;
+const PASSWORD_RESET_MINUTES = 45;
+const PASSWORD_RESET_RATE_WINDOW_MINUTES = 15;
+const PASSWORD_RESET_RATE_LIMIT = 3;
+export const PASSWORD_RESET_GENERIC_MESSAGE = "Si existe una cuenta con ese email, recibiras instrucciones.";
 const authStorage = new AsyncLocalStorage<AuthContext>();
 
 const roleLabels: Record<AppRole, string> = {
-  ADMIN: "Admin",
-  OPERADOR: "Operador",
+  ADMIN: "Administrador",
+  OPERADOR: "Operador de produccion",
   GESTOR_FINANCIERO: "Gestor financiero",
   CLIENTE: "Cliente",
 };
@@ -224,6 +230,10 @@ function hashSessionToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function hashPasswordResetToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
 function buildPasswordHash(password: string) {
   const salt = randomBytes(16).toString("hex");
   const hash = scryptSync(password, salt, PASSWORD_KEYLEN).toString("hex");
@@ -246,8 +256,15 @@ function sanitizeEmail(email: string) {
 }
 
 function validatePassword(password: string) {
-  if (password.trim().length < 8) {
+  if (password.length < 8) {
     throw new Error("La contrasena debe tener al menos 8 caracteres.");
+  }
+}
+
+function validateResetPassword(password: string) {
+  validatePassword(password);
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[\d\W_]/.test(password)) {
+    throw new Error("La contrasena debe incluir mayuscula, minuscula y numero o simbolo.");
   }
 }
 
@@ -283,6 +300,69 @@ async function countActiveAdmins() {
 
 async function invalidateSessionsForUser(userId: string) {
   await run(`DELETE FROM user_sessions WHERE user_id = ?`, userId);
+}
+
+function getAppBaseUrl() {
+  return (process.env.APP_BASE_URL?.trim() || "http://localhost:3000").replace(/\/+$/, "");
+}
+
+async function createPasswordResetTokenForUser(input: {
+  userId: string;
+  email: string;
+  requestedIp?: string | null;
+  userAgent?: string | null;
+}) {
+  const windowStart = new Date(Date.now() - PASSWORD_RESET_RATE_WINDOW_MINUTES * 60 * 1000).toISOString();
+  const recent = await row<{ total: number }>(
+    `SELECT COUNT(*) AS total
+     FROM password_reset_tokens
+     WHERE user_id = ? AND created_at >= ?`,
+    input.userId,
+    windowStart,
+  );
+  if ((recent?.total ?? 0) >= PASSWORD_RESET_RATE_LIMIT) {
+    await logAuditEvent({
+      userId: input.userId,
+      userEmail: input.email,
+      action: "password_reset_rate_limited",
+      entityType: "user",
+      entityId: input.userId,
+      summary: `Recuperacion de contrasena limitada por frecuencia para ${input.email}`,
+    });
+    return null;
+  }
+
+  const rawToken = randomBytes(PASSWORD_RESET_TOKEN_BYTES).toString("hex");
+  const tokenHash = hashPasswordResetToken(rawToken);
+  const createdAt = nowIso();
+  const expiresAt = new Date(Date.now() + PASSWORD_RESET_MINUTES * 60 * 1000).toISOString();
+
+  await run(
+    `UPDATE password_reset_tokens
+     SET used_at = COALESCE(used_at, ?)
+     WHERE user_id = ? AND used_at IS NULL`,
+    createdAt,
+    input.userId,
+  );
+  await run(
+    `INSERT INTO password_reset_tokens
+      (id, user_id, token_hash, created_at, expires_at, used_at, requested_ip, user_agent)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    randomUUID(),
+    input.userId,
+    tokenHash,
+    createdAt,
+    expiresAt,
+    null,
+    input.requestedIp?.trim() || null,
+    input.userAgent?.trim() || null,
+  );
+
+  return {
+    token: rawToken,
+    resetUrl: `${getAppBaseUrl()}/reset-password?token=${encodeURIComponent(rawToken)}`,
+    expiresAt,
+  };
 }
 
 export function getRoleLabel(role: AppRole) {
@@ -579,6 +659,120 @@ export async function authenticateUser(input: { email: string; password: string 
     clienteId: user.cliente_id,
     activo: true,
   } satisfies CurrentUser;
+}
+
+export async function requestPasswordReset(input: {
+  email: string;
+  requestedIp?: string | null;
+  userAgent?: string | null;
+}) {
+  const email = sanitizeEmail(input.email);
+  const user = email
+    ? await row<{
+        id: string;
+        email: string;
+        activo: number;
+      }>(
+        `SELECT id, email, activo
+         FROM users
+         WHERE email = ?`,
+        email,
+      )
+    : null;
+
+  if (user?.activo === 1) {
+    const reset = await createPasswordResetTokenForUser({
+      userId: user.id,
+      email: user.email,
+      requestedIp: input.requestedIp,
+      userAgent: input.userAgent,
+    });
+    if (reset) {
+      await sendPasswordResetEmail({
+        to: user.email,
+        resetUrl: reset.resetUrl,
+        expiresMinutes: PASSWORD_RESET_MINUTES,
+      });
+      await logAuditEvent({
+        userId: user.id,
+        userEmail: user.email,
+        action: "password_reset_requested",
+        entityType: "user",
+        entityId: user.id,
+        summary: `Solicitud de recuperacion de contrasena para ${user.email}`,
+      });
+      return {
+        message: PASSWORD_RESET_GENERIC_MESSAGE,
+        devResetUrl: process.env.NODE_ENV === "production" ? null : reset.resetUrl,
+      };
+    }
+  }
+
+  return { message: PASSWORD_RESET_GENERIC_MESSAGE, devResetUrl: null };
+}
+
+export async function resetPassword(input: {
+  token: string;
+  newPassword: string;
+  confirmPassword: string;
+}) {
+  const token = input.token.trim();
+  if (!token) {
+    throw new Error("El enlace de recuperacion no es valido.");
+  }
+  if (input.newPassword !== input.confirmPassword) {
+    throw new Error("Las contrasenas no coinciden.");
+  }
+  validateResetPassword(input.newPassword);
+
+  const tokenHash = hashPasswordResetToken(token);
+  const reset = await row<{
+    id: string;
+    user_id: string;
+    expires_at: string;
+    used_at: string | null;
+    email: string;
+    activo: number;
+  }>(
+    `SELECT
+       prt.id,
+       prt.user_id,
+       prt.expires_at,
+       prt.used_at,
+       u.email,
+       u.activo
+     FROM password_reset_tokens prt
+     JOIN users u ON u.id = prt.user_id
+     WHERE prt.token_hash = ?`,
+    tokenHash,
+  );
+
+  if (!reset || reset.used_at || new Date(reset.expires_at).getTime() <= Date.now() || reset.activo !== 1) {
+    throw new Error("El enlace de recuperacion no es valido o ha caducado.");
+  }
+
+  const usedAt = nowIso();
+  await run(
+    `UPDATE users SET password_hash = ? WHERE id = ?`,
+    buildPasswordHash(input.newPassword),
+    reset.user_id,
+  );
+  await run(
+    `UPDATE password_reset_tokens SET used_at = ? WHERE id = ?`,
+    usedAt,
+    reset.id,
+  );
+  await invalidateSessionsForUser(reset.user_id);
+  await logAuditEvent({
+    userId: reset.user_id,
+    userEmail: reset.email,
+    action: "password_reset_completed",
+    entityType: "user",
+    entityId: reset.user_id,
+    summary: `Contrasena actualizada mediante recuperacion para ${reset.email}`,
+  });
+
+  return { message: "Contrasena actualizada. Ya puedes iniciar sesion." };
 }
 
 export async function createUserSession(userId: string) {

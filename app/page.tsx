@@ -21,6 +21,7 @@ import {
   logoutAction,
   markPurchaseRequestPurchasedAction,
   rejectPurchaseRequestAction,
+  requestPasswordResetAction,
   restockFinishedProductAction,
   restockMaterialAction,
   retryOrderAction,
@@ -115,12 +116,15 @@ const invoicePaymentLabels: Record<string, string> = {
   VENCIDA: "vencidas",
 };
 
+const currencyFormatter = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" });
+const dateTimeFormatter = new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "short" });
+
 function currency(value: number) {
-  return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(value);
+  return currencyFormatter.format(value);
 }
 
 function dateLabel(value: string) {
-  return new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  return dateTimeFormatter.format(new Date(value));
 }
 
 function toDateInputValue(value?: string) {
@@ -411,6 +415,7 @@ export default async function Home({
     facturaId?: string;
     fecha_inicio?: string;
     fecha_fin?: string;
+    auth?: string;
     message?: string;
     tone?: string;
   }>;
@@ -456,6 +461,8 @@ export default async function Home({
 
   const currentUser = await getCurrentUser();
   if (!currentUser) {
+    const authMode = resolved.auth === "recover" ? "recover" : "login";
+    const messageTone = resolved.tone === "error" ? "error" : resolved.tone === "warn" ? "warn" : "success";
     return (
       <main className="erp-shell">
         <section className="mx-auto max-w-xl panel p-8">
@@ -469,20 +476,57 @@ export default async function Home({
             nameClassName="text-xl font-semibold tracking-[-0.04em] text-slate-950"
             subtitleClassName="text-sm text-[color:var(--muted)]"
           />
-          <p className="eyebrow">Acceso</p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">Iniciar sesion</h1>
-          <p className="mt-3 text-sm text-[color:var(--muted)]">
-            Entra con tu usuario para ver solo los modulos y acciones permitidos para tu rol.
-          </p>
-          <form action={loginAction} className="mt-6 space-y-4">
-            <Field label="Email">
-              <input name="email" type="email" className="input" required />
-            </Field>
-            <Field label="Contrasena">
-              <input name="password" type="password" className="input" required />
-            </Field>
-            <SubmitButton pendingText="Entrando...">Entrar</SubmitButton>
-          </form>
+          {resolved.message ? (
+            <div className={`mt-5 rounded-xl border px-4 py-3 text-sm ${
+              messageTone === "error"
+                ? "border-rose-200 bg-rose-50 text-rose-800"
+                : messageTone === "warn"
+                  ? "border-amber-200 bg-amber-50 text-amber-900"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-800"
+            }`}>
+              {resolved.message}
+            </div>
+          ) : null}
+          {authMode === "recover" ? (
+            <>
+              <p className="eyebrow">Acceso</p>
+              <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">Recuperar contrasena</h1>
+              <p className="mt-3 text-sm text-[color:var(--muted)]">
+                Escribe tu email y, si existe una cuenta activa, recibiras instrucciones para restablecer el acceso.
+              </p>
+              <form action={requestPasswordResetAction} className="mt-6 space-y-4">
+                <Field label="Email">
+                  <input name="email" type="email" className="input" required />
+                </Field>
+                <SubmitButton pendingText="Enviando...">Enviar instrucciones</SubmitButton>
+              </form>
+              <Link href="/" className="mt-5 inline-flex text-sm font-semibold text-[color:var(--accent-strong)]">
+                Volver al inicio de sesion
+              </Link>
+            </>
+          ) : (
+            <>
+              <p className="eyebrow">Acceso</p>
+              <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">Iniciar sesion</h1>
+              <p className="mt-3 text-sm text-[color:var(--muted)]">
+                Entra con tu usuario para ver solo los modulos y acciones permitidos para tu rol.
+              </p>
+              <form action={loginAction} className="mt-6 space-y-4">
+                <Field label="Email">
+                  <input name="email" type="email" className="input" required />
+                </Field>
+                <Field label="Contrasena">
+                  <input name="password" type="password" className="input" required />
+                </Field>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <SubmitButton pendingText="Entrando...">Entrar</SubmitButton>
+                  <Link href="/?auth=recover" className="text-sm font-semibold text-[color:var(--accent-strong)]">
+                    ¿Has olvidado tu contrasena?
+                  </Link>
+                </div>
+              </form>
+            </>
+          )}
         </section>
       </main>
     );
@@ -3809,4 +3853,3 @@ export default async function Home({
     </main>
   );
 }
-

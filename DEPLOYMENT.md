@@ -43,6 +43,10 @@ Variables que debes guardar:
   Formato esperado: `libsql://<database>-<org>.turso.io`
 - `TURSO_AUTH_TOKEN`
   Token generado para esa base
+- `APP_BASE_URL`
+  URL publica de la app, por ejemplo `https://tu-app.vercel.app`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
+  Credenciales SMTP para enviar emails de recuperacion de contrasena.
 
 ## 3. Pasos manuales en Vercel
 
@@ -73,6 +77,12 @@ Copiar en Vercel:
 ```text
 TURSO_DATABASE_URL=libsql://tu-base-tu-organizacion.turso.io
 TURSO_AUTH_TOKEN=tu-token-de-turso
+APP_BASE_URL=https://tu-app.vercel.app
+SMTP_HOST=smtp.tu-proveedor.com
+SMTP_PORT=587
+SMTP_USER=usuario-smtp
+SMTP_PASS=password-smtp
+SMTP_FROM=Eli Print 3D <no-reply@tu-dominio.com>
 ```
 
 Opcional en local:

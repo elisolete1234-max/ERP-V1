@@ -11,6 +11,8 @@ import {
   getCurrentUser,
   invalidateUserSession,
   logAuditEvent,
+  requestPasswordReset,
+  resetPassword,
   readCurrentSessionToken,
   requirePermission,
   updateUserRecord,
@@ -232,6 +234,43 @@ export async function logoutAction() {
   }
   revalidatePath("/");
   redirectWithMessage("Sesion cerrada.", "success", "/");
+}
+
+export async function requestPasswordResetAction(formData: FormData) {
+  try {
+    const { headers } = await import("next/headers");
+    const headerStore = await headers();
+    const result = await requestPasswordReset({
+      email: asString(formData.get("email")),
+      requestedIp: headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      userAgent: headerStore.get("user-agent"),
+    });
+    if (result.devResetUrl) {
+      console.info(`[Eli Print 3D] Enlace de recuperacion generado: ${result.devResetUrl}`);
+    }
+    redirectWithMessage(result.message, "success", "/?auth=recover");
+  } catch (error) {
+    unstable_rethrow(error);
+    console.error("No se pudo solicitar recuperacion de contrasena", error);
+    redirectWithMessage("No se pudo preparar la recuperacion. Revisalo en servidor.", "error", "/?auth=recover");
+  }
+}
+
+export async function resetPasswordAction(formData: FormData) {
+  try {
+    const result = await resetPassword({
+      token: asString(formData.get("token")),
+      newPassword: String(formData.get("newPassword") ?? ""),
+      confirmPassword: String(formData.get("confirmPassword") ?? ""),
+    });
+    revalidatePath("/");
+    redirectWithMessage(result.message, "success", "/");
+  } catch (error) {
+    unstable_rethrow(error);
+    const token = encodeURIComponent(asString(formData.get("token")));
+    const message = encodeURIComponent(error instanceof Error ? error.message : "No se pudo actualizar la contrasena.");
+    redirect(`/reset-password?token=${token}&message=${message}&tone=error`);
+  }
 }
 
 export async function createUserAction(formData: FormData) {
