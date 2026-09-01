@@ -9,9 +9,13 @@
     "noEmit": false,
     "isolatedModules": false,
     "jsx": "preserve",
-    "paths": {}
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    }
   },
   "include": [
+    "app/actions.ts",
     "lib/db.ts",
     "lib/erp-service.ts",
     "types/**/*.d.ts",

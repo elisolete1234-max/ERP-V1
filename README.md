@@ -1,4 +1,8 @@
-# Fabriq Flow ERP
+# Eli Print 3D ERP
+
+Version profesional actual: `v5.0.0`
+
+La V5 parte de la app mas completa (`tienda-publica`) e incluye ERP operativo, tienda publica, usuarios y roles, recuperacion segura de contrasena por email, facturacion, stock, fabricacion, tests y despliegue preparado con Turso/Vercel.
 
 ## Estado del proyecto
 

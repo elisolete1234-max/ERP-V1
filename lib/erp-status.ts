@@ -42,10 +42,10 @@ export const MANUFACTURING_STATUS_LABELS: Record<ManufacturingWorkflowStatus, st
 };
 
 export const INVOICE_STATUS_LABELS: Record<InvoiceWorkflowStatus, string> = {
-  PENDIENTE: "pendiente",
-  PARCIAL: "parcial",
-  PAGADA: "pagada",
-  VENCIDA: "vencida",
+  PENDIENTE: "Pendiente",
+  PARCIAL: "Parcial",
+  PAGADA: "Pagada",
+  VENCIDA: "Vencida",
 };
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentWorkflowStatus, string> = {
@@ -254,9 +254,9 @@ export function getManufacturingStatusTone(status: ManufacturingWorkflowStatus):
 
 export function getInvoiceStatusTone(status: InvoiceWorkflowStatus): StatusTone {
   if (status === "PAGADA") return "success";
-  if (status === "PARCIAL") return "info";
+  if (status === "PARCIAL") return "warn";
   if (status === "VENCIDA") return "danger";
-  return "warn";
+  return "danger";
 }
 
 export function getPaymentStatusTone(status: PaymentWorkflowStatus): StatusTone {

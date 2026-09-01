@@ -32,7 +32,9 @@ import {
   ORDER_STATUS_LABELS,
 } from "@/lib/erp-status";
 import type { StatusTone } from "@/lib/erp-status";
+import { formatMaterialDisplay } from "@/lib/display-format";
 import { SubmitButton } from "./form-ui";
+import { ProductImageFields, ProductImagePreview } from "./product-images";
 
 type Customer = {
   id: string;
@@ -88,6 +90,13 @@ type Product = {
   iva_porcentaje: number;
   material_id: string;
   activo: boolean;
+  imagen_url: string | null;
+  descripcion_publica: string | null;
+  visible_en_tienda: boolean;
+  destacado: boolean;
+  orden_tienda: number;
+  categoria_publica: string | null;
+  galeria_imagenes: string | null;
   material_nombre: string;
   precio_kg: number;
 };
@@ -299,6 +308,36 @@ function formatCurrency(value: number) {
     style: "currency",
     currency: "EUR",
   }).format(value);
+}
+
+function renderMaterialSummary(input: {
+  codigo?: string | null;
+  marca?: string | null;
+  tipo?: string | null;
+  color?: string | null;
+  efecto?: string | null;
+  nombre?: string | null;
+  nombreComercial?: string | null;
+  tipoColor?: string | null;
+  colorBase?: string | null;
+}) {
+  const material = formatMaterialDisplay(input);
+
+  return (
+    <div className="primary-data-cell">
+      {material.code ? <span className="code-cell">{material.code}</span> : null}
+      <span>{material.title || "Material sin detalle"}</span>
+      {material.variant ? <span className="secondary-line">{material.variant}</span> : null}
+    </div>
+  );
+}
+
+function renderStatusBadge(label: string, tone: StatusTone) {
+  return (
+    <span className={`status-badge ${badgeClasses(tone)}`}>
+      {label}
+    </span>
+  );
 }
 
 function formatDate(value: string) {
@@ -530,7 +569,7 @@ function deriveInvoicePresentation(input: {
     return {
       badgeTone: paymentTone(status),
       badgeLabel: label,
-      summaryTone: "info" as const,
+      summaryTone: "warn" as const,
       summaryLabel: "Parcial",
       detailLines: [
         `Cobrado: ${formatCurrency(input.totalPaid)}`,
@@ -551,9 +590,9 @@ function deriveInvoicePresentation(input: {
 
   return {
     badgeTone: paymentTone(status),
-    badgeLabel: label,
-    summaryTone: "warn" as const,
-    summaryLabel: "Pendiente",
+    badgeLabel: "Sin cobrar",
+    summaryTone: "danger" as const,
+    summaryLabel: "Sin cobrar",
     detailLines: [`Pendiente: ${formatCurrency(input.pendingAmount)}`],
   };
 }
@@ -2018,10 +2057,12 @@ export function MaterialsInlineTable({
   materials,
   canManage = true,
   canViewEconomicDetails = true,
+  canRequestPurchase = false,
 }: {
   materials: Material[];
   canManage?: boolean;
   canViewEconomicDetails?: boolean;
+  canRequestPurchase?: boolean;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeProductTab, setActiveProductTab] = useState<"customers" | "orders" | "invoices" | "printers">("customers");
@@ -2274,9 +2315,19 @@ export function MaterialsInlineTable({
                       </SubmitButton>
                     </form>
                   ) : null}
+                  {!editing && canRequestPurchase ? (
+                    <a
+                      href={`/?section=solicitudes-compra&requestMaterialId=${encodeURIComponent(material.id)}`}
+                      title="Solicitar compra"
+                      aria-label="Solicitar compra"
+                      className="button-secondary"
+                    >
+                      Solicitar
+                    </a>
+                  ) : null}
                 </div>
               </td>
-              <td>{material.codigo}</td>
+              <td><span className="code-cell">{material.codigo}</span></td>
               <td>
                 {editing && canManage ? (
                   <div className="table-edit-stack table-cell-edit--wide table-edit-card">
@@ -2360,7 +2411,7 @@ export function MaterialsInlineTable({
                           .join(" · ")}
                       </div>
                     ) : null}
-                    <div className="mt-2">
+                    <div className="mt-2 flex flex-wrap gap-2">
                       <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(material.activo ? "success" : "neutral")}`}>
                         {archiveStatusLabel(material.activo)}
                       </span>
@@ -2439,24 +2490,27 @@ export function ProductsInlineTable({
   materials,
   focusedProductCode,
   focusOriginLabel,
-  orders,
-  invoices,
-  manufacturingOrders,
   finishedInventory,
   showFocusedDetails = true,
+  canEditTechnical = true,
+  canEditFinancial = true,
+  canArchive = true,
+  canViewCosts = true,
+  canViewMargins = true,
 }: {
   products: Product[];
   materials: MaterialOption[];
   focusedProductCode?: string | null;
   focusOriginLabel?: string | null;
-  orders: OrderCard[];
-  invoices: Invoice[];
-  manufacturingOrders: ManufacturingOrder[];
   finishedInventory: FinishedInventory[];
   showFocusedDetails?: boolean;
+  canEditTechnical?: boolean;
+  canEditFinancial?: boolean;
+  canArchive?: boolean;
+  canViewCosts?: boolean;
+  canViewMargins?: boolean;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [activeProductTab, setActiveProductTab] = useState<"customers" | "orders" | "invoices" | "printers">("customers");
   const focusedProduct = focusedProductCode ? products.find((product) => product.codigo === focusedProductCode) ?? null : null;
   const visibleProducts = focusedProduct
     ? [focusedProduct, ...products.filter((product) => product.codigo !== focusedProductCode)]
@@ -2464,54 +2518,12 @@ export function ProductsInlineTable({
   const focusedInventory = focusedProduct
     ? finishedInventory.find((item) => item.product_id === focusedProduct.id) ?? null
     : null;
-  const productOrders = focusedProduct
-    ? orders.filter((order) => order.lineas.some((line) => line.producto_id === focusedProduct.id))
-    : [];
-  const relatedOrderIds = new Set(productOrders.map((order) => order.id));
-  const relatedInvoices = focusedProduct ? invoices.filter((invoice) => relatedOrderIds.has(invoice.pedido_id)) : [];
-  const customerPurchases = focusedProduct
-    ? Array.from(
-        productOrders
-          .reduce((accumulator, order) => {
-            const quantity = order.lineas
-              .filter((line) => line.producto_id === focusedProduct.id)
-              .reduce((sum, line) => sum + line.cantidad, 0);
-            const current = accumulator.get(order.cliente_id);
-            accumulator.set(order.cliente_id, {
-              clienteId: order.cliente_id,
-              clienteCodigo: order.cliente_codigo,
-              clienteNombre: order.cliente_nombre,
-              cantidad: (current?.cantidad ?? 0) + quantity,
-            });
-            return accumulator;
-          }, new Map<string, { clienteId: string; clienteCodigo: string; clienteNombre: string; cantidad: number }>())
-          .values(),
-      ).sort((a, b) => a.clienteCodigo.localeCompare(b.clienteCodigo, "es"))
-    : [];
-  const printerUsage = focusedProduct
-    ? Array.from(
-        manufacturingOrders
-          .filter(
-            (order) =>
-              order.producto_id === focusedProduct.id &&
-              order.impresora_id &&
-              order.impresora_codigo &&
-              order.impresora_nombre,
-          )
-          .reduce((accumulator, order) => {
-            const current = accumulator.get(order.impresora_id!);
-            accumulator.set(order.impresora_id!, {
-              impresoraId: order.impresora_id!,
-              impresoraCodigo: order.impresora_codigo!,
-              impresoraNombre: order.impresora_nombre!,
-              fabricaciones: (current?.fabricaciones ?? 0) + 1,
-              cantidad: (current?.cantidad ?? 0) + order.cantidad,
-            });
-            return accumulator;
-          }, new Map<string, { impresoraId: string; impresoraCodigo: string; impresoraNombre: string; fabricaciones: number; cantidad: number }>())
-          .values(),
-      ).sort((a, b) => a.impresoraCodigo.localeCompare(b.impresoraCodigo, "es"))
-    : [];
+  const [activeProductTab, setActiveProductTab] = useState<"customers" | "orders" | "invoices" | "printers">("customers");
+  const customerPurchases: Array<{ clienteId: string; clienteCodigo: string; clienteNombre: string; cantidad: number }> = [];
+  const productOrders: Array<OrderCard> = [];
+  const relatedInvoices: Array<Invoice> = [];
+  const printerUsage: Array<{ impresoraId: string; impresoraCodigo: string; impresoraNombre: string; fabricaciones: number; cantidad: number }> = [];
+  const showFinancialColumn = canEditFinancial || canViewCosts || canViewMargins;
 
   return (
     <>
@@ -2546,7 +2558,7 @@ export function ProductsInlineTable({
               <div className="odoo-field"><span className="odoo-field-label">PVP</span><span className="odoo-field-value">{formatCurrency(focusedProduct.pvp)}</span></div>
               <div className="odoo-field"><span className="odoo-field-label">Margen</span><span className="odoo-field-value">{formatCurrency(focusedProduct.margen)}</span></div>
                   <div className="odoo-field"><span className="odoo-field-label">Estado / stock</span><span className="odoo-field-value">{focusedInventory ? `${archiveStatusLabel(focusedProduct.activo)} · ${focusedInventory.cantidad_disponible} uds disponibles` : archiveStatusLabel(focusedProduct.activo)}</span></div>
-              <div className="odoo-field"><span className="odoo-field-label">Material base</span><span className="odoo-field-value">{focusedProduct.material_nombre}</span></div>
+              <div className="odoo-field"><span className="odoo-field-label">Material base</span><div className="odoo-field-value">{renderMaterialSummary(materials.find((material) => material.id === focusedProduct.material_id) ?? { nombre: focusedProduct.material_nombre })}</div></div>
             </div>
             <div className="odoo-tabs">
               <button type="button" onClick={() => setActiveProductTab("customers")} className={`odoo-tab ${activeProductTab === "customers" ? "is-active" : ""}`}>Clientes que lo han comprado<span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{customerPurchases.length}</span></button>
@@ -2563,22 +2575,24 @@ export function ProductsInlineTable({
           </article>
         </div>
       ) : null}
-      <table className="table">
+      <table className="table product-table">
       <thead>
         <tr>
           <th>Acciones</th>
           <th>ID</th>
           <th>Producto</th>
           <th>Material</th>
-          <th>Costes</th>
-          <th>PVP / IVA</th>
+          <th className="product-table__secondary">Ficha tecnica</th>
+          {showFinancialColumn ? <th className="product-table__secondary">Economico</th> : null}
         </tr>
       </thead>
       <tbody>
         {visibleProducts.map((product) => {
           const editing = editingId === product.id;
+          const canEditRow = canEditTechnical || canEditFinancial;
           const focused = focusedProductCode === product.codigo;
           const formId = `product-form-${product.id}`;
+          const relatedMaterial = materials.find((material) => material.id === product.material_id);
           const availableMaterials = materials.filter(
             (material) => material.activo || material.id === product.material_id,
           );
@@ -2599,13 +2613,15 @@ export function ProductsInlineTable({
                   <input type="hidden" name="id" value={product.id} />
                 </form>
                 <div className="table-action-group">
-                  <ActionButtons
-                    editing={editing}
-                    onEdit={() => setEditingId(product.id)}
-                    onCancel={() => setEditingId(null)}
-                    formId={formId}
-                  />
-                  {!editing ? (
+                  {canEditRow ? (
+                    <ActionButtons
+                      editing={editing}
+                      onEdit={() => setEditingId(product.id)}
+                      onCancel={() => setEditingId(null)}
+                      formId={formId}
+                    />
+                  ) : null}
+                  {!editing && canArchive ? (
                     <form action={toggleProductActiveAction} onSubmit={confirmArchiveOnSubmit(product.activo)}>
                       <input type="hidden" name="id" value={product.id} />
                       <input type="hidden" name="active" value={product.activo ? "false" : "true"} />
@@ -2622,10 +2638,10 @@ export function ProductsInlineTable({
                 </div>
               </td>
 
-              <td>{product.codigo}</td>
+              <td><span className="code-cell">{product.codigo}</span></td>
 
               <td>
-                {editing ? (
+                {editing && canEditTechnical ? (
                   <div className="table-edit-stack table-cell-edit--wide">
                     <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
                       <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
@@ -2673,25 +2689,108 @@ export function ProductsInlineTable({
                           />
                         </div>
 
-                        <label className="mt-1 flex items-center gap-2 text-sm font-medium text-[color:var(--muted-strong)]">
+                        {canArchive ? (
+                          <label className="mt-1 flex items-center gap-2 text-sm font-medium text-[color:var(--muted-strong)]">
+                            <input
+                              form={formId}
+                              type="checkbox"
+                              name="activo"
+                              defaultChecked={product.activo}
+                            />
+                            Producto activo
+                          </label>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <ProductImageFields
+                      formId={formId}
+                      imagenUrl={product.imagen_url}
+                      galeriaImagenes={product.galeria_imagenes}
+                      productName={product.nombre}
+                    />
+
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                        Tienda publica
+                      </p>
+                      <div className="table-edit-stack">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Categoria publica
+                          </label>
                           <input
                             form={formId}
-                            type="checkbox"
-                            name="activo"
-                            defaultChecked={product.activo}
+                            name="categoriaPublica"
+                            defaultValue={product.categoria_publica ?? ""}
+                            className={tableInputClass}
+                            placeholder="Figuras decorativas"
                           />
-                          Producto activo
-                        </label>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                            Descripcion publica
+                          </label>
+                          <textarea
+                            form={formId}
+                            name="descripcionPublica"
+                            defaultValue={product.descripcion_publica ?? ""}
+                            rows={2}
+                            className={tableTextareaClass}
+                            placeholder="Texto corto para la tienda"
+                          />
+                        </div>
+                        <div className="table-edit-grid-2">
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
+                              Orden en tienda
+                            </label>
+                            <input
+                              form={formId}
+                              name="ordenTienda"
+                              type="number"
+                              min="0"
+                              step="1"
+                              defaultValue={product.orden_tienda ?? 0}
+                              className={tableInputClass}
+                              placeholder="0"
+                            />
+                          </div>
+                          <div className="grid gap-2 pt-5">
+                            <input form={formId} type="hidden" name="visibleEnTienda" value="off" />
+                            <label className="flex items-center gap-2 text-sm font-medium text-[color:var(--muted-strong)]">
+                              <input
+                                form={formId}
+                                type="checkbox"
+                                name="visibleEnTienda"
+                                defaultChecked={product.visible_en_tienda}
+                              />
+                              Visible en tienda
+                            </label>
+                            <input form={formId} type="hidden" name="destacado" value="off" />
+                            <label className="flex items-center gap-2 text-sm font-medium text-[color:var(--muted-strong)]">
+                              <input
+                                form={formId}
+                                type="checkbox"
+                                name="destacado"
+                                defaultChecked={product.destacado}
+                              />
+                              Destacado
+                            </label>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <div>
+                  <div className="flex min-w-0 items-start gap-3">
+                    <ProductImagePreview src={product.imagen_url} alt={product.nombre} size="sm" />
+                    <div className="min-w-0">
                     <a href={`/?section=productos&productoId=${encodeURIComponent(product.codigo)}`} className="odoo-link font-medium">{product.nombre}</a>
                     <div className="text-xs text-[color:var(--muted)]">
                       {product.gramos_estimados} g · {product.tiempo_impresion_horas} h
                     </div>
-                    <div className="mt-2">
+                    <div className="mt-2 flex flex-wrap gap-2">
                       <span
                         className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
                           badgeClasses(product.activo ? "success" : "neutral")
@@ -2699,13 +2798,19 @@ export function ProductsInlineTable({
                       >
                           {archiveStatusLabel(product.activo)}
                       </span>
+                      {product.visible_en_tienda ? (
+                        <span className="inline-flex rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-800">
+                          tienda
+                        </span>
+                      ) : null}
+                    </div>
                     </div>
                   </div>
                 )}
               </td>
 
               <td>
-                {editing ? (
+                {editing && canEditTechnical ? (
                   <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
                       Material base
@@ -2726,13 +2831,11 @@ export function ProductsInlineTable({
                       ))}
                     </select>
                   </div>
-                ) : (
-                  product.material_nombre
-                )}
+                ) : renderMaterialSummary(relatedMaterial ?? { nombre: product.material_nombre })}
               </td>
 
-              <td>
-                {editing ? (
+              <td className="product-table__secondary">
+                {editing && canEditTechnical ? (
                   <div className="table-edit-stack table-cell-edit">
                     <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
                       <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
@@ -2772,7 +2875,7 @@ export function ProductsInlineTable({
                         </div>
                       </div>
 
-                      <div className="mt-3 table-edit-grid-2">
+                      {canEditFinancial ? <div className="mt-3 table-edit-grid-2">
                         <div>
                           <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
                             Coste electricidad
@@ -2804,9 +2907,9 @@ export function ProductsInlineTable({
                             placeholder="1.20"
                           />
                         </div>
-                      </div>
+                      </div> : null}
 
-                      <div className="mt-3 table-edit-grid-2">
+                      {canEditFinancial ? <div className="mt-3 table-edit-grid-2">
                         <div>
                           <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
                             Coste mano de obra
@@ -2838,9 +2941,9 @@ export function ProductsInlineTable({
                             placeholder="1.00"
                           />
                         </div>
-                      </div>
+                      </div> : null}
 
-                      <div className="mt-3">
+                      {canEditFinancial ? <div className="mt-3">
                         <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
                           Margen
                         </label>
@@ -2853,9 +2956,9 @@ export function ProductsInlineTable({
                           className={tableInputClass}
                           placeholder="2.20"
                         />
-                      </div>
+                      </div> : null}
 
-                      <div className="mt-3">
+                      {canEditFinancial ? <div className="mt-3">
                         <label className="mb-1 block text-xs font-medium text-[color:var(--muted-strong)]">
                           IVA producto (%)
                         </label>
@@ -2870,12 +2973,12 @@ export function ProductsInlineTable({
                           className={tableInputClass}
                           placeholder="21"
                         />
-                      </div>
+                      </div> : null}
                     </div>
                   </div>
                 ) : (
                   <div>
-                    <div>Receta: {formatCurrency(product.coste_total_producto)}</div>
+                    <div>{product.gramos_estimados} g Â· {product.tiempo_impresion_horas} h</div>
                     <div className="text-xs text-[color:var(--muted)]">
                       Material {formatCurrency(product.coste_material_estimado)} · Máquina {formatCurrency(product.coste_maquina)}
                     </div>
@@ -2883,8 +2986,9 @@ export function ProductsInlineTable({
                 )}
               </td>
 
-              <td>
-                {editing ? (
+              {showFinancialColumn ? (
+                <td className="product-table__secondary">
+                {editing && canEditFinancial ? (
                   <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-3 py-3">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
                       Venta
@@ -2905,11 +3009,17 @@ export function ProductsInlineTable({
                   </div>
                 ) : (
                   <div>
-                    <div>{formatCurrency(product.pvp)}</div>
-                    <div className="text-xs text-[color:var(--muted)]">IVA: {product.iva_porcentaje}%</div>
+                    {canViewCosts ? <div>Receta: {formatCurrency(product.coste_total_producto)}</div> : null}
+                    {canEditFinancial ? <div>{formatCurrency(product.pvp)}</div> : null}
+                    <div className="text-xs text-[color:var(--muted)]">
+                      {canEditFinancial ? `IVA: ${product.iva_porcentaje}%` : ""}
+                      {canEditFinancial && canViewMargins ? " · " : ""}
+                      {canViewMargins ? `Margen: ${formatCurrency(product.margen)}` : ""}
+                    </div>
                   </div>
                 )}
               </td>
+              ) : null}
             </tr>
           );
         })}
@@ -2931,9 +3041,9 @@ export function ManufacturingInlineTable({
   const [editingId, setEditingId] = useState<string | null>(null);
 
   return (
-    <table className="table">
+    <table className="table manufacturing-table">
       <thead>
-        <tr><th>Acciones</th><th>ID</th><th>Origen</th><th>Pedido</th><th>Producto</th><th>Material</th><th>Estado</th><th>Impresora</th>{canViewCosts ? <th>Coste</th> : null}<th>Consumo</th></tr>
+        <tr><th>Acciones</th><th>ID</th><th className="manufacturing-table__secondary">Origen</th><th className="manufacturing-table__secondary">Pedido</th><th>Produccion</th><th>Material</th><th>Estado</th><th className="manufacturing-table__secondary">Impresora y consumo</th>{canViewCosts ? <th className="manufacturing-table__secondary">Resumen economico</th> : null}<th className="manufacturing-table__secondary">Tiempo real</th></tr>
       </thead>
       <tbody>
         {manufacturingOrders.map((order) => {
@@ -2980,22 +3090,41 @@ export function ManufacturingInlineTable({
                   ) : null}
                 </div>
               </td>
-              <td>{order.codigo}</td>
+              <td><span className="code-cell">{order.codigo}</span></td>
               <td>
-                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.origen_fabricacion === "PARA_STOCK" ? "accent" : "info")}`}>
-                  {order.origen_fabricacion_label}
-                </span>
+                {renderStatusBadge(order.origen_fabricacion_label, order.origen_fabricacion === "PARA_STOCK" ? "accent" : "info")}
               </td>
-              <td>{order.pedido_codigo ?? "-"}</td>
+              <td><span className="secondary-line">{order.pedido_codigo ?? "-"}</span></td>
               <td>
                 {editing && canManage ? (
                   <div className="table-edit-stack table-cell-edit">
-                    <div className="text-sm font-medium">{order.producto_nombre}</div>
+                    <div className="primary-data-cell">
+                      <span className="font-semibold text-slate-900">{order.producto_nombre}</span>
+                      <span className="secondary-line">
+                        {order.pedido_codigo ? `Pedido ${order.pedido_codigo}` : "Reposicion para stock"}
+                      </span>
+                      {renderMaterialSummary({
+                        codigo: order.material_codigo,
+                        nombre: order.material_nombre,
+                        color: order.material_color,
+                      })}
+                    </div>
                     <input form={formId} name="cantidad" type="number" min="1" defaultValue={order.cantidad} className={tableInputClass} />
                     <textarea form={formId} name="incidencia" defaultValue={order.incidencia ?? ""} rows={2} className={tableTextareaClass} />
                   </div>
                 ) : (
-                  order.producto_nombre
+                  <div className="primary-data-cell">
+                    <span className="font-semibold text-slate-900">{order.producto_nombre}</span>
+                    <span className="secondary-line">
+                      {order.pedido_codigo ? `Pedido ${order.pedido_codigo}` : "Reposicion para stock"}
+                    </span>
+                    {renderMaterialSummary({
+                      codigo: order.material_codigo,
+                      nombre: order.material_nombre,
+                      color: order.material_color,
+                    })}
+                    <span className="secondary-line">Cantidad: {order.cantidad} uds</span>
+                  </div>
                 )}
               </td>
               <td>
@@ -3011,26 +3140,29 @@ export function ManufacturingInlineTable({
                     <option value="BLOQUEADA_POR_STOCK">bloqueada_por_stock</option>
                   </select>
                 ) : (
-                  <div className="space-y-2">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(order.estado_badge_tone)}`}>
-                      {MANUFACTURING_STATUS_LABELS[order.estado_derivado as keyof typeof MANUFACTURING_STATUS_LABELS] ?? order.estado_derivado.toLowerCase()}
-                    </span>
+                  <div className="primary-data-cell">
+                    {renderStatusBadge(
+                      MANUFACTURING_STATUS_LABELS[order.estado_derivado as keyof typeof MANUFACTURING_STATUS_LABELS] ?? order.estado_derivado.toLowerCase(),
+                      order.estado_badge_tone,
+                    )}
+                    {order.incidencia ? <span className="secondary-line text-rose-700">{order.incidencia}</span> : null}
                     {stockAlert ? (
-                      <div className="space-y-1">
-                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("danger")}`}>
-                          {stockAlert.title}
-                        </span>
-                        <div className="text-xs font-medium text-rose-700">{stockAlert.detail}</div>
-                      </div>
+                      <>
+                        {renderStatusBadge(stockAlert.title, "danger")}
+                        <span className="secondary-line text-rose-700">{stockAlert.detail}</span>
+                      </>
                     ) : null}
                   </div>
                 )}
               </td>
               <td>
                 {canViewCosts && order.impresora_nombre ? (
-                  <div className="space-y-1.5">
-                    <div>{order.impresora_codigo} - {order.impresora_nombre}</div>
-                    <div className="text-xs text-[color:var(--muted)]">Coste: {formatCurrency(printerUsageCost)}</div>
+                  <div className="primary-data-cell">
+                    <span>{order.impresora_codigo} - {order.impresora_nombre}</span>
+                    <span className="secondary-line">
+                      {order.gramos_consumidos ?? order.gramos_estimados_totales} g · {order.tiempo_real_horas ?? "-"} h
+                    </span>
+                    <span className="secondary-line">Coste impresora: {formatCurrency(printerUsageCost)}</span>
                     <ProductionCostBreakdown
                       total={order.coste_estimado_total}
                       unit={order.coste_estimado_unitario}
@@ -3066,26 +3198,24 @@ export function ManufacturingInlineTable({
                     showLabor={false}
                   />
                 ) : order.impresora_nombre ? (
-                  <div>{order.impresora_codigo} - {order.impresora_nombre}</div>
+                  <div className="primary-data-cell">
+                    <span>{order.impresora_codigo} - {order.impresora_nombre}</span>
+                    <span className="secondary-line">
+                      {order.gramos_consumidos ?? order.gramos_estimados_totales} g · {order.tiempo_real_horas ?? "-"} h
+                    </span>
+                  </div>
                 ) : (
                   "-"
                 )}
               </td>
               {canViewCosts ? (
               <td>
-                <ProductionCostBreakdown
-                  total={order.coste_estimado_total}
-                  unit={order.coste_estimado_unitario}
-                  material={order.coste_material}
-                  electricity={order.coste_electricidad}
-                  machine={order.coste_maquina}
-                  postProcessing={order.coste_postprocesado}
-                  labor={order.coste_mano_obra}
-                  warnings={order.coste_warnings}
-                  compact
-                  showElectricity={false}
-                  showMachine={false}
-                />
+                <div className="money-summary">
+                  <div><span>Total</span><strong>{formatCurrency(order.coste_estimado_total)}</strong></div>
+                  <div><span>Unitario</span><strong>{formatCurrency(order.coste_estimado_unitario)}</strong></div>
+                  <div><span>Material</span><strong>{formatCurrency(order.coste_material)}</strong></div>
+                  <div><span>Margen est.</span><strong>{order.margen_estimado_porcentaje.toFixed(1)}%</strong></div>
+                </div>
               </td>
               ) : null}
               <td>
@@ -3106,7 +3236,7 @@ export function ManufacturingInlineTable({
   );
 }
 
-export function InvoicesInlineTable({
+function LegacyInvoicesInlineTable({
   invoices,
   focusedInvoiceCode,
   canManagePayments = true,
@@ -3540,6 +3670,457 @@ export function InvoicesInlineTable({
         })}
       </tbody>
     </table>
+  );
+}
+
+void LegacyInvoicesInlineTable;
+
+export function InvoicesInlineTable({
+  invoices,
+  focusedInvoiceCode,
+  canManagePayments = true,
+  canEditInvoices = true,
+  canDownloadPdf = true,
+  showPaymentHistory = true,
+}: {
+  invoices: Invoice[];
+  focusedInvoiceCode?: string | null;
+  canManagePayments?: boolean;
+  canEditInvoices?: boolean;
+  canDownloadPdf?: boolean;
+  showPaymentHistory?: boolean;
+}) {
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [paymentId, setPaymentId] = useState<string | null>(null);
+  const focusedInvoice = focusedInvoiceCode ? invoices.find((invoice) => invoice.codigo === focusedInvoiceCode) ?? null : null;
+  const visibleInvoices = focusedInvoice ? [focusedInvoice, ...invoices.filter((invoice) => invoice.codigo !== focusedInvoiceCode)] : invoices;
+
+  const renderInvoiceDetailPanel = ({
+    invoice,
+    focused,
+    canEditDiscount,
+    canOpenPaymentDetail,
+    canQuickCollect,
+    canRegisterPayment,
+    paymentPresentation,
+    pendingAmount,
+    registeringPayment,
+    taxableBase,
+    total,
+    totalPaid,
+  }: {
+    invoice: Invoice;
+    focused: boolean;
+    canEditDiscount: boolean;
+    canOpenPaymentDetail: boolean;
+    canQuickCollect: boolean;
+    canRegisterPayment: boolean;
+    paymentPresentation: ReturnType<typeof deriveInvoicePresentation>;
+    pendingAmount: number;
+    registeringPayment: boolean;
+    taxableBase: number;
+    total: number;
+    totalPaid: number;
+  }) => (
+    <div className={`invoice-detail-panel ${focused ? "invoice-detail-panel--focused" : ""}`.trim()}>
+      <div className="grid gap-4 px-2 py-4 xl:grid-cols-[1.25fr_0.95fr]">
+        <div className="odoo-record">
+          <div className="odoo-record-header">
+            <div>
+              <p className="eyebrow">Factura</p>
+              <h4 className="mt-2 text-[1.45rem] font-semibold tracking-[-0.03em] text-slate-950">{invoice.codigo}</h4>
+              <p className="mt-2 text-sm text-[color:var(--muted)]">
+                Pedido{" "}
+                <a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="odoo-link">
+                  {invoice.pedido_codigo}
+                </a>
+                {" · "}
+                Cliente{" "}
+                <a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`} className="odoo-link">
+                  {invoice.cliente_codigo}
+                </a>
+              </p>
+            </div>
+            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentPresentation.badgeTone)}`}>
+              {paymentPresentation.badgeLabel}
+            </span>
+          </div>
+          <div className="odoo-record-body">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="eyebrow">Trazabilidad de cobro</p>
+                <h4 className="mt-2 text-base font-semibold text-slate-900">Historial de pagos</h4>
+              </div>
+              <div className="table-action-group">
+                <a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="erp-button-secondary">
+                  Ver pedido
+                </a>
+                <a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`} className="erp-button-secondary">
+                  Ver cliente
+                </a>
+              </div>
+            </div>
+            <div className="mt-4 odoo-summary-grid">
+              <div className="odoo-muted-box"><p className="odoo-field-label">Subtotal IVA incluido</p><p className="mt-2 font-semibold">{formatCurrency(invoice.subtotal)}</p></div>
+              <div className="odoo-muted-box"><p className="odoo-field-label">Descuento IVA incluido</p><p className="mt-2 font-semibold">{formatCurrency(invoice.descuento)}</p></div>
+              <div className="odoo-muted-box"><p className="odoo-field-label">Base imponible</p><p className="mt-2 font-semibold">{formatCurrency(taxableBase)}</p></div>
+              <div className="odoo-muted-box"><p className="odoo-field-label">IVA incluido</p><p className="mt-2 font-semibold">{formatCurrency(invoice.iva)}</p></div>
+              <div className="odoo-muted-box"><p className="odoo-field-label">Cobrado</p><p className="mt-2 font-semibold">{formatCurrency(totalPaid)}</p></div>
+              <div className="odoo-muted-box"><p className="odoo-field-label">Pendiente</p><p className="mt-2 font-semibold">{formatCurrency(pendingAmount)}</p></div>
+            </div>
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="odoo-field-label">Pagos registrados</p>
+              {!showPaymentHistory ? (
+                <p className="mt-2 text-sm text-[color:var(--muted)]">Historial de pagos no disponible para tu rol.</p>
+              ) : invoice.pagos.length === 0 ? (
+                <p className="mt-2 text-sm text-[color:var(--muted)]">Esta factura aun no tiene pagos registrados.</p>
+              ) : (
+                <div className="table-wrap mt-3">
+                  <table className="odoo-list-table">
+                    <thead>
+                      <tr>
+                        <th>Pago</th>
+                        <th>Fecha</th>
+                        <th>Pedido</th>
+                        <th>Cliente</th>
+                        <th>Metodo</th>
+                        <th>Importe</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invoice.pagos.map((payment) => (
+                        <tr key={payment.id}>
+                          <td>{payment.displayCode}</td>
+                          <td>{formatDate(payment.fecha_pago)}</td>
+                          <td><a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="odoo-link">{invoice.pedido_codigo}</a></td>
+                          <td><a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=pago`} className="odoo-link">{invoice.cliente_codigo}</a></td>
+                          <td>{payment.metodo_pago.toLowerCase()}</td>
+                          <td>{formatCurrency(payment.importe)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="odoo-record">
+          <div className="odoo-record-header">
+            <div>
+              <p className="eyebrow">Resumen economico</p>
+              <h4 className="mt-2 text-base font-semibold text-slate-900">Cobro y ajustes</h4>
+            </div>
+            <div className="text-right">
+              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">Total final</p>
+              <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(total)}</p>
+            </div>
+          </div>
+          <div className="odoo-record-body">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="eyebrow">Ajustes y cobro</p>
+                <h4 className="mt-2 text-base font-semibold text-slate-900">Factura {invoice.codigo}</h4>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {canDownloadPdf ? (
+                  <a href={`/api/exports/invoices/${invoice.id}/pdf`} className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-900 transition hover:-translate-y-0.5 hover:bg-sky-100">
+                    Descargar PDF
+                  </a>
+                ) : null}
+                <div className={`rounded-2xl border px-3 py-2 text-right text-xs font-medium ${badgeClasses(paymentPresentation.summaryTone)}`}>
+                  <div>{paymentPresentation.summaryLabel}</div>
+                  <div className="mt-1">Total: {formatCurrency(total)}</div>
+                  {paymentPresentation.detailLines.map((line) => (
+                    <div key={`${invoice.id}-summary-${line}`} className="mt-1">{line}</div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 odoo-muted-box">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="eyebrow">Descuento final</p>
+                  <h5 className="mt-2 text-sm font-semibold text-slate-900">Editar descuento de factura</h5>
+                </div>
+                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(canEditDiscount ? "info" : "neutral")}`}>
+                  {canEditDiscount ? "editable" : "bloqueada"}
+                </span>
+              </div>
+              {canEditDiscount && canEditInvoices ? (
+                <form action={updateInvoiceAction} className="mt-4 space-y-3">
+                  <input type="hidden" name="id" value={invoice.id} />
+                  <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
+                    Puedes ajustar el descuento mientras la factura no este totalmente pagada. El total nunca puede quedar por debajo de lo ya cobrado.
+                  </div>
+                  <div className="table-edit-card">
+                    <InlineField label="Descuento (EUR)" hint="Importe final a descontar, IVA incluido">
+                      <input name="descuento" type="number" min="0" step="0.01" defaultValue={invoice.descuento.toFixed(2)} className={tableInputClass} required />
+                    </InlineField>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3"><p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Base actual</p><p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(taxableBase)}</p></div>
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3"><p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Total actual</p><p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(total)}</p></div>
+                    <div className="rounded-2xl border border-black/8 bg-[color:var(--surface-strong)] px-4 py-3"><p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--muted)]">Cobrado</p><p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(totalPaid)}</p></div>
+                  </div>
+                  <SubmitButton variant="chip-dark" pendingText="Actualizando...">Guardar descuento</SubmitButton>
+                </form>
+              ) : (
+                <div className="mt-4 rounded-2xl border border-black/8 bg-white/92 px-4 py-3 text-sm text-[color:var(--muted)]">
+                  La factura ya esta totalmente pagada. El descuento queda bloqueado para no alterar el cobro historico.
+                </div>
+              )}
+            </div>
+            {registeringPayment && canRegisterPayment && canManagePayments ? (
+              <form action={registerInvoicePaymentAction} className="mt-4 space-y-3">
+                <input type="hidden" name="facturaId" value={invoice.id} />
+                <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800">
+                  Introduce un importe entre 0,01 EUR y {formatCurrency(pendingAmount)}. Este formulario queda para cobros parciales o para usar un metodo distinto al cobro rapido.
+                  <div className="mt-1 text-xs text-sky-700">Metodos admitidos: {["EFECTIVO", "TRANSFERENCIA", "TARJETA", "BIZUM", "PAYPAL", "OTRO"].map(paymentMethodLabel).join(", ")}.</div>
+                </div>
+                <div className="table-edit-card">
+                  <div className="table-edit-grid-2">
+                    <InlineField label="Importe">
+                      <input name="importe" type="number" min="0.01" step="0.01" max={pendingAmount.toFixed(2)} defaultValue={pendingAmount.toFixed(2)} placeholder="Importe" className={tableInputClass} required />
+                    </InlineField>
+                    <InlineField label="Metodo de pago">
+                      <select name="metodoPago" defaultValue="TRANSFERENCIA" className={tableInputClass}>
+                        <option value="EFECTIVO">efectivo</option>
+                        <option value="TRANSFERENCIA">transferencia</option>
+                        <option value="TARJETA">tarjeta</option>
+                        <option value="BIZUM">bizum</option>
+                        <option value="PAYPAL">paypal</option>
+                        <option value="OTRO">otro</option>
+                      </select>
+                    </InlineField>
+                  </div>
+                </div>
+                <div className="table-edit-card">
+                  <InlineField label="Fecha de pago">
+                    <input name="fechaPago" type="date" defaultValue={new Date().toISOString().slice(0, 10)} className={tableInputClass} required />
+                  </InlineField>
+                </div>
+                <div className="table-edit-card">
+                  <InlineField label="Notas del pago">
+                    <textarea name="notas" rows={2} placeholder="Notas del pago" className={tableTextareaClass} />
+                  </InlineField>
+                </div>
+                <div className="table-action-group">
+                  <SubmitButton variant="chip-dark" pendingText="Guardando...">Registrar cobro detallado</SubmitButton>
+                  <button type="button" onClick={() => setPaymentId(null)} className="button-secondary">Cancelar</button>
+                </div>
+              </form>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <div className="rounded-2xl border border-black/8 bg-white/92 px-4 py-3 text-sm text-[color:var(--muted)]">
+                  {canRegisterPayment ? "Usa Cobrar para liquidar todo el pendiente al instante, o abre el detalle si necesitas un cobro parcial." : "La factura ya esta cerrada y no admite mas cobros."}
+                </div>
+                <div className="compact-actions">
+                  {canQuickCollect ? (
+                    <form action={collectInvoicePaymentAction}>
+                      <input type="hidden" name="facturaId" value={invoice.id} />
+                      <input type="hidden" name="metodoPago" value="TRANSFERENCIA" />
+                      <SubmitButton variant="secondary" pendingText="Cobrando...">Cobrar</SubmitButton>
+                    </form>
+                  ) : null}
+                  {canOpenPaymentDetail ? (
+                    <button type="button" onClick={() => setPaymentId(invoice.id)} className="button-secondary">Abrir cobro detallado</button>
+                  ) : null}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="responsive-record-list invoice-responsive-list">
+      <div className="responsive-table responsive-table--desktop">
+        <table className="table invoice-table">
+          <thead>
+            <tr>
+              <th>Acciones</th>
+              <th>Factura</th>
+              <th>Cliente</th>
+              <th>Resumen</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleInvoices.map((invoice) => {
+              const focused = focusedInvoiceCode === invoice.codigo;
+              const expanded = detailId === invoice.id || focused;
+              const registeringPayment = paymentId === invoice.id;
+              const { total, totalPaid, pendingAmount, paymentStatus, canRegisterPayment } = deriveInvoicePaymentView(invoice);
+              const paymentPresentation = deriveInvoicePresentation({ paymentStatus, total, totalPaid, pendingAmount });
+              const taxableBase = deriveTaxableBase(total, invoice.iva);
+              const canEditDiscount = paymentStatus !== "PAGADA";
+              const canQuickCollect = canManagePayments && invoice.acciones_permitidas.includes("collect_invoice_payment") && canRegisterPayment;
+              const canOpenPaymentDetail = canManagePayments && invoice.acciones_permitidas.includes("open_payment_detail") && canRegisterPayment;
+              const highlight = paymentStatus === "VENCIDA" ? "danger" : paymentStatus === "PENDIENTE" ? "warn" : paymentStatus === "PARCIAL" ? "attention" : null;
+
+              return [
+                <tr key={`invoice-${invoice.id}`} className={`${focused ? "bg-sky-50/80 ring-2 ring-inset ring-sky-300" : rowHighlight(highlight)}`.trim()}>
+                  <td>
+                    <div className="compact-actions">
+                      <button
+                        type="button"
+                        title={expanded ? "Ocultar detalle" : "Ver detalle"}
+                        aria-label={expanded ? "Ocultar detalle" : "Ver detalle"}
+                        className="icon-action-button icon-action-button--soft"
+                        onClick={() => {
+                          const nextOpen = detailId === invoice.id ? null : invoice.id;
+                          setDetailId(nextOpen);
+                          if (nextOpen === null) {
+                            setPaymentId((current) => (current === invoice.id ? null : current));
+                          }
+                        }}
+                      >
+                        <EyeIcon />
+                      </button>
+                      {canQuickCollect ? (
+                        <form action={collectInvoicePaymentAction}>
+                          <input type="hidden" name="facturaId" value={invoice.id} />
+                          <input type="hidden" name="metodoPago" value="TRANSFERENCIA" />
+                          <SubmitButton variant="secondary" pendingText="Cobrando...">Cobrar</SubmitButton>
+                        </form>
+                      ) : canManagePayments ? (
+                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses("success")}`}>Cerrada</span>
+                      ) : null}
+                      {canDownloadPdf ? (
+                        <a href={`/api/exports/invoices/${invoice.id}/pdf`} title="Descargar PDF" aria-label="Descargar PDF" className="icon-action-button icon-action-button--soft">
+                          <DownloadIcon />
+                        </a>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="invoice-cell-stack">
+                      <span className="font-semibold text-slate-950">{invoice.codigo}</span>
+                      <span className="text-sm text-[color:var(--muted)]">{formatDate(invoice.fecha)}</span>
+                      <span className="text-sm text-[color:var(--muted)]">
+                        Pedido{" "}
+                        <a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900">
+                          {invoice.pedido_codigo}
+                        </a>
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="invoice-cell-stack">
+                      <span>{invoice.cliente_nombre}</span>
+                      <a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`} className="text-xs font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 transition hover:text-sky-900">
+                        Ver cliente {invoice.cliente_codigo}
+                      </a>
+                      <span className="text-xs text-[color:var(--muted)]">Ref. cliente {invoice.cliente_codigo}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="money-summary">
+                      <div><span>Total</span><strong>{formatCurrency(total)}</strong></div>
+                      <div><span>Pagado</span><strong>{formatCurrency(totalPaid)}</strong></div>
+                      <div><span>Pendiente</span><strong>{formatCurrency(pendingAmount)}</strong></div>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="invoice-cell-stack">
+                      <span className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentPresentation.badgeTone)}`}>{paymentPresentation.badgeLabel}</span>
+                      <div className={`rounded-2xl border px-3 py-2 text-xs font-medium ${badgeClasses(paymentPresentation.summaryTone)}`}>
+                        <div>{paymentPresentation.summaryLabel}</div>
+                        {paymentPresentation.detailLines.map((line) => (
+                          <div key={`${invoice.id}-${line}`} className="mt-1">{line}</div>
+                        ))}
+                      </div>
+                    </div>
+                  </td>
+                </tr>,
+                expanded ? (
+                  <tr key={`invoice-detail-${invoice.id}`} className={focused ? "bg-sky-50/40" : rowHighlight(highlight)}>
+                    <td colSpan={5} className="bg-[color:var(--surface-strong)]">
+                      {renderInvoiceDetailPanel({ invoice, focused, canEditDiscount, canOpenPaymentDetail, canQuickCollect, canRegisterPayment, paymentPresentation, pendingAmount, registeringPayment, taxableBase, total, totalPaid })}
+                    </td>
+                  </tr>
+                ) : null,
+              ];
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="invoice-card-list">
+        {visibleInvoices.map((invoice) => {
+          const focused = focusedInvoiceCode === invoice.codigo;
+          const expanded = detailId === invoice.id || focused;
+          const registeringPayment = paymentId === invoice.id;
+          const { total, totalPaid, pendingAmount, paymentStatus, canRegisterPayment } = deriveInvoicePaymentView(invoice);
+          const paymentPresentation = deriveInvoicePresentation({ paymentStatus, total, totalPaid, pendingAmount });
+          const taxableBase = deriveTaxableBase(total, invoice.iva);
+          const canEditDiscount = paymentStatus !== "PAGADA";
+          const canQuickCollect = canManagePayments && invoice.acciones_permitidas.includes("collect_invoice_payment") && canRegisterPayment;
+          const canOpenPaymentDetail = canManagePayments && invoice.acciones_permitidas.includes("open_payment_detail") && canRegisterPayment;
+
+          return (
+            <article key={`invoice-card-${invoice.id}`} className={`mobile-card invoice-card ${focused ? "mobile-card--focused" : ""}`.trim()}>
+              <div className="mobile-card-header">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-950">{invoice.codigo}</p>
+                  <p className="mt-1 text-sm text-[color:var(--muted)]">{formatDate(invoice.fecha)}</p>
+                </div>
+                <span className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${badgeClasses(paymentPresentation.badgeTone)}`}>{paymentPresentation.badgeLabel}</span>
+              </div>
+              <div className="mobile-card-meta">
+                <div><span className="mobile-card-meta-label">Cliente</span><span>{invoice.cliente_nombre}</span></div>
+                <div><span className="mobile-card-meta-label">Pedido</span><a href={`/?section=pedidos&pedidoId=${encodeURIComponent(invoice.pedido_codigo)}`} className="odoo-link">{invoice.pedido_codigo}</a></div>
+                <div><span className="mobile-card-meta-label">Cliente ref.</span><a href={`/?section=clientes&clienteId=${encodeURIComponent(invoice.cliente_codigo)}&origen=factura`} className="odoo-link">{invoice.cliente_codigo}</a></div>
+                <div><span className="mobile-card-meta-label">Estado cobro</span><span>{paymentPresentation.summaryLabel}</span></div>
+              </div>
+              <div className="money-summary mt-4">
+                <div><span>Total</span><strong>{formatCurrency(total)}</strong></div>
+                <div><span>Pagado</span><strong>{formatCurrency(totalPaid)}</strong></div>
+                <div><span>Pendiente</span><strong>{formatCurrency(pendingAmount)}</strong></div>
+              </div>
+              <div className={`mt-4 rounded-2xl border px-3 py-2 text-xs font-medium ${badgeClasses(paymentPresentation.summaryTone)}`}>
+                <div>{paymentPresentation.summaryLabel}</div>
+                {paymentPresentation.detailLines.map((line) => (
+                  <div key={`${invoice.id}-card-${line}`} className="mt-1">{line}</div>
+                ))}
+              </div>
+              <div className="compact-actions mt-4">
+                <button
+                  type="button"
+                  title={expanded ? "Ocultar detalle" : "Ver detalle"}
+                  aria-label={expanded ? "Ocultar detalle" : "Ver detalle"}
+                  className="button-secondary compact-action-button"
+                  onClick={() => {
+                    const nextOpen = detailId === invoice.id ? null : invoice.id;
+                    setDetailId(nextOpen);
+                    if (nextOpen === null) {
+                      setPaymentId((current) => (current === invoice.id ? null : current));
+                    }
+                  }}
+                >
+                  {expanded ? "Ocultar" : "Ver"}
+                </button>
+                {canQuickCollect ? (
+                  <form action={collectInvoicePaymentAction} className="compact-action-button">
+                    <input type="hidden" name="facturaId" value={invoice.id} />
+                    <input type="hidden" name="metodoPago" value="TRANSFERENCIA" />
+                    <SubmitButton variant="secondary" pendingText="Cobrando...">Cobrar</SubmitButton>
+                  </form>
+                ) : null}
+                {canDownloadPdf ? (
+                  <a href={`/api/exports/invoices/${invoice.id}/pdf`} className="button-secondary compact-action-button">Descargar</a>
+                ) : null}
+              </div>
+              {expanded ? renderInvoiceDetailPanel({ invoice, focused, canEditDiscount, canOpenPaymentDetail, canQuickCollect, canRegisterPayment, paymentPresentation, pendingAmount, registeringPayment, taxableBase, total, totalPaid }) : null}
+            </article>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

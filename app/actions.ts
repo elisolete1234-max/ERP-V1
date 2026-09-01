@@ -11,6 +11,8 @@ import {
   getCurrentUser,
   invalidateUserSession,
   logAuditEvent,
+  requestPasswordReset,
+  resetPassword,
   readCurrentSessionToken,
   requirePermission,
   updateUserRecord,
@@ -25,8 +27,10 @@ import {
   archiveProduct,
   collectInvoicePayment,
   completeManufacturingWorkflow,
+  convertPurchaseRequestToStockEntry,
   createCustomerRecord,
   createMaterialRecord,
+  createPurchaseRequestRecord,
   createStockManufacturingOrder,
   createOrderRecord,
   createInvoicePaymentRecord,
@@ -35,7 +39,10 @@ import {
   deliverOrderWorkflow,
   confirmOrder,
   invoiceOrderWorkflow,
+  markPurchaseRequestPurchased,
   processOrder,
+  approvePurchaseRequest,
+  rejectPurchaseRequest,
   restockMaterial,
   restockFinishedProduct,
   retryOrderAfterRestock,
@@ -55,7 +62,9 @@ import {
   updateOrderRecord,
   updatePrinterRecord,
   updateProductRecord,
+  cancelPurchaseRequest,
 } from "@/lib/erp-service";
+import { createPublicQuoteRequest } from "@/lib/public-site";
 
 function asString(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
@@ -81,6 +90,18 @@ function asOptionalNumber(value: FormDataEntryValue | null) {
   const normalized = raw.replace(",", ".");
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function maybeString(formData: FormData, key: string) {
+  return formData.has(key) ? asString(formData.get(key)) : undefined;
+}
+
+function maybeOptionalNumber(formData: FormData, key: string) {
+  return formData.has(key) ? asOptionalNumber(formData.get(key)) : undefined;
+}
+
+function maybeCheckbox(formData: FormData, key: string) {
+  return formData.has(key) ? formData.getAll(key).some((value) => String(value) === "on") : undefined;
 }
 
 function asRole(value: FormDataEntryValue | null) {
@@ -213,6 +234,43 @@ export async function logoutAction() {
   }
   revalidatePath("/");
   redirectWithMessage("Sesion cerrada.", "success", "/");
+}
+
+export async function requestPasswordResetAction(formData: FormData) {
+  try {
+    const { headers } = await import("next/headers");
+    const headerStore = await headers();
+    const result = await requestPasswordReset({
+      email: asString(formData.get("email")),
+      requestedIp: headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      userAgent: headerStore.get("user-agent"),
+    });
+    if (result.devResetUrl) {
+      console.info(`[Eli Print 3D] Enlace de recuperacion generado: ${result.devResetUrl}`);
+    }
+    redirectWithMessage(result.message, "success", "/?auth=recover");
+  } catch (error) {
+    unstable_rethrow(error);
+    console.error("No se pudo solicitar recuperacion de contrasena", error);
+    redirectWithMessage("No se pudo preparar la recuperacion. Revisalo en servidor.", "error", "/?auth=recover");
+  }
+}
+
+export async function resetPasswordAction(formData: FormData) {
+  try {
+    const result = await resetPassword({
+      token: asString(formData.get("token")),
+      newPassword: String(formData.get("newPassword") ?? ""),
+      confirmPassword: String(formData.get("confirmPassword") ?? ""),
+    });
+    revalidatePath("/");
+    redirectWithMessage(result.message, "success", "/");
+  } catch (error) {
+    unstable_rethrow(error);
+    const token = encodeURIComponent(asString(formData.get("token")));
+    const message = encodeURIComponent(error instanceof Error ? error.message : "No se pudo actualizar la contrasena.");
+    redirect(`/reset-password?token=${token}&message=${message}&tone=error`);
+  }
 }
 
 export async function createUserAction(formData: FormData) {
@@ -444,24 +502,31 @@ export async function createProductAction(formData: FormData) {
   await executeAndRefresh(
     () =>
       createProductRecord({
-        nombre: asString(formData.get("nombre")),
-        descripcion: asString(formData.get("descripcion")),
-        enlaceModelo: asString(formData.get("enlaceModelo")),
-        gramosEstimados: asOptionalNumber(formData.get("gramosEstimados")),
-        tiempoImpresionHoras: asOptionalNumber(formData.get("tiempoImpresionHoras")),
-        costeElectricidad: asOptionalNumber(formData.get("costeElectricidad")),
-        costeMaquina: asOptionalNumber(formData.get("costeMaquina")),
-        costeManoObra: asOptionalNumber(formData.get("costeManoObra")),
-        costePostprocesado: asOptionalNumber(formData.get("costePostprocesado")),
-        margen: asOptionalNumber(formData.get("margen")),
-        pvp: asOptionalNumber(formData.get("pvp")),
-        ivaPorcentaje: asOptionalNumber(formData.get("ivaPorcentaje")),
-        materialId: asString(formData.get("materialId")),
-        activo: formData.get("activo") === "on",
+        nombre: maybeString(formData, "nombre"),
+        descripcion: maybeString(formData, "descripcion"),
+        enlaceModelo: maybeString(formData, "enlaceModelo"),
+        gramosEstimados: maybeOptionalNumber(formData, "gramosEstimados"),
+        tiempoImpresionHoras: maybeOptionalNumber(formData, "tiempoImpresionHoras"),
+        costeElectricidad: maybeOptionalNumber(formData, "costeElectricidad"),
+        costeMaquina: maybeOptionalNumber(formData, "costeMaquina"),
+        costeManoObra: maybeOptionalNumber(formData, "costeManoObra"),
+        costePostprocesado: maybeOptionalNumber(formData, "costePostprocesado"),
+        margen: maybeOptionalNumber(formData, "margen"),
+        pvp: maybeOptionalNumber(formData, "pvp"),
+        ivaPorcentaje: maybeOptionalNumber(formData, "ivaPorcentaje"),
+        materialId: maybeString(formData, "materialId"),
+        activo: formData.has("activo") ? formData.get("activo") === "on" : undefined,
+        imagenUrl: maybeString(formData, "imagenUrl"),
+        descripcionPublica: maybeString(formData, "descripcionPublica"),
+        visibleEnTienda: maybeCheckbox(formData, "visibleEnTienda") ?? false,
+        destacado: maybeCheckbox(formData, "destacado") ?? false,
+        ordenTienda: maybeOptionalNumber(formData, "ordenTienda"),
+        categoriaPublica: maybeString(formData, "categoriaPublica"),
+        galeriaImagenes: maybeString(formData, "galeriaImagenes"),
       }),
     "Producto creado correctamente.",
     "/?section=productos",
-    { permission: "create_product", auditAction: "create_product", auditEntityType: "product" },
+    { permission: "product:create", auditAction: "create_product", auditEntityType: "product" },
   );
 }
 
@@ -470,25 +535,31 @@ export async function updateProductAction(formData: FormData) {
     () =>
       updateProductRecord({
         id: asString(formData.get("id")),
-        nombre: asString(formData.get("nombre")),
-        descripcion: asString(formData.get("descripcion")),
-        enlaceModelo: asString(formData.get("enlaceModelo")),
-        gramosEstimados: asOptionalNumber(formData.get("gramosEstimados")),
-        tiempoImpresionHoras: asOptionalNumber(formData.get("tiempoImpresionHoras")),
-        costeElectricidad: asOptionalNumber(formData.get("costeElectricidad")),
-        costeMaquina: asOptionalNumber(formData.get("costeMaquina")),
-        costeManoObra: asOptionalNumber(formData.get("costeManoObra")),
-        costePostprocesado: asOptionalNumber(formData.get("costePostprocesado")),
-        margen: asOptionalNumber(formData.get("margen")),
-        pvp: asOptionalNumber(formData.get("pvp")),
-        ivaPorcentaje: asOptionalNumber(formData.get("ivaPorcentaje")),
-        materialId: asString(formData.get("materialId")),
-        activo: formData.get("activo") === "on",
+        nombre: maybeString(formData, "nombre"),
+        descripcion: maybeString(formData, "descripcion"),
+        enlaceModelo: maybeString(formData, "enlaceModelo"),
+        gramosEstimados: maybeOptionalNumber(formData, "gramosEstimados"),
+        tiempoImpresionHoras: maybeOptionalNumber(formData, "tiempoImpresionHoras"),
+        costeElectricidad: maybeOptionalNumber(formData, "costeElectricidad"),
+        costeMaquina: maybeOptionalNumber(formData, "costeMaquina"),
+        costeManoObra: maybeOptionalNumber(formData, "costeManoObra"),
+        costePostprocesado: maybeOptionalNumber(formData, "costePostprocesado"),
+        margen: maybeOptionalNumber(formData, "margen"),
+        pvp: maybeOptionalNumber(formData, "pvp"),
+        ivaPorcentaje: maybeOptionalNumber(formData, "ivaPorcentaje"),
+        materialId: maybeString(formData, "materialId"),
+        activo: formData.has("activo") ? formData.get("activo") === "on" : undefined,
+        imagenUrl: maybeString(formData, "imagenUrl"),
+        descripcionPublica: maybeString(formData, "descripcionPublica"),
+        visibleEnTienda: maybeCheckbox(formData, "visibleEnTienda"),
+        destacado: maybeCheckbox(formData, "destacado"),
+        ordenTienda: maybeOptionalNumber(formData, "ordenTienda"),
+        categoriaPublica: maybeString(formData, "categoriaPublica"),
+        galeriaImagenes: maybeString(formData, "galeriaImagenes"),
       }),
     "Producto actualizado.",
     "/?section=productos",
     {
-      permission: "edit_product",
       auditAction: "edit_product",
       auditEntityType: "product",
       auditEntityId: asString(formData.get("id")),
@@ -505,7 +576,7 @@ export async function toggleProductActiveAction(formData: FormData) {
     active ? "Producto desarchivado." : "Producto archivado.",
     "/?section=productos",
     {
-      permission: "archive_product",
+      permission: "product:archive",
       auditAction: active ? "unarchive_product" : "archive_product",
       auditEntityType: "product",
       auditEntityId: productId,
@@ -516,7 +587,7 @@ export async function toggleProductActiveAction(formData: FormData) {
 export async function archiveProductoAction(formData: FormData) {
   const productId = asString(formData.get("id"));
   await executeAndRefresh(() => archiveProduct(productId), "Producto archivado.", "/?section=productos", {
-    permission: "archive_product",
+    permission: "product:archive",
     auditAction: "archive_product",
     auditEntityType: "product",
     auditEntityId: productId,
@@ -526,11 +597,117 @@ export async function archiveProductoAction(formData: FormData) {
 export async function unarchiveProductoAction(formData: FormData) {
   const productId = asString(formData.get("id"));
   await executeAndRefresh(() => unarchiveProduct(productId), "Producto desarchivado.", "/?section=productos", {
-    permission: "archive_product",
+    permission: "product:archive",
     auditAction: "unarchive_product",
     auditEntityType: "product",
     auditEntityId: productId,
   });
+}
+
+export async function createPurchaseRequestAction(formData: FormData) {
+  await executeAndRefresh(
+    () =>
+      createPurchaseRequestRecord({
+        materialId: asString(formData.get("materialId")),
+        cantidadSolicitada: asNumber(formData.get("cantidadSolicitada")),
+        unidad: asString(formData.get("unidad")) || "g",
+        motivo: asString(formData.get("motivo")),
+        prioridad: asString(formData.get("prioridad")) || "NORMAL",
+      }),
+    "Solicitud de compra creada.",
+    "/?section=solicitudes-compra",
+    {
+      permission: "purchaseRequest:create",
+      auditAction: "create_purchase_request",
+      auditEntityType: "purchase_request",
+    },
+  );
+}
+
+export async function approvePurchaseRequestAction(formData: FormData) {
+  await executeAndRefresh(
+    () =>
+      approvePurchaseRequest(asString(formData.get("requestId")), {
+        observacionesRevision: asString(formData.get("observacionesRevision")),
+      }),
+    "Solicitud aprobada.",
+    "/?section=solicitudes-compra",
+    {
+      permission: "purchaseRequest:approve",
+      auditAction: "approve_purchase_request",
+      auditEntityType: "purchase_request",
+      auditEntityId: asString(formData.get("requestId")),
+    },
+  );
+}
+
+export async function rejectPurchaseRequestAction(formData: FormData) {
+  await executeAndRefresh(
+    () =>
+      rejectPurchaseRequest(asString(formData.get("requestId")), {
+        observacionesRevision: asString(formData.get("observacionesRevision")),
+      }),
+    "Solicitud rechazada.",
+    "/?section=solicitudes-compra",
+    {
+      permission: "purchaseRequest:reject",
+      auditAction: "reject_purchase_request",
+      auditEntityType: "purchase_request",
+      auditEntityId: asString(formData.get("requestId")),
+    },
+  );
+}
+
+export async function cancelPurchaseRequestAction(formData: FormData) {
+  await executeAndRefresh(
+    () => cancelPurchaseRequest(asString(formData.get("requestId"))),
+    "Solicitud cancelada.",
+    "/?section=solicitudes-compra",
+    {
+      permission: "purchaseRequest:cancelOwn",
+      auditAction: "cancel_purchase_request",
+      auditEntityType: "purchase_request",
+      auditEntityId: asString(formData.get("requestId")),
+    },
+  );
+}
+
+export async function markPurchaseRequestPurchasedAction(formData: FormData) {
+  await executeAndRefresh(
+    () =>
+      markPurchaseRequestPurchased(asString(formData.get("requestId")), {
+        compraId: asString(formData.get("compraId")) || undefined,
+        observacionesRevision: asString(formData.get("observacionesRevision")) || undefined,
+      }),
+    "Solicitud marcada como comprada.",
+    "/?section=solicitudes-compra",
+    {
+      permission: "purchaseRequest:convertToStockEntry",
+      auditAction: "mark_purchase_request_purchased",
+      auditEntityType: "purchase_request",
+      auditEntityId: asString(formData.get("requestId")),
+    },
+  );
+}
+
+export async function convertPurchaseRequestToStockEntryAction(formData: FormData) {
+  await executeAndRefresh(
+    () =>
+      convertPurchaseRequestToStockEntry({
+        requestId: asString(formData.get("requestId")),
+        cantidadG: asOptionalNumber(formData.get("cantidadG")),
+        motivo: asString(formData.get("motivo")) || undefined,
+        compraId: asString(formData.get("compraId")) || undefined,
+      }),
+    "Entrada de stock registrada desde la solicitud.",
+    "/?section=solicitudes-compra",
+    {
+      permission: "purchaseRequest:convertToStockEntry",
+      auditAction: "convert_purchase_request_to_stock",
+      auditEntityType: "purchase_request",
+      auditEntityId: asString(formData.get("requestId")),
+    },
+  );
 }
 
 export async function createOrderAction(formData: FormData) {
@@ -932,4 +1109,23 @@ export async function registerInvoicePaymentAction(formData: FormData) {
       auditEntityId: asString(formData.get("facturaId")),
     },
   );
+}
+
+export async function submitPublicQuoteAction(formData: FormData) {
+  try {
+    await createPublicQuoteRequest({
+      nombre: asString(formData.get("nombre")),
+      email: asString(formData.get("email")),
+      telefono: asString(formData.get("telefono")),
+      servicio: asString(formData.get("servicio")),
+      material: asString(formData.get("material")),
+      cantidad: asString(formData.get("cantidad")),
+      mensaje: asString(formData.get("mensaje")),
+    });
+    redirect("/tienda?contact=ok#presupuesto");
+  } catch (error) {
+    unstable_rethrow(error);
+    const message = error instanceof Error ? error.message : "No se pudo enviar la solicitud.";
+    redirect(`/tienda?contact=error&error=${encodeURIComponent(message)}#presupuesto`);
+  }
 }
